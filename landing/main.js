@@ -178,3 +178,58 @@ copyButton?.addEventListener('click', async () => {
   }
   setTimeout(() => (copyButton.textContent = 'Copy'), 1600);
 });
+
+/* ---- motion: hero command bar, environments --------------------------- */
+
+const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const ARROW = '<svg viewBox="0 0 16 16"><path d="M3 8h10M9 4l4 4-4 4"/></svg>';
+const favicon = (letter, color) => `<i class="fi" style="--c:${color}">${letter}</i>`;
+const HERO_QUERIES = [
+  { q: 'gh 483', rows: [[ARROW, 'oprimo/api#483', 'Open pull request or issue'], [favicon('G', '#1d1d1f'), 'Fix checkout redirect #482', 'Switch to tab'], [favicon('G', '#1d1d1f'), 'oprimo/api · Pull requests', 'History']] },
+  { q: 'npm zod', rows: [[ARROW, 'zod', 'Open in npm'], [favicon('n', '#cb3837'), 'zod · npm', 'Switch to tab'], [favicon('n', '#cb3837'), 'zod-to-json-schema · npm', 'History']] },
+  { q: 'caniuse :has()', rows: [[ARROW, ':has()', 'Open in Can I use'], [favicon('M', '#83d0f2'), ':has() · CSS · MDN', 'History']] },
+  { q: '1761140000', rows: () => [[ARROW, decodeTimestamp('1761140000').label, 'Copy ISO date']] },
+];
+
+const heroInput = document.querySelector('.m-input');
+const heroResults = document.querySelector('.m-results');
+
+function heroRows(rows) {
+  heroResults.innerHTML = rows
+    .map(([icon, label, sub], i) => `<li class="${i ? '' : 'selected'}">${icon}<span class="label">${label}</span><span class="sub">${sub}</span></li>`)
+    .join('');
+}
+
+async function typeHero(text) {
+  const caret = heroInput.querySelector('.caret');
+  for (let i = 0; i <= text.length; i++) {
+    heroInput.firstChild.textContent = text.slice(0, i);
+    await new Promise((r) => setTimeout(r, 55 + Math.random() * 45));
+  }
+  heroInput.append(caret);
+}
+
+async function cycleHero() {
+  let index = 0;
+  while (true) {
+    await new Promise((r) => setTimeout(r, 3600));
+    index = (index + 1) % HERO_QUERIES.length;
+    const { q, rows } = HERO_QUERIES[index];
+    heroResults.classList.add('swapping');
+    await typeHero(q);
+    heroRows(typeof rows === 'function' ? rows() : rows);
+    heroResults.classList.remove('swapping');
+  }
+}
+if (!calm && heroInput && heroResults) cycleHero();
+
+const envRows = [...document.querySelectorAll('.env-row')];
+if (!calm && envRows.length) {
+  let current = envRows.findIndex((row) => row.classList.contains('on'));
+  setInterval(() => {
+    envRows[current].classList.remove('on');
+    current = (current + 1) % envRows.length;
+    envRows[current].classList.add('on');
+  }, 2400);
+}
