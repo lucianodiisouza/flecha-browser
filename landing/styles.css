@@ -268,7 +268,9 @@ body::before {
 .nav-links { display: flex; gap: 26px; margin-left: auto; font: 500 0.82rem/1 var(--mono); }
 .nav-links a { text-decoration: none; color: var(--muted); }
 .nav-links a:hover { color: var(--ink); }
-@media (max-width: 760px) { .nav-links { display: none; } .nav .btn { margin-left: auto; } }
+.lang { font: 600 0.75rem/1 var(--mono); letter-spacing: 0.06em; color: var(--ink); text-decoration: none; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 8px; }
+.lang:hover { border-color: var(--ink); }
+@media (max-width: 760px) { .nav-links { display: none; } .nav .lang { margin-left: auto; } .nav-inner { gap: 10px; } }
 
 /* ---- hero -------------------------------------------------------------- */
 
@@ -908,3 +910,9 @@ body::before {
   .d-desk > *, .d-phone > *, .servers b, .m-badge, .mig-arrow .dot, .packets::before { animation: none; }
   .mig-arrow .dot { opacity: 0; }
 }
+
+.credit { color: var(--ink); }
+.heart { display: inline-block; }
+.credit:hover .heart { animation: beat 0.8s ease-in-out infinite; }
+@keyframes beat { 50% { transform: scale(1.25); } }
+@media (prefers-reduced-motion: reduce) { .credit:hover .heart { animation: none; } }
