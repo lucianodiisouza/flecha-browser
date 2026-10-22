@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Flecha · o navegador open source para devs</title>
+  <meta name="description" content="Flecha é um navegador open source e 100% local para macOS, com sidebar vertical, Spaces e uma barra de comandos que fala a língua de dev. Sem telemetria, sem conta. Traga seus Spaces, abas fixadas e favoritos do Arc.">
+  <meta property="og:title" content="Flecha">
+  <meta property="og:description" content="O navegador open source para devs. 100% local, sem telemetria. Vindo do Arc? Traga seus Spaces, abas fixadas e favoritos.">
+  <meta property="og:url" content="https://flecha.oprimo.dev/pt-br/">
+  <meta property="og:locale" content="pt_BR">
+  <meta property="og:image" content="https://flecha.oprimo.dev/icon.png">
+  <meta name="theme-color" content="#f4f6f9" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#071426" media="(prefers-color-scheme: dark)">
+  <link rel="alternate" hreflang="en" href="https://flecha.oprimo.dev/">
+  <link rel="alternate" hreflang="pt-BR" href="https://flecha.oprimo.dev/pt-br/">
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=JetBrains+Mono:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <header class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="#top" aria-label="Início do Flecha">
+        <svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="23" fill="#0b2545"/><path d="M50 10 80 76 50 61 20 76Z" fill="#eef2f6" transform="rotate(45 50 50)"/></svg>
+        <span class="wordmark">flecha</span>
+      </a>
+      <nav class="nav-links" aria-label="Seções">
+        <a href="#dev">Barra de comandos</a>
+        <a href="#loop">Dia a dia</a>
+        <a href="#privacy">Privacidade</a>
+        <a href="#arc">Vindo do Arc</a>
+      </nav>
+      <a class="lang" href="../" hreflang="en" lang="en" title="Read in English">EN</a>
+      <a class="btn btn-small" href="https://github.com/lucianodiisouza/flecha-browser">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path class="gh" d="M8 .2a8 8 0 0 0-2.5 15.6c.4 0 .5-.2.5-.4v-1.5c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.2-.9-1.2-.7-.5.1-.5.1-.5.8.1 1.2.8 1.2.8.7 1.3 1.9.9 2.4.7 0-.5.3-.9.5-1.1-1.8-.2-3.6-.9-3.6-4 0-.9.3-1.6.8-2.1-.1-.2-.4-1 .1-2.1 0 0 .7-.2 2.2.8a7.6 7.6 0 0 1 4 0c1.5-1 2.2-.8 2.2-.8.4 1.1.2 1.9.1 2.1.5.6.8 1.3.8 2.1 0 3.1-1.9 3.8-3.7 4 .3.3.6.8.6 1.5v2.2c0 .2.1.5.6.4A8 8 0 0 0 8 .2Z"/></svg>
+        Estrela no GitHub
+      </a>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- Hero ------------------------------------------------------------ -->
+    <section class="hero">
+      <div class="inner">
+        <div class="hero-head">
+          <div class="hero-copy">
+            <p class="eyebrow">Navegador open source · macOS</p>
+            <h1>O navegador que sabe que você&nbsp;programa.</h1>
+          </div>
+          <div class="hero-side">
+            <p class="lede">Um navegador Chromium com sidebar vertical, Spaces e uma barra de comandos que entende <code>gh 482</code>, JWTs e URLs de staging. Roda inteiro no seu Mac, não coleta nada e o código é aberto.</p>
+            <div class="cta-row">
+              <a class="btn" href="https://github.com/lucianodiisouza/flecha-browser">Baixe o Flecha no GitHub</a>
+              <a class="btn btn-ghost" href="#arc">Importar do Arc</a>
+            </div>
+          </div>
+        </div>
+
+        <figure class="sheet" aria-label="Desenho técnico da janela do Flecha com a barra de comandos aberta">
+          <div class="sheet-zones top" aria-hidden="true"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span></div>
+          <div class="sheet-zones left" aria-hidden="true"><span>A</span><span>B</span><span>C</span><span>D</span></div>
+          <div class="sheet-body">
+            <div class="mock-frame">
+              <div class="mock-canvas">
+                <div class="dim dim-top" aria-hidden="true"><span>260</span></div>
+                <div class="mock" style="--space-color: #cdd9f7">
+                  <aside class="m-sidebar">
+                    <div class="m-toolbar">
+                      <span class="m-lights"><i></i><i></i><i></i></span>
+                      <svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M6 2.5v11"/></svg>
+                      <span class="m-spacer"></span>
+                      <svg viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"/></svg>
+                      <svg viewBox="0 0 16 16" class="off"><path d="m6 3 5 5-5 5"/></svg>
+                      <svg viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5v3h-3"/></svg>
+                    </div>
+                    <div class="m-urlbar">github.com/oprimo/api/pull/482</div>
+                    <div class="m-favs">
+                      <span class="m-fav active"><i class="fi" style="--c:#1d1d1f">G</i></span>
+                      <span class="m-fav"><i class="fi" style="--c:#5e6ad2">L</i></span>
+                      <span class="m-fav"><i class="fi" style="--c:#e01e5a">S</i></span>
+                      <span class="m-fav"><i class="fi" style="--c:#f24e1e">F</i></span>
+                    </div>
+                    <div class="m-space">Work</div>
+                    <div class="m-rows">
+                      <div class="m-row folder"><svg viewBox="0 0 16 16" class="chev"><path d="m6 4 4 4-4 4"/></svg><span>api</span></div>
+                      <div class="m-row indent"><i class="fi" style="--c:#2f80ed">D</i><span>Docs · API reference</span></div>
+                      <div class="m-row indent"><i class="fi local">L</i><span>localhost:3000/checkout</span><b class="m-badge">2</b></div>
+                      <div class="m-row"><i class="fi" style="--c:#0b2545">V</i><span>Vercel · Deployments</span></div>
+                      <div class="m-divider"><span></span><em>Clear</em></div>
+                      <div class="m-row muted"><b class="plus">+</b><span>New Tab</span></div>
+                      <div class="m-row active"><i class="fi" style="--c:#1d1d1f">G</i><span>Fix checkout redirect #482</span></div>
+                      <div class="m-row"><i class="fi" style="--c:#cb3837">n</i><span>zod · npm</span></div>
+                      <div class="m-row"><i class="fi" style="--c:#83d0f2">M</i><span>Array.prototype.at() · MDN</span></div>
+                    </div>
+                    <div class="m-footer">
+                      <svg viewBox="0 0 16 16"><path d="M8 2v8m-3-3 3 3 3-3M3 13h10"/></svg>
+                      <svg viewBox="0 0 16 16"><path d="M5 3 2 6l3 3M2 6h9M11 7l3 3-3 3M14 10H5"/></svg>
+                      <span class="m-dots"><i class="on">💼</i><i>🏠</i><i>🧪</i></span>
+                      <svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>
+                    </div>
+                  </aside>
+                  <div class="m-page" aria-hidden="true">
+                    <div class="m-pr">
+                      <span class="m-pr-state">Open</span>
+                      <span class="m-pr-title">Fix checkout redirect after login</span>
+                      <span class="m-line w70"></span><span class="m-line w90"></span><span class="m-line w50"></span>
+                      <span class="m-code"></span>
+                      <span class="m-line w80"></span><span class="m-line w60"></span>
+                    </div>
+                  </div>
+                  <div class="m-scrim"></div>
+                  <div class="m-palette">
+                    <div class="m-input">gh 483<span class="caret"></span></div>
+                    <ul class="m-results">
+                      <li class="selected"><svg viewBox="0 0 16 16"><path d="M3 8h10M9 4l4 4-4 4"/></svg><span class="label">oprimo/api#483</span><span class="sub">Open pull request or issue</span></li>
+                      <li><i class="fi" style="--c:#1d1d1f">G</i><span class="label">Fix checkout redirect #482</span><span class="sub">Switch to tab</span></li>
+                      <li><i class="fi" style="--c:#1d1d1f">G</i><span class="label">oprimo/api · Pull requests</span><span class="sub">History</span></li>
+                    </ul>
+                  </div>
+                </div>
+                <span class="balloon b1" aria-hidden="true">1</span>
+                <span class="balloon b2" aria-hidden="true">2</span>
+                <span class="balloon b3" aria-hidden="true">3</span>
+                <div class="callout c1" aria-hidden="true"><b>1</b><span>Barra de comandos <kbd>⌘T</kbd><br><small><code>gh 483</code> abre um PR deste repo</small></span></div>
+                <div class="callout c2" aria-hidden="true"><b>2</b><span>Servidor local<br><small>2 erros no console</small></span></div>
+                <div class="callout c3" aria-hidden="true"><b>3</b><span>Spaces <kbd>⌃1</kbd>–<kbd>⌃9</kbd><br><small>cookies e logins próprios</small></span></div>
+              </div>
+            </div>
+          </div>
+          <figcaption class="title-block">
+            <span><em>Projeto</em>Flecha</span>
+            <span><em>Desenho</em>Janela principal, barra de comandos aberta</span>
+            <span><em>Escala</em>1 : 1 @ 1000 px</span>
+            <span><em>Rev</em>0.1</span>
+          </figcaption>
+        </figure>
+
+        <ul class="facts" aria-label="Fatos">
+          <li><strong>100% local</strong><span>sem conta, sem servidor do Flecha</span></li>
+          <li><strong>Zero telemetria</strong><span>sem analytics, sem relatório de crash</span></li>
+          <li><strong>Chromium</strong><span>via Electron 45, com extensões do Chrome</span></li>
+          <li><strong>Open source</strong><span>TypeScript que dá pra ler numa tarde</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Try the command bar -------------------------------------------- -->
+    <section class="band dark" id="dev">
+      <div class="inner try-grid">
+        <header class="section-head">
+          <p class="eyebrow">Barra de comandos · <kbd>⌘T</kbd></p>
+          <h2>Digite como se estivesse no terminal.</h2>
+          <p>Atalhos para os sites que você abre cinquenta vezes por dia, e decodificadores para as strings que você colaria em algum site qualquer. Esta caixa roda as mesmas regras do app. Experimente.</p>
+          <dl class="grammar">
+            <div><dt><code>gh</code></dt><dd>repo, número de PR ou busca</dd></div>
+            <div><dt><code>npm</code></dt><dd>página do pacote ou busca</dd></div>
+            <div><dt><code>mdn</code></dt><dd>MDN Web Docs</dd></div>
+            <div><dt><code>caniuse</code></dt><dd>suporte nos navegadores</dd></div>
+            <div><dt><code>so</code></dt><dd>Stack Overflow</dd></div>
+            <div><dt><code>eyJ…</code></dt><dd>JWT, decodificado no seu Mac</dd></div>
+            <div><dt><code>1761…</code></dt><dd>Unix time, como data</dd></div>
+          </dl>
+        </header>
+        <div class="try-stage">
+          <div class="palette" role="group" aria-label="Demonstração da barra de comandos">
+            <label class="visually-hidden" for="try-input">Barra de comandos</label>
+            <input id="try-input" class="palette-input" spellcheck="false" autocomplete="off" value="gh flecha-browser" placeholder="Search or enter URL…">
+            <ul class="palette-results" id="try-results" aria-live="polite">
+              <li class="selected"><span class="label">flecha-browser</span><span class="sub">Search GitHub</span></li>
+            </ul>
+            <pre class="palette-detail" id="try-detail" hidden></pre>
+          </div>
+          <div class="chips" id="try-chips" aria-label="Exemplos">
+            <button type="button" data-q="gh vercel/next.js">gh vercel/next.js</button>
+            <button type="button" data-q="npm zod">npm zod</button>
+            <button type="button" data-q="mdn structuredClone">mdn structuredClone</button>
+            <button type="button" data-q="caniuse :has()">caniuse :has()</button>
+            <button type="button" data-q="so docker volume permissions">so docker volume…</button>
+            <button type="button" data-q="jwt">colar um JWT</button>
+            <button type="button" data-q="1761140000">1761140000</button>
+          </div>
+          <p class="try-note">Tokens são decodificados dentro do navegador. Nunca saem da sua máquina.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Dev loop ---------------------------------------------------------- -->
+    <section class="band" id="loop">
+      <div class="inner">
+        <header class="section-head split">
+          <div>
+            <p class="eyebrow">O dia a dia de dev</p>
+            <h2>A parte do seu dia que acontece no navegador.</h2>
+          </div>
+          <p class="legend"><span class="status shipped">Pronto</span> já no app <span class="status next">Em andamento</span> sendo feito agora</p>
+        </header>
+
+        <div class="bento">
+          <article class="tile t-env">
+            <div class="tile-text">
+              <p class="tile-meta"><span class="status shipped">Pronto</span><kbd>⌥⌘E</kbd></p>
+              <h3>Uma tecla entre local, staging e produção.</h3>
+              <p>A mesma página abre no próximo ambiente, com caminho e query intactos. O Flecha agrupa as origens de um projeto e reconhece local, staging e produção pelo nome.</p>
+            </div>
+            <div class="env" aria-label="Exemplo de troca de ambiente">
+              <div class="env-row"><span class="env-tag local">local</span><code>localhost:3000<b>/checkout?step=2</b></code><kbd>⌥⌘E</kbd></div>
+              <div class="env-row on"><span class="env-tag staging">staging</span><code>staging.acme.dev<b>/checkout?step=2</b></code><kbd>⌥⌘E</kbd></div>
+              <div class="env-row"><span class="env-tag prod">produção</span><code>acme.com<b>/checkout?step=2</b></code><kbd>⌥⌘E</kbd></div>
+            </div>
+          </article>
+
+          <article class="tile t-split">
+            <p class="tile-meta"><span class="status shipped">Pronto</span><kbd>⌥⌘M</kbd></p>
+            <h3>Celular e desktop, lado a lado.</h3>
+            <p>Um espelho do tamanho de um celular ao lado da página inteira. Role ou clique em um e o outro acompanha.</p>
+            <div class="devices" aria-hidden="true">
+              <div class="d-desk"><span class="d-bar"></span><span class="d-hero"></span><span class="d-cols"><i></i><i></i><i></i></span></div>
+              <div class="d-phone"><span class="d-bar"></span><span class="d-hero"></span><i></i><i></i></div>
+            </div>
+          </article>
+
+          <article class="tile t-spaces">
+            <p class="tile-meta"><span class="status shipped">Pronto</span></p>
+            <h3>Logins separados por Space.</h3>
+            <p>Cada Space tem os próprios cookies. Fique logado em duas contas do GitHub, ou teste como admin e como cliente.</p>
+            <div class="spaces-demo" aria-hidden="true">
+              <span class="s-work"><i>💼</i>Trabalho<code>@ana-acme</code></span>
+              <span class="s-client"><i>🧪</i>Cliente<code>@ana-contoso</code></span>
+            </div>
+          </article>
+
+          <article class="tile t-servers">
+            <p class="tile-meta"><span class="status next">Em andamento</span></p>
+            <h3>Seus servidores de dev, já na sidebar.</h3>
+            <p>Servidores escutando no localhost aparecem sozinhos, com a contagem de erros no console.</p>
+            <div class="servers" aria-hidden="true">
+              <span><i class="dot"></i>:3000<em>next dev</em><b>2</b></span>
+              <span><i class="dot"></i>:5173<em>vite</em></span>
+              <span><i class="dot"></i>:8080<em>api</em></span>
+            </div>
+          </article>
+
+          <article class="tile t-boosts">
+            <div class="tile-text">
+              <p class="tile-meta"><span class="status next">Em andamento</span></p>
+              <h3>Boosts em TypeScript, versionados no git.</h3>
+              <p>Mude qualquer site com um script e um pouco de CSS. Boosts são arquivos <code>.ts</code> comuns numa pasta que você escolhe, então ganham code review, histórico e o autocomplete do seu editor.</p>
+            </div>
+            <pre class="code" aria-label="Exemplo de Boost"><code><span class="c">// boosts/github.com.ts · API sketch</span>
+<span class="k">export default</span> boost({
+  match: <span class="s">'github.com/*/pull/*'</span>,
+  css: <span class="s">`.js-comment-hide-button { display: none }`</span>,
+  run() {
+    <span class="c">// collapse lockfiles in every PR</span>
+    <span class="k">for</span> (<span class="k">const</span> f <span class="k">of</span> $$(<span class="s">'[data-path$=".lock"]'</span>)) f.collapse()
+  },
+})</code></pre>
+          </article>
+
+          <article class="tile t-mcp">
+            <div class="tile-text">
+              <p class="tile-meta"><span class="status next">Em andamento</span><span class="tag">MCP</span></p>
+              <h3>Deixe seu agente de código ver suas abas.</h3>
+              <p>O Flecha roda um servidor MCP em <code>127.0.0.1</code>, então Claude Code, Cursor e outros agentes no seu Mac conseguem ler a página aberta, o console e os erros de rede. Ler é o padrão. Clicar e digitar só ficam disponíveis quando você liga o acesso total nas Configurações.</p>
+            </div>
+            <div class="term" aria-label="Um agente usando o Flecha via MCP (ilustrativo)">
+              <div class="term-bar"><i></i><i></i><i></i><span>~/acme/web</span></div>
+              <p><span class="p">›</span> por que o checkout redireciona duas vezes?</p>
+              <p class="t">● flecha · ler console <span>localhost:3000/checkout</span></p>
+              <p class="t">● flecha · network <span>302 /login → 302 /checkout</span></p>
+              <p class="a">O middleware de auth roda antes do cookie de sessão ser gravado, então a primeira requisição chega sem sessão. Mover <code>setSession()</code> para antes de <code>requireAuth()</code> resolve.</p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Privacy ---------------------------------------------------------- -->
+    <section class="band privacy" id="privacy">
+      <div class="inner">
+        <header class="section-head split">
+          <div>
+            <p class="eyebrow">Privacidade</p>
+            <h2>Local por design. O Flecha não coleta nada.</h2>
+          </div>
+          <p class="aside">Não existe servidor do Flecha para onde mandar seus dados. Não precisa acreditar na gente: o código é público.</p>
+        </header>
+        <figure class="arch" aria-label="Para onde vão seus dados quando você usa o Flecha">
+          <div class="arch-mac">
+            <span class="arch-label">Seu Mac</span>
+            <div class="node node-main">
+              <p class="node-title"><svg viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="23" fill="#0b2545"/><path d="M50 10 80 76 50 61 20 76Z" fill="#eef2f6" transform="rotate(45 50 50)"/></svg>Flecha</p>
+              <ul>
+                <li><span>Abas, Spaces, configurações</span><code>flecha-state.json</code></li>
+                <li><span>Histórico</span><code>flecha-history.json</code></li>
+                <li><span>Cookies</span><code>um pote por Space</code></li>
+                <li><span>Bloqueador de anúncios e rastreadores</span><code>roda localmente</code></li>
+              </ul>
+            </div>
+            <div class="arch-locals">
+              <div class="node"><p class="node-title">Claude Code, Cursor</p><p class="node-sub">falam com o Flecha via MCP em <code>127.0.0.1</code></p></div>
+              <div class="node"><p class="node-title">Arquivo da sidebar do Arc</p><p class="node-sub">lido uma vez, ao importar</p></div>
+            </div>
+          </div>
+          <div class="arch-wire" aria-hidden="true"><span class="packets"></span><em>as páginas que você abre</em></div>
+          <div class="arch-out">
+            <div class="node node-web"><p class="node-title">A web</p><p class="node-sub">sites que você visita, seu buscador, atualizações de extensões e das listas do bloqueador</p></div>
+            <div class="node node-none"><p class="node-title">Servidores do Flecha</p><p class="node-sub">não existem</p></div>
+          </div>
+        </figure>
+        <div class="privacy-grid">
+          <div class="ledger" aria-label="O que o Flecha envia">
+            <p class="ledger-head"><span>Enviado ao Flecha</span><span>bytes</span></p>
+            <ul>
+              <li><span>Analytics de uso</span><b>0</b></li>
+              <li><span>Relatórios de crash</span><b>0</b></li>
+              <li><span>Histórico de navegação</span><b>0</b></li>
+              <li><span>Conta ou login</span><b>nenhum</b></li>
+            </ul>
+            <p class="ledger-foot">O tráfego de rede são os sites que você abre, seu buscador e atualizações de extensões e das listas do bloqueador.</p>
+          </div>
+          <ul class="privacy-points">
+            <li>
+              <h3>Seus dados são arquivos no seu Mac</h3>
+              <p>Abas, Spaces, histórico e configurações ficam na sua pasta de usuário. Faça backup, apague ou abra em qualquer editor.</p>
+            </li>
+            <li>
+              <h3>Rastreadores bloqueados de fábrica</h3>
+              <p>O bloqueio de anúncios e rastreadores vem embutido e ligado por padrão, com as listas EasyList, EasyPrivacy e uBlock. Nenhuma extensão em quem confiar.</p>
+            </li>
+            <li>
+              <h3>Agentes ficam na sua máquina</h3>
+              <p>A ponte MCP só escuta em <code>127.0.0.1</code>. Agentes podem ler por padrão; o controle total é um botão que só você liga.</p>
+            </li>
+            <li>
+              <h3>Spaces não compartilham cookies</h3>
+              <p>Cada Space tem seu próprio pote de cookies, então trabalho e vida pessoal não enxergam as sessões um do outro.</p>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- Shortcuts ---------------------------------------------------------- -->
+    <section class="band tint" id="keys">
+      <div class="inner">
+        <header class="section-head split">
+          <div>
+            <p class="eyebrow">Teclado em primeiro lugar</p>
+            <h2>Tudo tem atalho.</h2>
+          </div>
+          <p class="aside">Se você usava o Arc, suas mãos já sabem a maioria.</p>
+        </header>
+        <ul class="keys">
+          <li><span class="kc"><kbd>⌘</kbd><kbd>T</kbd></span>Barra de comandos</li>
+          <li><span class="kc"><kbd>⌘</kbd><kbd>L</kbd></span>Editar a URL atual</li>
+          <li><span class="kc"><kbd>⌘</kbd><kbd>S</kbd></span>Esconder a sidebar</li>
+          <li><span class="kc"><kbd>⌘</kbd><kbd>D</kbd></span>Fixar ou soltar aba</li>
+          <li><span class="kc"><kbd>⇧</kbd><kbd>⌘</kbd><kbd>C</kbd></span>Copiar URL</li>
+          <li><span class="kc"><kbd>⇧</kbd><kbd>⌘</kbd><kbd>K</kbd></span>Limpar as abas do dia</li>
+          <li><span class="kc"><kbd>⇧</kbd><kbd>⌘</kbd><kbd>T</kbd></span>Reabrir a última aba</li>
+          <li><span class="kc"><kbd>⌃</kbd><kbd>1–9</kbd></span>Trocar de Space</li>
+          <li><span class="kc"><kbd>⌃</kbd><kbd>⇧</kbd><kbd>=</kbd></span>Tela dividida</li>
+          <li class="dev"><span class="kc"><kbd>⌥</kbd><kbd>⌘</kbd><kbd>E</kbd></span>Próximo ambiente</li>
+          <li class="dev"><span class="kc"><kbd>⌥</kbd><kbd>⌘</kbd><kbd>M</kbd></span>Split responsivo</li>
+          <li><span class="kc"><kbd>⌘</kbd><kbd>F</kbd></span>Buscar na página</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Arc migration ---------------------------------------------------- -->
+    <section class="band" id="arc">
+      <div class="inner arc-grid">
+        <header class="section-head">
+          <p class="eyebrow">Saindo do Arc</p>
+          <h2>Traga seus Spaces, abas fixadas e favoritos.</h2>
+          <p>O Arc está sendo descontinuado. O Flecha mantém as ideias que valem a pena, a sidebar, os Spaces, o Peek e a tela dividida, e importa sua configuração num passo só. Foi escrito do zero, sem código do Arc.</p>
+          <p class="import-path"><kbd>File</kbd> → <kbd>Import from Arc…</kbd> <span>(menu do app, em inglês)</span></p>
+        </header>
+        <div class="migrate" aria-label="O que a importação do Arc traz">
+          <div class="mig-col">
+            <p class="mig-head">Arc</p>
+            <ul>
+              <li><i>💼</i>Spaces, com nomes e emoji</li>
+              <li><i>📌</i>Abas fixadas e pastas</li>
+              <li><i>★</i>Favoritos</li>
+              <li><i>☀︎</i>Abas do dia</li>
+            </ul>
+          </div>
+          <svg class="mig-arrow" viewBox="0 0 64 24" aria-hidden="true"><path d="M2 12h44"/><path d="M44 4l14 8-14 8z" class="fill"/><circle class="dot" cx="4" cy="12" r="3"/></svg>
+          <div class="mig-col flecha">
+            <p class="mig-head">Flecha</p>
+            <ul>
+              <li><i>💼</i>Spaces</li>
+              <li><i>📌</i>Fixadas, mesmas pastas</li>
+              <li><i>★</i>Linha de favoritos</li>
+              <li><i>☀︎</i>Hoje</li>
+            </ul>
+          </div>
+          <p class="mig-note">Lido do arquivo da sidebar do Arc no seu Mac. Nada é enviado.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Open source ------------------------------------------------------ -->
+    <section class="band dark" id="source">
+      <div class="inner source-grid">
+        <div class="source-copy">
+          <svg class="source-icon" viewBox="-12 -12 124 124" aria-hidden="true">
+            <rect width="100" height="100" rx="23" fill="#0b2545"/>
+            <g fill="none" stroke="#3aa6d9" stroke-width="0.35" stroke-opacity="0.35"><path d="M10 0v100M20 0v100M30 0v100M40 0v100M60 0v100M70 0v100M80 0v100M90 0v100M0 10h100M0 20h100M0 30h100M0 40h100M0 60h100M0 70h100M0 80h100M0 90h100"/></g>
+            <g transform="rotate(45 50 50)">
+              <path d="M50 6v88" fill="none" stroke="#3aa6d9" stroke-width="0.7" stroke-dasharray="4 1.6 1 1.6"/>
+              <circle class="draw" cx="50" cy="50" r="31" fill="none" stroke="#3aa6d9" stroke-width="0.6"/>
+              <path d="M50 14 76 72 50 59 24 72Z" fill="#eef2f6"/>
+              <path d="M24 82H76M24 78v8M76 78v8" fill="none" stroke="#e4572e" stroke-width="1.8"/>
+            </g>
+            <path d="M-8 -4v108M-11 -4h6M-11 104h6" fill="none" stroke="#ff8a63" stroke-width="0.8"/>
+            <text x="-3" y="52" fill="#ff8a63" font-size="5" font-family="JetBrains Mono, monospace" transform="rotate(-90 -3 52)" text-anchor="middle">824 px</text>
+          </svg>
+          <p class="eyebrow">Código aberto</p>
+          <h2>Um navegador que você pode ler, compilar e forkar.</h2>
+          <p>Navegadores de empresa podem sumir quando a empresa muda de planos. O código do Flecha é público: se o projeto um dia parar, seu navegador continua funcionando e qualquer pessoa pode continuar.</p>
+          <div class="cta-row">
+            <a class="btn btn-light" href="https://github.com/lucianodiisouza/flecha-browser">Estrela no GitHub</a>
+            <a class="btn btn-ghost-light" href="https://github.com/lucianodiisouza/flecha-browser/issues">Abrir uma issue</a>
+          </div>
+        </div>
+        <div class="shell">
+          <div class="shell-bar"><span>zsh · compilar do código</span><button type="button" class="copy" id="copy-build" data-done="Copiado" data-selected="Selecionado">Copiar</button></div>
+          <pre id="build-cmds"><code>git clone https://github.com/lucianodiisouza/flecha-browser
+cd flecha-browser
+npm install
+npm start</code></pre>
+          <p class="shell-note">macOS · precisa de Node.js e npm. Builds empacotados estão a caminho.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="inner foot-inner">
+      <a class="brand" href="#top"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="23" fill="#0b2545"/><path d="M50 10 80 76 50 61 20 76Z" fill="#eef2f6" transform="rotate(45 50 50)"/></svg><span class="wordmark small">flecha</span></a>
+      <span class="credit">Feito com <span class="heart" aria-label="amor">❤️</span> por OPrimoDev &amp; Friends</span>
+      <span>Feito no Brasil · este site também não tem analytics</span>
+      <a href="https://github.com/lucianodiisouza/flecha-browser">GitHub</a>
+    </div>
+  </footer>
+
+  <script src="../main.js" defer></script>
+</body>
+</html>
