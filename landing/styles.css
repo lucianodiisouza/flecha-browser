@@ -204,6 +204,7 @@ h3 {
   font-variation-settings: 'wdth' 108;
   text-decoration: none;
   border: 1.5px solid var(--btn-bg);
+  white-space: nowrap;
   transition: transform 0.12s ease, box-shadow 0.12s ease;
 }
 .btn:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(11, 37, 69, 0.18); }
@@ -268,7 +269,7 @@ body::before {
 .nav-links { display: flex; gap: 26px; margin-left: auto; font: 500 0.82rem/1 var(--mono); }
 .nav-links a { text-decoration: none; color: var(--muted); }
 .nav-links a:hover { color: var(--ink); }
-.lang { font: 600 0.75rem/1 var(--mono); letter-spacing: 0.06em; color: var(--ink); text-decoration: none; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 8px; }
+.lang { white-space: nowrap; font: 600 0.75rem/1 var(--mono); letter-spacing: 0.06em; color: var(--ink); text-decoration: none; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 8px; }
 .lang:hover { border-color: var(--ink); }
 @media (max-width: 760px) { .nav-links { display: none; } .nav .lang { margin-left: auto; } .nav-inner { gap: 10px; } }
 
@@ -916,3 +917,4 @@ body::before {
 .credit:hover .heart { animation: beat 0.8s ease-in-out infinite; }
 @keyframes beat { 50% { transform: scale(1.25); } }
 @media (prefers-reduced-motion: reduce) { .credit:hover .heart { animation: none; } }
+@media (max-width: 480px) { .hide-sm { display: none; } }
