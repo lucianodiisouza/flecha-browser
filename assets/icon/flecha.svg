@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Flecha app icon, "Ponta": the arrowhead drawn as a machined part.
+       macOS grid: an 824px continuous-corner plate centred on a 1024px canvas.
+       Everything inside the plate is drawn on a 100-unit grid (1 unit = 8.24px). -->
+  <defs>
+    <path id="plate" d="M100.00 50.00L99.97 65.36L99.89 70.26L99.75 73.81L99.56 76.68L99.31 79.12L99.01 81.26L98.64 83.17L98.22 84.89L97.74 86.46L97.20 87.89L96.60 89.21L95.94 90.43L95.20 91.54L94.40 92.58L93.53 93.53L92.58 94.40L91.54 95.20L90.43 95.94L89.21 96.60L87.89 97.20L86.46 97.74L84.89 98.22L83.17 98.64L81.26 99.01L79.12 99.31L76.68 99.56L73.81 99.75L70.26 99.89L65.36 99.97L50.00 100.00L34.64 99.97L29.74 99.89L26.19 99.75L23.32 99.56L20.88 99.31L18.74 99.01L16.83 98.64L15.11 98.22L13.54 97.74L12.11 97.20L10.79 96.60L9.57 95.94L8.46 95.20L7.42 94.40L6.47 93.53L5.60 92.58L4.80 91.54L4.06 90.43L3.40 89.21L2.80 87.89L2.26 86.46L1.78 84.89L1.36 83.17L0.99 81.26L0.69 79.12L0.44 76.68L0.25 73.81L0.11 70.26L0.03 65.36L0.00 50.00L0.03 34.64L0.11 29.74L0.25 26.19L0.44 23.32L0.69 20.88L0.99 18.74L1.36 16.83L1.78 15.11L2.26 13.54L2.80 12.11L3.40 10.79L4.06 9.57L4.80 8.46L5.60 7.42L6.47 6.47L7.42 5.60L8.46 4.80L9.57 4.06L10.79 3.40L12.11 2.80L13.54 2.26L15.11 1.78L16.83 1.36L18.74 0.99L20.88 0.69L23.32 0.44L26.19 0.25L29.74 0.11L34.64 0.03L50.00 0.00L65.36 0.03L70.26 0.11L73.81 0.25L76.68 0.44L79.12 0.69L81.26 0.99L83.17 1.36L84.89 1.78L86.46 2.26L87.89 2.80L89.21 3.40L90.43 4.06L91.54 4.80L92.58 5.60L93.53 6.47L94.40 7.42L95.20 8.46L95.94 9.57L96.60 10.79L97.20 12.11L97.74 13.54L98.22 15.11L98.64 16.83L99.01 18.74L99.31 20.88L99.56 23.32L99.75 26.19L99.89 29.74L99.97 34.64Z"/>
+    <clipPath id="clip"><use href="#plate"/></clipPath>
+    <linearGradient id="ink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0f2d52"/>
+      <stop offset="1" stop-color="#0a2240"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="1.2" stdDeviation="1.5" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  <g transform="translate(100 100) scale(8.24)">
+    <use href="#plate" fill="url(#ink)" filter="url(#shadow)"/>
+    <!-- drafting grid -->
+    <g clip-path="url(#clip)" fill="none" stroke="#3aa6d9" stroke-width="0.35">
+      <path stroke-opacity="0.16" d="M10 0v100M20 0v100M30 0v100M40 0v100M60 0v100M70 0v100M80 0v100M90 0v100M0 10h100M0 20h100M0 30h100M0 40h100M0 60h100M0 70h100M0 80h100M0 90h100"/>
+      <path stroke-opacity="0.32" d="M50 0v100M0 50h100"/>
+    </g>
+    <g transform="rotate(45 50 50)">
+      <!-- centreline and compass circle -->
+      <path d="M50 6v88" fill="none" stroke="#3aa6d9" stroke-width="0.7" stroke-dasharray="4 1.6 1 1.6"/>
+      <circle cx="50" cy="50" r="31" fill="none" stroke="#3aa6d9" stroke-opacity="0.75" stroke-width="0.6"/>
+      <!-- the arrowhead -->
+      <path d="M50 14 76 72 50 59 24 72Z" fill="#eef2f6"/>
+      <!-- dimension across the barbs -->
+      <path d="M24 82H76M24 78v8M76 78v8" fill="none" stroke="#e4572e" stroke-width="1.8"/>
+    </g>
+  </g>
+</svg>
