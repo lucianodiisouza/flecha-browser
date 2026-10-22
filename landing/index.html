@@ -286,6 +286,29 @@
           </div>
           <p class="aside">There is no Flecha server to send your data to. Don't take our word for it: the code is public.</p>
         </header>
+        <figure class="arch" aria-label="Where your data goes when you use Flecha">
+          <div class="arch-mac">
+            <span class="arch-label">Your Mac</span>
+            <div class="node node-main">
+              <p class="node-title"><svg viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="23" fill="#0b2545"/><path d="M50 10 80 76 50 61 20 76Z" fill="#eef2f6" transform="rotate(45 50 50)"/></svg>Flecha</p>
+              <ul>
+                <li><span>Tabs, Spaces, settings</span><code>flecha-state.json</code></li>
+                <li><span>History</span><code>flecha-history.json</code></li>
+                <li><span>Cookies</span><code>one jar per Space</code></li>
+                <li><span>Ad and tracker blocker</span><code>runs locally</code></li>
+              </ul>
+            </div>
+            <div class="arch-locals">
+              <div class="node"><p class="node-title">Claude Code, Cursor</p><p class="node-sub">reach Flecha over MCP on <code>127.0.0.1</code></p></div>
+              <div class="node"><p class="node-title">Arc's sidebar file</p><p class="node-sub">read once when you import</p></div>
+            </div>
+          </div>
+          <div class="arch-wire" aria-hidden="true"><span class="packets"></span><em>the pages you open</em></div>
+          <div class="arch-out">
+            <div class="node node-web"><p class="node-title">The web</p><p class="node-sub">sites you visit, your search engine, extension and blocker-list updates</p></div>
+            <div class="node node-none"><p class="node-title">Flecha servers</p><p class="node-sub">there aren't any</p></div>
+          </div>
+        </figure>
         <div class="privacy-grid">
           <div class="ledger" aria-label="What Flecha sends">
             <p class="ledger-head"><span>Sent to Flecha</span><span>bytes</span></p>
@@ -384,6 +407,18 @@
     <section class="band dark" id="source">
       <div class="inner source-grid">
         <div class="source-copy">
+          <svg class="source-icon" viewBox="-12 -12 124 124" aria-hidden="true">
+            <rect width="100" height="100" rx="23" fill="#0b2545"/>
+            <g fill="none" stroke="#3aa6d9" stroke-width="0.35" stroke-opacity="0.35"><path d="M10 0v100M20 0v100M30 0v100M40 0v100M60 0v100M70 0v100M80 0v100M90 0v100M0 10h100M0 20h100M0 30h100M0 40h100M0 60h100M0 70h100M0 80h100M0 90h100"/></g>
+            <g transform="rotate(45 50 50)">
+              <path d="M50 6v88" fill="none" stroke="#3aa6d9" stroke-width="0.7" stroke-dasharray="4 1.6 1 1.6"/>
+              <circle class="draw" cx="50" cy="50" r="31" fill="none" stroke="#3aa6d9" stroke-width="0.6"/>
+              <path d="M50 14 76 72 50 59 24 72Z" fill="#eef2f6"/>
+              <path d="M24 82H76M24 78v8M76 78v8" fill="none" stroke="#e4572e" stroke-width="1.8"/>
+            </g>
+            <path d="M-8 -4v108M-11 -4h6M-11 104h6" fill="none" stroke="#ff8a63" stroke-width="0.8"/>
+            <text x="-3" y="52" fill="#ff8a63" font-size="5" font-family="JetBrains Mono, monospace" transform="rotate(-90 -3 52)" text-anchor="middle">824 px</text>
+          </svg>
           <p class="eyebrow">Open source</p>
           <h2>A browser you can read, build and fork.</h2>
           <p>Browsers backed by a company can disappear when the company changes its plans. Flecha's code is public, so if the project ever stops, your browser keeps working and anyone can pick it up.</p>
