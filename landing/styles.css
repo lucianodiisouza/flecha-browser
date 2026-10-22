@@ -872,3 +872,39 @@ body::before {
 @media (max-width: 640px) { .arch-mac { grid-template-columns: 1fr; } }
 
 .source-icon { width: 132px; height: 132px; filter: drop-shadow(0 18px 30px rgba(0, 0, 0, 0.35)); }
+
+/* ---- motion ------------------------------------------------------------- */
+
+.d-desk > *, .d-phone > * { animation: synced-scroll 7s ease-in-out infinite; }
+@keyframes synced-scroll {
+  0%, 20% { transform: translateY(0); }
+  45%, 70% { transform: translateY(-26px); }
+  95%, 100% { transform: translateY(0); }
+}
+.devices > div { overflow: hidden; }
+
+.servers b, .m-badge { animation: badge 2.4s ease-out infinite; }
+@keyframes badge {
+  0% { box-shadow: 0 0 0 0 rgba(217, 48, 54, 0.55); }
+  70%, 100% { box-shadow: 0 0 0 7px rgba(217, 48, 54, 0); }
+}
+
+.env-row { transition: border-color 0.3s, box-shadow 0.3s, background-color 0.3s; }
+.env-row kbd { transition: opacity 0.3s; }
+.env-row:not(.on) kbd { opacity: 0; }
+
+.mig-arrow .dot { fill: var(--mark); animation: travel 2.2s ease-in-out infinite; }
+@keyframes travel {
+  0% { transform: translateX(0); opacity: 0; }
+  15% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { transform: translateX(40px); opacity: 0; }
+}
+
+.m-results li { transition: opacity 0.2s; }
+.m-results.swapping li { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .d-desk > *, .d-phone > *, .servers b, .m-badge, .mig-arrow .dot, .packets::before { animation: none; }
+  .mig-arrow .dot { opacity: 0; }
+}
