@@ -94,6 +94,8 @@ function sampleJwt() {
   return `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({ sub: 'user_42', role: 'admin', exp })}.c2lnbmF0dXJl`;
 }
 
+const PT = document.documentElement.lang === 'pt-BR';
+const HINT = PT ? 'Tente gh, npm, mdn, caniuse ou so, ou cole um JWT' : 'Try gh, npm, mdn, caniuse or so, or paste a JWT';
 const input = document.getElementById('try-input');
 const results = document.getElementById('try-results');
 const detail = document.getElementById('try-detail');
@@ -108,7 +110,7 @@ function render() {
   if (!items.length) {
     const li = document.createElement('li');
     li.className = 'empty';
-    li.textContent = q.trim() ? `Search the web for “${q.trim()}”` : 'Try gh, npm, mdn, caniuse or so, or paste a JWT';
+    li.textContent = q.trim() ? `Search the web for “${q.trim()}”` : HINT;
     results.append(li);
     return;
   }
@@ -165,18 +167,19 @@ if (input) {
 
 const copyButton = document.getElementById('copy-build');
 copyButton?.addEventListener('click', async () => {
+  const label = copyButton.dataset.label || (copyButton.dataset.label = copyButton.textContent);
   const text = document.getElementById('build-cmds').textContent;
   try {
     await navigator.clipboard.writeText(text);
-    copyButton.textContent = 'Copied';
+    copyButton.textContent = copyButton.dataset.done || 'Copied';
   } catch {
     const range = document.createRange();
     range.selectNodeContents(document.getElementById('build-cmds'));
     getSelection().removeAllRanges();
     getSelection().addRange(range);
-    copyButton.textContent = 'Selected';
+    copyButton.textContent = copyButton.dataset.selected || 'Selected';
   }
-  setTimeout(() => (copyButton.textContent = 'Copy'), 1600);
+  setTimeout(() => (copyButton.textContent = label), 1600);
 });
 
 /* ---- motion: hero command bar, environments --------------------------- */
