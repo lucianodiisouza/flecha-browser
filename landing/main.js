@@ -11,7 +11,6 @@ function fitDrawing() {
   const s = Math.min(1, frame.clientWidth / CANVAS_W);
   canvas.style.setProperty('--s', s);
   frame.style.height = `${Math.ceil(CANVAS_H * s)}px`;
-  frame.classList.add('scaled');
 }
 if (frame && canvas) {
   new ResizeObserver(fitDrawing).observe(frame);

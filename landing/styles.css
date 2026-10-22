@@ -336,8 +336,7 @@ body::before {
 }
 
 /* The window is drawn at a fixed size (1200 × 712 canvas) and scaled to fit by main.js. */
-.mock-frame { position: relative; width: 100%; overflow-x: auto; }
-.mock-frame.scaled { overflow: hidden; }
+.mock-frame { position: relative; width: 100%; overflow: hidden; }
 .mock-canvas {
   position: relative;
   width: 1200px;
@@ -561,7 +560,7 @@ body::before {
 }
 .palette-input::placeholder { color: #6e6e73; }
 .palette:focus-within { box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45), 0 0 0 2px var(--night-mark); }
-.palette-results { list-style: none; margin: 0; padding: 0 6px 6px; height: 132px; overflow-y: auto; }
+.palette-results { list-style: none; margin: 0; padding: 0 6px 6px; min-height: 92px; }
 .palette-results li { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border-radius: 8px; }
 .palette-results li.selected { background: #3478f6; color: #fff; }
 .palette-results li.empty, .palette-results li.web { color: #5f5f64; }
@@ -569,8 +568,6 @@ body::before {
 .palette-results a { color: inherit; text-decoration: none; display: contents; }
 .palette-detail {
   margin: 0;
-  height: 168px;
-  overflow: auto;
   padding: 12px 20px 16px;
   border-top: 0.5px solid rgba(29, 29, 31, 0.12);
   font: 12px/1.5 ui-monospace, 'SF Mono', Menlo, monospace;
@@ -633,7 +630,7 @@ body::before {
   font-size: 0.8rem;
   min-width: 0;
 }
-.env-row code { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.env-row code { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--ink); }
 .env-row b { font-weight: 400; color: var(--muted); }
 .env-row:not(.on) code { color: var(--muted); }
 .env-row.on { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); background: var(--panel); }
@@ -672,9 +669,11 @@ body::before {
   background: var(--code-bg);
   color: var(--code-fg);
   font: 0.85rem/1.7 var(--mono);
-  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   min-width: 0;
 }
+.code code { white-space: inherit; }
 .code .c { color: var(--code-dim); }
 .code .k { color: #7cc7ec; }
 .code .s { color: #ffb59a; }
@@ -781,7 +780,7 @@ body::before {
 .shell-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--night-edge); font: 0.75rem/1 var(--mono); color: var(--code-dim); }
 .copy { font: 600 0.75rem/1 var(--mono); color: var(--code-fg); background: rgba(255, 255, 255, 0.1); border: 0; padding: 7px 11px; border-radius: 6px; cursor: pointer; }
 .copy:hover { background: rgba(255, 255, 255, 0.18); }
-.shell pre { margin: 0; padding: 20px 20px 8px; font: 0.9rem/1.75 var(--mono); overflow-x: auto; }
+.shell pre { margin: 0; padding: 20px 20px 8px; font: 0.9rem/1.75 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .shell .shell-note { margin: 0; padding: 0 20px 18px; font-size: 0.8rem; color: var(--code-dim); }
 
 /* ---- footer ------------------------------------------------------------ */
