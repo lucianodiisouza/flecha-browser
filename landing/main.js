@@ -5,7 +5,7 @@
 const frame = document.querySelector('.mock-frame');
 const canvas = document.querySelector('.mock-canvas');
 const CANVAS_W = 1200;
-const CANVAS_H = 680;
+const CANVAS_H = 712;
 
 function fitDrawing() {
   const s = Math.min(1, frame.clientWidth / CANVAS_W);
@@ -113,9 +113,10 @@ function render() {
     results.append(li);
     return;
   }
+  if (q.trim()) items.push({ label: `Search the web for “${q.trim()}”`, sub: 'Your search engine', web: true });
   for (const item of items) {
     const li = document.createElement('li');
-    li.className = 'selected';
+    li.className = item.web ? 'web' : 'selected';
     const label = document.createElement('span');
     label.className = 'label';
     label.textContent = item.label;
