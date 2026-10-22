@@ -53,8 +53,10 @@
         </div>
 
         <figure class="drawing" aria-label="The Flecha window with the command bar open">
-          <div class="dim dim-top" aria-hidden="true"><span>260 px sidebar</span></div>
-          <div class="mock-frame" data-mock-width="1000">
+          <div class="mock-frame">
+           <div class="mock-canvas">
+            <div class="dim dim-top" aria-hidden="true"><span>260 px</span></div>
+            <div class="callout" aria-hidden="true"><span>⌘T · command bar</span></div>
             <div class="mock" style="--space-color: #cdd9f7">
               <aside class="m-sidebar">
                 <div class="m-toolbar">
@@ -104,14 +106,14 @@
               <div class="m-palette">
                 <div class="m-input">gh 483<span class="caret"></span></div>
                 <ul class="m-results">
-                  <li class="selected"><svg viewBox="0 0 16 16"><path d="M8 2v12M2 8h12" opacity="0"/><path d="M3 8h10M9 4l4 4-4 4"/></svg><span class="label">oprimo/api#483</span><span class="sub">Open pull request or issue</span></li>
+                  <li class="selected"><svg viewBox="0 0 16 16"><path d="M3 8h10M9 4l4 4-4 4"/></svg><span class="label">oprimo/api#483</span><span class="sub">Open pull request or issue</span></li>
                   <li><i class="fi" style="--c:#1d1d1f">G</i><span class="label">Fix checkout redirect #482</span><span class="sub">Switch to tab</span></li>
                   <li><i class="fi" style="--c:#1d1d1f">G</i><span class="label">oprimo/api · Pull requests</span><span class="sub">History</span></li>
                 </ul>
               </div>
             </div>
+           </div>
           </div>
-          <div class="dim dim-side" aria-hidden="true"><span>⌘T</span></div>
           <figcaption>Fig. 1 · The sidebar and command bar as they ship today. <code>gh 483</code> opens a PR in the repo of the current tab.</figcaption>
         </figure>
       </div>
