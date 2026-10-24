@@ -749,7 +749,7 @@ const ACTIONS: Array<{ label: string; keywords: string; icon: IconName; shortcut
   { label: 'Show Downloads', keywords: 'downloads files', icon: 'download', run: () => (downloadsPanel.hidden = false) },
   {
     label: 'Import from another browser',
-    keywords: 'import migrate bookmarks history arc chrome safari firefox brave edge vivaldi opera',
+    keywords: 'import migrate bookmarks history arc dia chrome safari firefox brave edge vivaldi opera',
     icon: 'import',
     run: () => api.importMenu(),
   },
