@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -50,7 +51,6 @@ const appSupport = (...parts: string[]) => path.join(os.homedir(), 'Library', 'A
 
 const CHROMIUM: Array<[id: string, name: string, dir: string]> = [
   ['chrome', 'Chrome', 'Google/Chrome'],
-  ['dia', 'Dia', 'Dia/User Data'],
   ['brave', 'Brave', 'BraveSoftware/Brave-Browser'],
   ['edge', 'Edge', 'Microsoft Edge'],
   ['vivaldi', 'Vivaldi', 'Vivaldi'],
@@ -64,7 +64,7 @@ function chromiumSource(id: string, name: string, root: string): BrowserSource {
     id,
     name,
     profiles: () => chromiumProfiles(root),
-    readBookmarks: async (profile) => chromiumBookmarks(profile.bookmarkFiles),
+    readBookmarks: async (profile) => chromiumBookmarks(profile.bookmarkFiles.map((f) => fs.readFileSync(f, 'utf8'))),
     readHistory: (profile) =>
       // Chromium counts in microseconds since 1601.
       querySqlite<HistoryEntry>(
@@ -75,14 +75,16 @@ function chromiumSource(id: string, name: string, root: string): BrowserSource {
   };
 }
 
-/** `Default` and `Profile N` folders (Opera keeps its one profile in the root itself). */
-function chromiumProfiles(root: string): Profile[] {
+/**
+ * `Default` and `Profile N` folders (Opera keeps its one profile in the root itself). Chrome
+ * keeps the bookmarks of a signed-in account in a file of their own, `AccountBookmarks`.
+ */
+function chromiumProfiles(root: string, bookmarkNames = ['Bookmarks', 'AccountBookmarks']): Profile[] {
   const names = chromiumProfileNames(root);
   const dirs = [root, ...listDirs(root).filter((d) => /^(Default|Profile \d+)$/.test(d)).map((d) => path.join(root, d))];
   return dirs.flatMap((dir) => {
     const key = dir === root ? 'Default' : path.basename(dir);
-    // Chrome keeps the bookmarks of a signed-in account in a file of their own.
-    const bookmarkFiles = ['Bookmarks', 'AccountBookmarks'].map((f) => path.join(dir, f)).filter(isFile);
+    const bookmarkFiles = bookmarkNames.map((f) => path.join(dir, f)).filter(isFile);
     const history = path.join(dir, 'History');
     const profile: Profile = { name: names[key] || key, bookmarkFiles, historyFile: isFile(history) ? history : undefined };
     return profile.bookmarkFiles.length || profile.historyFile ? [profile] : [];
@@ -100,12 +102,12 @@ function chromiumProfileNames(root: string): Record<string, string> {
 }
 
 /** The bookmarks bar becomes the top level; "Other" and "Mobile" bookmarks get folders of their own. */
-function chromiumBookmarks(files: string[]): ImportNode[] {
+function chromiumBookmarks(documents: string[]): ImportNode[] {
   const bar: ImportNode[] = [];
   const other: ImportNode[] = [];
   const mobile: ImportNode[] = [];
-  for (const file of files) {
-    const roots = JSON.parse(fs.readFileSync(file, 'utf8'))?.roots ?? {};
+  for (const json of documents) {
+    const roots = JSON.parse(json)?.roots ?? {};
     bar.push(...chromiumChildren(roots.bookmark_bar));
     other.push(...chromiumChildren(roots.other));
     mobile.push(...chromiumChildren(roots.synced));
@@ -129,6 +131,45 @@ function arcSource(): BrowserSource {
     ...chromiumSource('arc', 'Arc', appSupport('Arc', 'User Data')),
     sidebar: { exists: () => isFile(arcSidebarPath()), read: () => readArcSidebar() },
   };
+}
+
+const DIA_KEYCHAIN =
+  'Dia keeps its bookmarks encrypted, with the key in your keychain. Choose Allow when macOS asks about “Dia Safe Storage”, then import again.';
+
+/**
+ * Dia is Chromium underneath too. Newer versions write their bookmarks to EncryptedBookmarks2
+ * and stop updating the plain Bookmarks file; older ones only have the plain file.
+ */
+function diaSource(): BrowserSource {
+  const root = appSupport('Dia', 'User Data');
+  return {
+    ...chromiumSource('dia', 'Dia', root),
+    // Only the newest of the two, so bookmarks deleted since don't come back from the old file.
+    profiles: () =>
+      chromiumProfiles(root, ['EncryptedBookmarks2', 'Bookmarks']).map((p) => ({ ...p, bookmarkFiles: p.bookmarkFiles.slice(0, 1) })),
+    readBookmarks: async ({ bookmarkFiles: [file] }) =>
+      chromiumBookmarks([
+        path.basename(file) === 'Bookmarks' ? fs.readFileSync(file, 'utf8') : await decryptChromium(file, 'Dia Safe Storage', DIA_KEYCHAIN),
+      ]),
+  };
+}
+
+/**
+ * Chromium's "v10" encryption on macOS: AES-128-CBC, with a key made from a password the browser
+ * keeps in the login keychain. macOS asks before handing that password over.
+ */
+async function decryptChromium(file: string, keychainService: string, denied: string): Promise<string> {
+  const data = await fs.promises.readFile(file);
+  if (data.subarray(0, 3).toString() !== 'v10') throw new Error(`${path.basename(file)} is encrypted in a way Flecha doesn’t know.`);
+  let password: string;
+  try {
+    password = (await run('/usr/bin/security', ['find-generic-password', '-w', '-s', keychainService])).stdout.trim();
+  } catch {
+    throw new Error(denied);
+  }
+  const key = crypto.pbkdf2Sync(password, 'saltysalt', 1003, 16, 'sha1');
+  const decipher = crypto.createDecipheriv('aes-128-cbc', key, Buffer.alloc(16, ' '));
+  return Buffer.concat([decipher.update(data.subarray(3)), decipher.final()]).toString('utf8');
 }
 
 // ---- Firefox ---------------------------------------------------------------
@@ -334,6 +375,7 @@ function sources(): BrowserSource[] {
   return [
     ...CHROMIUM.map(([id, name, dir]) => chromiumSource(id, name, appSupport(dir))),
     arcSource(),
+    diaSource(),
     firefoxSource(),
     safariSource(),
   ];
