@@ -50,6 +50,7 @@ const appSupport = (...parts: string[]) => path.join(os.homedir(), 'Library', 'A
 
 const CHROMIUM: Array<[id: string, name: string, dir: string]> = [
   ['chrome', 'Chrome', 'Google/Chrome'],
+  ['dia', 'Dia', 'Dia/User Data'],
   ['brave', 'Brave', 'BraveSoftware/Brave-Browser'],
   ['edge', 'Edge', 'Microsoft Edge'],
   ['vivaldi', 'Vivaldi', 'Vivaldi'],
