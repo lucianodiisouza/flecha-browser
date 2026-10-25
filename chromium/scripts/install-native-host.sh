@@ -20,9 +20,11 @@
 # like. Run this again after changing the host.
 #
 # A release app (package-release.sh) carries its own host, Node included, at
-# Flecha.app/Contents/Resources/native-host/flecha-host. --app <Flecha.app> builds and copies
-# nothing and points the manifests at that one. Manifest paths must be absolute on macOS
-# (launch_context.cc), so run it again if the app moves.
+# Flecha.app/Contents/Resources/native-host/flecha-host, and registers it in its own profile
+# folder on every launch (patch 0054), so it needs none of this. --app <Flecha.app> builds
+# and copies nothing and points the manifests at that one, for other profile folders or an
+# app built before patch 0054. Manifest paths must be absolute on macOS (launch_context.cc),
+# so run it again if the app moves.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 name="dev.oprimo.flecha.host"
