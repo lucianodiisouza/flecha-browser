@@ -80,6 +80,7 @@ const api: SettingsApi = {
     window.addEventListener('hashchange', () => location.hash.length > 1 && cb(location.hash.slice(1)));
   },
   onFind: (cb) => void findListeners.push(cb),
+  onChange: (cb) => on('settings:changed', cb),
   recordShortcut: async (on) => setRecording(!!on),
   onKey: (cb) => void keyListeners.push(cb),
   tabs: () => invoke<TabsView>('settings:tabs'),

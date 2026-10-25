@@ -265,6 +265,8 @@ export interface SettingsView {
   /** Edited as text: one `label origin` per line. */
   environments: Array<{ id: string; name: string; targetsText: string }>;
   agent: { enabled: boolean; endpoint?: string; token?: string };
+  /** Why Flecha's native host (imports, the agent bridge) last failed; undefined while it works. */
+  hostError?: string;
   theme: 'system' | 'light' | 'dark';
   archiveAfterHours: number;
   peekPinnedLinks: boolean;
@@ -353,6 +355,8 @@ export interface SettingsApi {
   onPane(cb: (pane: string) => void): void;
   /** ⌘F while Settings is in front: focus its search field. */
   onFind(cb: () => void): void;
+  /** Something the background shows here changed on its own (the agent bridge, the native host); `get` again. */
+  onChange(cb: () => void): void;
   /** While recording, every key goes to `onKey` instead of the page or the menus. */
   recordShortcut(recording: boolean): Promise<void>;
   onKey(cb: (key: RecordedKey) => void): void;

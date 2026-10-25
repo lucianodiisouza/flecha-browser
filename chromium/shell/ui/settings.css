@@ -1127,6 +1127,11 @@ code {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 70%, transparent);
 }
 
+.host-error,
+.row-text small.host-error {
+  color: var(--red);
+}
+
 .tm-error {
   flex-basis: 100%;
   padding: 0 0 2px 54px;
