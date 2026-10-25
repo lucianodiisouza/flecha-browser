@@ -2,6 +2,8 @@
 
 An Arc-style browser for developers, built on a Chromium fork. Arc's interface ideas are rebuilt from scratch; no Arc code is used.
 
+**Docs:** [flecha.dev/docs](https://flecha.dev/docs/)
+
 <p align="center"><img src="docs/screenshots/main-light.png" alt="Flecha's window: the sidebar with favourites, pinned tabs, Today and Spaces, beside a GitHub page"></p>
 
 ## Why
@@ -63,25 +65,18 @@ It is a Chromium 158 fork rather than an Electron app because Google blocks sign
 - Import bookmarks and history from other browsers and from Arc's sidebar (needs the native host)
 - Chrome extensions: install from the Chrome Web Store; their buttons appear under the address bar
 - Light, dark or system theme; Flecha's shortcuts can be re-recorded in Settings (except a few Chromium keeps, like ⌘T and ⌘W) (⌘/ lists them)
-- Settings (⌘,): search engine (Google, DuckDuckGo, Bing, Brave, Kagi, Ecosia), ad blocking, default browser, Peek behaviour, shortcuts, environments
+- Settings (⌘,): importing from other browsers, search engine (Google, DuckDuckGo, Bing, Brave, Kagi, Ecosia), ad blocking, default browser, Peek behaviour, shortcuts, environments
 
-Not there yet in the Chromium build: choosing the downloads folder from Settings, and the welcome tour.
+Not there yet in the Chromium build: choosing the downloads folder from Settings.
 
 ## Install
 
-1. Download the latest `Flecha-<version>.dmg` from [Releases](https://github.com/lucianodiisouza/flecha-browser/releases). Releases are signed with a Developer ID and notarized by Apple. They are **Apple Silicon (arm64) only** for now; Intel is planned.
+1. Download the latest `Flecha-<version>.dmg` from [Releases](https://github.com/lucianodiisouza/flecha-browser/releases). Releases are signed with a Developer ID and notarized by Apple. Take `Flecha-<version>.dmg` for Apple silicon or `Flecha-<version>-x64.dmg` for Intel. Flecha keeps itself up to date with Sparkle.
 2. Open the dmg and drag Flecha onto Applications.
 
 <p align="center"><img src="docs/screenshots/installer.png" alt="The Flecha disk image: the app beside the Applications folder" width="560"></p>
 
-3. Optional, but needed for importing from other browsers and Arc, and for the coding-agent MCP server:
-
-```bash
-git clone https://github.com/lucianodiisouza/flecha-browser.git && cd flecha-browser
-chromium/scripts/install-native-host.sh --app /Applications/Flecha.app
-```
-
-Browsers can't read other browsers' files or open a local port, so Flecha ships a small native messaging host (a bundled Node, in the app). The script registers it with Chromium for Flecha's profile folder. It allows only Flecha's own shell extension to talk to it. Run it again if you move the app.
+Browsers can't read other browsers' files or open a local port, so Flecha ships a small native messaging host (a bundled Node, in the app) for importing from other browsers and Arc and for the coding-agent MCP server. Flecha registers it with Chromium for its profile folder each time it starts, so moving the app is fine. It allows only Flecha's own shell extension to talk to it. If Settings › Import or Coding Agents says the helper isn't registered, quit and reopen Flecha.
 
 ## Build from source
 
@@ -167,10 +162,8 @@ flowchart LR
 
 Flecha is early software, used daily by its author. Next:
 
-- Intel (x86_64) builds
-- Auto-update with Sparkle (in progress)
 - Resizable split divider and 3 to 4 pane splits
-- Choosing the downloads folder and the welcome tour in the Chromium build
+- Choosing the downloads folder in the Chromium build
 
 ## Contributing
 
