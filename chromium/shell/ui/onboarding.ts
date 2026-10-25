@@ -302,7 +302,7 @@ export function setupOnboarding(api: FlechaApi, h: H, icon: (name: IconName) => 
         'div',
         { class: 'tour-features' },
         feature('sparkle', 'Coding agents', 'Claude Code and Cursor can read, click and debug your tabs over MCP.', h('button', { class: 'tour-ghost', onclick: () => api.openSettings('agents') }, 'Connect')),
-        feature('zap', 'Boosts', 'Your own TypeScript and CSS for any site, as files in git.', h('kbd', {}, keys('editBoost'))),
+        feature('zap', 'Boosts', 'Your own TypeScript and CSS for any site, edited right in Flecha.', h('kbd', {}, keys('editBoost'))),
         feature('phone', 'Responsive view', 'Desktop and phone side by side, following each other.', h('kbd', {}, keys('responsive'))),
         feature('code', 'Environments', 'Local → staging → prod for the same page, with a badge so prod never looks safe.', h('kbd', {}, keys('nextEnvironment'))),
       ),

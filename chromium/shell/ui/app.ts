@@ -369,7 +369,7 @@ function tabRow(tab: TabInfo, space: Space, target: DropTarget) {
         )
       : null,
     errorBadge(tab),
-    isBoosted(tab.url) ? h('span', { class: 'boost-mark', title: 'Boosted: a script or styles from ~/.flecha/boosts run here' }, icon('zap')) : null,
+    isBoosted(tab.url) ? h('span', { class: 'boost-mark', title: 'Boosted: your script or styles for this site run here' }, icon('zap')) : null,
     tab.device === 'mobile'
       ? h('span', { class: 'device-badge', title: 'Phone-sized mirror' }, icon('phone'))
       : h('span', { class: 'split-badge', title: 'In split view' }, icon('columns')),
@@ -759,7 +759,7 @@ const ACTIONS: Array<{ label: string; keywords: string; icon: IconName; shortcut
     icon: 'import',
     run: () => api.importMenu(),
   },
-  { label: 'Open Boosts Folder', keywords: 'boosts folder scripts css', icon: 'zap', run: () => api.openBoostsFolder() },
+  { label: 'Open Boosts', keywords: 'boosts folder scripts css', icon: 'zap', run: () => api.openBoostsFolder() },
 ];
 
 function matchingActions(q: string) {
