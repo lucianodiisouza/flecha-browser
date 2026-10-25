@@ -412,13 +412,14 @@ export interface FlechaApi {
   renameFolder(folderId: string, name: string): void;
   moveTab(tabId: string, target: DropTarget): void;
   clearToday(): void;
-  /** Pops up a menu of the other browsers to import from. */
+  /** Brings over the Spaces and tabs of Flecha's Electron version. */
   importMenu(): void;
   openPalette(mode: PaletteMode): void;
   closePalette(): void;
   toggleSidebar(): void;
   setSidebarPeek(peek: boolean): void;
-  copyText(text: string): void;
+  /** Copies text and says so in the address field: "Link copied" unless `message` says otherwise. */
+  copyText(text: string, message?: string): void;
   renameTab(tabId: string, title: string): void;
   toggleMute(tabId: string): void;
   /** Screenshot of the active page, to the clipboard. */

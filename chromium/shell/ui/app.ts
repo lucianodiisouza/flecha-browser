@@ -819,7 +819,7 @@ function updatePalette() {
         label: dev.label,
         sub: dev.sub,
         detail: dev.copy,
-        run: () => (dev.url ? open(dev.url) : api.copyText(dev.copy ?? '')),
+        run: () => (dev.url ? open(dev.url) : api.copyText(dev.copy ?? '', 'Copied')),
       });
     }
     for (const action of matchingActions(q).slice(0, 4)) {
