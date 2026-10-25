@@ -6,7 +6,7 @@ import type { SettingsPatch, SettingsView } from '../../shared/types';
 import type { Store } from '../../shared/store';
 import { SEARCH_ENGINES } from './url';
 import { sanitize as sanitizeEnvironments } from './environments';
-import { SHORTCUTS, displayKeys, isShortcutId, keysFor, sameKeys, shortcutList } from './shortcuts';
+import { SHORTCUTS, SPACE_MODIFIER, displayKeys, isShortcutId, keysFor, sameKeys, shortcutList } from './shortcuts';
 
 /** A modifier and a key, or a function key alone: "Alt+Cmd+K", "F5". */
 const ACCELERATOR = /^((Ctrl|Alt|Shift|Cmd)\+){1,4}[^+]+$|^F\d{1,2}$/;
@@ -61,8 +61,8 @@ export function setShortcut(store: Store, id: string, keys: string | null): stri
     return undefined;
   }
   if (keys !== null && !ACCELERATOR.test(keys)) return undefined;
-  // ⌘1…⌘9 and ⌃1…⌃9 pick tabs and Spaces.
-  if (keys && /^(Cmd|Ctrl)\+\d$/.test(keys)) return `${displayKeys(keys)} already goes to a tab or Space.`;
+  // ⌘1…⌘9 and ⌃1…⌃9 (Ctrl and Alt on Linux) pick tabs and Spaces.
+  if (keys && new RegExp(`^(Cmd|Ctrl|${SPACE_MODIFIER})\\+\\d$`).test(keys)) return `${displayKeys(keys)} already goes to a tab or Space.`;
   let notice: string | undefined;
   if (keys) {
     for (const other of SHORTCUTS) {

@@ -7,6 +7,7 @@ import './noPageMenu';
 import { invoke, on } from './client';
 import type { BoostFile } from './features/boosts';
 import { compileBoost } from './features/compileBoost';
+import { showKeys } from './lib/shortcuts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const list = $<HTMLUListElement>('list');
@@ -16,6 +17,8 @@ const status = $('status');
 
 let current: BoostFile | undefined;
 let savedCode = '';
+
+showKeys();
 
 const dirty = () => !!current && code.value !== savedCode;
 const selected = () => decodeURIComponent(location.hash.slice(1));

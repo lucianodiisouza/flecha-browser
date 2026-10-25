@@ -14,6 +14,7 @@
  *    load, through the DevTools protocol where the page's CSP forbids eval.
  */
 import { boostHostFor, boostMatches, boostName, parseBoostName, type BoostKind } from '../lib/boostFiles';
+import { displayKeys } from '../lib/shortcuts';
 import { hold, release, send } from './debuggee';
 
 const STORE_KEY = 'boosts';
@@ -38,13 +39,13 @@ export interface CompiledBoost {
 
 const TEMPLATES: Record<BoostKind, (host: string) => string> = {
   script: (host) => `// Boost for ${host}: runs on every page of this site once it has loaded.
-// It's TypeScript; Flecha strips the types when you save (⌘S), and open ${host} tabs reload.
+// It's TypeScript; Flecha strips the types when you save (${displayKeys('CmdOrCtrl+S')}), and open ${host} tabs reload.
 
 export {};
 
 // document.querySelector('header')?.remove();
 `,
-  styles: (host) => `/* Boost for ${host}: these styles apply to every page of this site, live as you save (⌘S). */
+  styles: (host) => `/* Boost for ${host}: these styles apply to every page of this site, live as you save (${displayKeys('CmdOrCtrl+S')}). */
 
 /* body { font-family: ui-sans-serif, system-ui; } */
 `,

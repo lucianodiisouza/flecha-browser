@@ -1,13 +1,24 @@
 # Sourced by the other scripts: where Chromium lives, with the APFS build volume mounted.
 #
-# The checkout sits on an APFS volume (a disk image on the external disk) because the disk
-# itself is HFS+, whose one-second file times make siso think every output is stale, so
-# every build was a full two-hour rebuild.
-FLECHA_DISK="${FLECHA_DISK:-/Volumes/EXT_FLASH_1TB/projs/flecha}"
-FLECHA_VOLUME="${FLECHA_VOLUME:-/Volumes/FlechaBuild}"
-if [ ! -d "$FLECHA_VOLUME/chromium" ]; then
-  hdiutil attach -quiet "$FLECHA_DISK/FlechaBuild.sparsebundle"
-fi
+# On a Mac the checkout sits on an APFS volume (a disk image on the external disk) because
+# the disk itself is HFS+, whose one-second file times make siso think every output is
+# stale, so every build was a full two-hour rebuild. Linux file systems need no such volume.
+case "$(uname -s)" in
+  Darwin)
+    flecha_os=mac
+    FLECHA_DISK="${FLECHA_DISK:-/Volumes/EXT_FLASH_1TB/projs/flecha}"
+    FLECHA_VOLUME="${FLECHA_VOLUME:-/Volumes/FlechaBuild}"
+    if [ ! -d "$FLECHA_VOLUME/chromium" ]; then
+      hdiutil attach -quiet "$FLECHA_DISK/FlechaBuild.sparsebundle"
+    fi
+    ;;
+  Linux)
+    flecha_os=linux
+    FLECHA_DISK="${FLECHA_DISK:-$HOME/flecha}"
+    FLECHA_VOLUME="${FLECHA_VOLUME:-$FLECHA_DISK}"
+    ;;
+  *) echo "error: Flecha builds on macOS or Linux, not $(uname -s)" >&2; exit 1 ;;
+esac
 src="${CHROMIUM_SRC:-$FLECHA_VOLUME/chromium/src}"
 export PATH="${DEPOT_TOOLS:-$FLECHA_DISK/depot_tools}:$PATH"
 

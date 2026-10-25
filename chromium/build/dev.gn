@@ -6,7 +6,6 @@ dcheck_always_on = false
 symbol_level = 0
 blink_symbol_level = 0
 v8_symbol_level = 0
-target_cpu = "arm64"
 proprietary_codecs = true
 ffmpeg_branding = "Chrome"
 use_remoteexec = false

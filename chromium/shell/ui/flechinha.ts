@@ -1,5 +1,6 @@
 import { ICONS, type IconName } from './icons.js';
 import type { FlechinhaApi, FlechinhaState } from '../../shared/types';
+import { displayKeys, showKeys } from '../lib/shortcuts';
 
 declare global {
   interface Window {
@@ -19,6 +20,11 @@ const forward = $<HTMLButtonElement>('forward');
 const reload = $<HTMLButtonElement>('reload');
 const copy = $<HTMLButtonElement>('copy');
 const openInFlecha = $<HTMLButtonElement>('open-in-flecha');
+
+back.title = `Back  ${displayKeys('CmdOrCtrl+[')}`;
+forward.title = `Forward  ${displayKeys('CmdOrCtrl+]')}`;
+copy.title = `Copy link  ${displayKeys('CmdOrCtrl+Shift+C')}`;
+showKeys();
 
 let state: FlechinhaState | undefined;
 let editing = false;
@@ -70,17 +76,17 @@ function render(s: FlechinhaState) {
   forward.disabled = !s.canGoForward;
   reload.disabled = empty;
   reload.replaceChildren(icon(s.loading ? 'close' : 'reload'));
-  reload.title = s.loading ? 'Stop' : 'Reload  ⌘R';
+  reload.title = s.loading ? 'Stop' : `Reload  ${displayKeys('CmdOrCtrl+R')}`;
   copy.disabled = empty;
   openInFlecha.disabled = empty;
   const space = `${s.space.emoji ? s.space.emoji + ' ' : ''}${s.space.name}`;
-  openInFlecha.title = `Move this page to ${space} as a tab  ⌘O`;
+  openInFlecha.title = `Move this page to ${space} as a tab  ${displayKeys('CmdOrCtrl+O')}`;
 
   address.classList.toggle('loading', s.loading);
   $('host').textContent = siteOf(s.url);
   const title = s.title && s.title !== s.url ? s.title : '';
   $('page-title').textContent = title;
-  show.title = `${s.url}\nEdit address  ⌘L`;
+  show.title = `${s.url}\nEdit address  ${displayKeys('CmdOrCtrl+L')}`;
   siteIcon(s);
 
   if (empty && !editing) startEditing();

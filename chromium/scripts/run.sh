@@ -1,9 +1,9 @@
 #!/bin/bash
-# Launches the dev build (out/Dev/Flecha.app) with its own profile. The Flecha shell is a
-# component extension (it can't be removed or turned off); --flecha-shell-dir points it at
-# chromium/shell/dist, so shell changes need no C++ build: rebuild the shell
-# (node chromium/shell/build.mjs) and relaunch. Extra arguments go to Chromium, e.g.
-# --flecha-show-top-chrome.
+# Launches the dev build (out/Dev/Flecha.app, out/Dev/chrome on Linux) with its own profile.
+# The Flecha shell is a component extension (it can't be removed or turned off);
+# --flecha-shell-dir points it at chromium/shell/dist, so shell changes need no C++ build:
+# rebuild the shell (node chromium/shell/build.mjs) and relaunch. Extra arguments go to
+# Chromium, e.g. --flecha-show-top-chrome.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 . "$here/scripts/env.sh"
@@ -19,7 +19,8 @@ mkdir -p "$profile"
 # the new shell runs. (Extension data, chrome.storage, lives elsewhere and stays.)
 rm -rf "$profile/Default/Service Worker"
 
-exec "$src/out/Dev/Flecha.app/Contents/MacOS/Flecha" \
+if [ "$flecha_os" = mac ]; then app="$src/out/Dev/Flecha.app/Contents/MacOS/Flecha"; else app="$src/out/Dev/chrome"; fi
+exec "$app" \
   --user-data-dir="$profile" \
   --flecha-shell-dir="$shell_dist" \
   "$@"

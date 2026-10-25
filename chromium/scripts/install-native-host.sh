@@ -10,8 +10,8 @@
 #
 # Chromium looks for user-level hosts in <user data dir>/NativeMessagingHosts
 # (chrome::DIR_USER_NATIVE_MESSAGING in chrome/common/chrome_paths.cc), and the user data dir
-# is ~/Library/Application Support/Flecha Browser unless --user-data-dir says otherwise
-# (patch 0001). Each of those folders gets the host's manifest.
+# is ~/Library/Application Support/Flecha Browser (~/.config/flecha-browser on Linux) unless
+# --user-data-dir says otherwise (patch 0001). Each of those folders gets the host's manifest.
 #
 # The host itself (a launcher and the bundled script) is copied to $FLECHA_HOST_DIR,
 # ~/Library/Application Support/Flecha Browser/native-host by default: Chromium starts hosts
@@ -27,7 +27,12 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 name="dev.oprimo.flecha.host"
 origin="chrome-extension://abdiaepfgbbhdjaecjipmaailijaaide/"
-host_dir="${FLECHA_HOST_DIR:-$HOME/Library/Application Support/Flecha Browser/native-host}"
+# Flecha's own profile folder (patch 0001): ~/.config/flecha-browser on Linux.
+case "$(uname -s)" in
+  Darwin) profile_dir="$HOME/Library/Application Support/Flecha Browser" ;;
+  *) profile_dir="${XDG_CONFIG_HOME:-$HOME/.config}/flecha-browser" ;;
+esac
+host_dir="${FLECHA_HOST_DIR:-$profile_dir/native-host}"
 
 targets=()
 default=1
@@ -49,7 +54,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -n "${FLECHA_PROFILE:-}" ] && targets+=("$FLECHA_PROFILE")
-[ "$default" = 1 ] && targets+=("$HOME/Library/Application Support/Flecha Browser")
+[ "$default" = 1 ] && targets+=("$profile_dir")
 if [ "${#targets[@]}" = 0 ]; then
   echo "error: --only needs a profile folder" >&2
   exit 1

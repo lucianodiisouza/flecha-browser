@@ -6,7 +6,7 @@
  * patch (stock Chromium, or a build older than the shell).
  */
 import type { Store } from '../shared/store';
-import { SHORTCUTS, keysFor } from './lib/shortcuts';
+import { SHORTCUTS, SPACE_MODIFIER, keysFor } from './lib/shortcuts';
 import { broadcast, handle } from './hub';
 import { incognito } from './incognito';
 
@@ -263,7 +263,7 @@ export function shortcutMap(state: Store['state']): Record<string, string> {
   const map: Record<string, string> = {};
   for (let i = 1; i <= 9; i++) {
     map[`CmdOrCtrl+${i}`] = `selectTab:${i}`;
-    map[`Ctrl+${i}`] = `selectSpace:${i}`;
+    map[`${SPACE_MODIFIER}+${i}`] = `selectSpace:${i}`;
   }
   // ⌘O in a Flechinha: Open in Flecha, as in the Electron spike (the toolbar's button says so).
   map['CmdOrCtrl+O'] = 'openInFlecha';

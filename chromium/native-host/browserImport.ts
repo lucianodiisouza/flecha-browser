@@ -8,7 +8,7 @@ import { arcSidebarPath, readArcSidebar, type ArcImport, type ImportNode } from 
 import type { BrowserImportData } from '../shared/importApply';
 
 /**
- * Brings bookmarks and history over from the other browsers on this Mac. Their files are
+ * Brings bookmarks and history over from the other browsers on this computer (macOS or Linux). Their files are
  * only ever read: databases are copied to a temporary folder first, since the browser may
  * have them open and locked. Passwords and cookies are left where they are.
  *
@@ -43,20 +43,53 @@ interface BrowserSource {
   sidebar?: { exists(): boolean; read(): ArcImport };
 }
 
-/** Electron's appData folder on macOS. */
-const appSupport = (...parts: string[]) => path.join(os.homedir(), 'Library', 'Application Support', ...parts);
+const IS_MAC = process.platform === 'darwin';
+
+const home = (...parts: string[]) => path.join(os.homedir(), ...parts);
+/** Electron's appData folder: ~/Library/Application Support on macOS, ~/.config on Linux. */
+export const appSupport = (...parts: string[]) =>
+  IS_MAC ? home('Library', 'Application Support', ...parts) : path.join(process.env.XDG_CONFIG_HOME || home('.config'), ...parts);
+/** A Flatpak app's own ~/.config. */
+const flatpak = (appId: string, ...parts: string[]) => home('.var', 'app', appId, 'config', ...parts);
 
 // ---- Chromium family -------------------------------------------------------
 
-const CHROMIUM: Array<[id: string, name: string, dir: string]> = [
-  ['chrome', 'Chrome', 'Google/Chrome'],
-  ['brave', 'Brave', 'BraveSoftware/Brave-Browser'],
-  ['edge', 'Edge', 'Microsoft Edge'],
-  ['vivaldi', 'Vivaldi', 'Vivaldi'],
-  ['opera', 'Opera', 'com.operasoftware.Opera'],
-  ['opera-gx', 'Opera GX', 'com.operasoftware.OperaGX'],
-  ['chromium', 'Chromium', 'Chromium'],
-];
+/**
+ * Each browser's data folder, the first of its folders that exists. On Linux a browser may
+ * come from the distro's package, a Flatpak or a Snap (Ubuntu's Chromium is a Snap).
+ * shortcut: a browser installed twice imports only the first, add the rest if anyone asks.
+ */
+const CHROMIUM: Array<[id: string, name: string, dirs: string[]]> = IS_MAC
+  ? [
+      ['chrome', 'Chrome', [appSupport('Google/Chrome')]],
+      ['brave', 'Brave', [appSupport('BraveSoftware/Brave-Browser')]],
+      ['edge', 'Edge', [appSupport('Microsoft Edge')]],
+      ['vivaldi', 'Vivaldi', [appSupport('Vivaldi')]],
+      ['opera', 'Opera', [appSupport('com.operasoftware.Opera')]],
+      ['opera-gx', 'Opera GX', [appSupport('com.operasoftware.OperaGX')]],
+      ['chromium', 'Chromium', [appSupport('Chromium')]],
+    ]
+  : [
+      ['chrome', 'Chrome', [appSupport('google-chrome'), flatpak('com.google.Chrome', 'google-chrome')]],
+      ['brave', 'Brave', [appSupport('BraveSoftware/Brave-Browser'), flatpak('com.brave.Browser', 'BraveSoftware/Brave-Browser'), home('snap/brave/current/.config/BraveSoftware/Brave-Browser')]],
+      ['edge', 'Edge', [appSupport('microsoft-edge'), flatpak('com.microsoft.Edge', 'microsoft-edge')]],
+      ['vivaldi', 'Vivaldi', [appSupport('vivaldi'), flatpak('com.vivaldi.Vivaldi', 'vivaldi')]],
+      ['opera', 'Opera', [appSupport('opera'), flatpak('com.opera.Opera', 'opera')]],
+      ['chromium', 'Chromium', [appSupport('chromium'), flatpak('org.chromium.Chromium', 'chromium'), home('snap/chromium/common/chromium')]],
+    ];
+
+/** Firefox's profiles folder: the classic ~/.mozilla one first, then the XDG, Flatpak and Snap ones. */
+const FIREFOX = IS_MAC
+  ? [appSupport('Firefox', 'Profiles')]
+  : [
+      home('.mozilla/firefox'),
+      appSupport('mozilla/firefox'),
+      home('.var/app/org.mozilla.firefox/.mozilla/firefox'),
+      home('snap/firefox/common/.mozilla/firefox'),
+    ];
+
+/** The first folder that exists, else the first one (whose profiles are then simply none). */
+const firstDir = (dirs: string[]) => dirs.find((dir) => listDirs(dir).length > 0) ?? dirs[0];
 
 function chromiumSource(id: string, name: string, root: string): BrowserSource {
   return {
@@ -133,8 +166,7 @@ function arcSource(): BrowserSource {
 // ---- Firefox ---------------------------------------------------------------
 
 /** Bookmarks and history both live in each profile's places.sqlite. */
-function firefoxSource(): BrowserSource {
-  const root = appSupport('Firefox', 'Profiles');
+function firefoxSource(root: string): BrowserSource {
   return {
     id: 'firefox',
     name: 'Firefox',
@@ -331,14 +363,15 @@ function decodeXml(s: string) {
 
 function sources(): BrowserSource[] {
   return [
-    ...CHROMIUM.map(([id, name, dir]) => chromiumSource(id, name, appSupport(dir))),
-    arcSource(),
-    firefoxSource(),
-    safariSource(),
+    ...CHROMIUM.map(([id, name, dirs]) => chromiumSource(id, name, firstDir(dirs))),
+    // Arc and Safari are Mac apps.
+    ...(IS_MAC ? [arcSource()] : []),
+    firefoxSource(firstDir(FIREFOX)),
+    ...(IS_MAC ? [safariSource()] : []),
   ];
 }
 
-/** Browsers on this Mac that have bookmarks or history to bring over. Only checks which files exist. */
+/** Browsers on this computer that have bookmarks or history to bring over. Only checks which files exist. */
 export async function detectBrowsers(): Promise<DetectedBrowser[]> {
   return sources().flatMap((source) => {
     try {

@@ -231,7 +231,7 @@ function renderUrlbar(s: UiState, active: TabInfo | undefined) {
   $('urlbar-text').textContent = url ? host(url) : 'Search or enter URL';
   $('urlbar').classList.toggle('empty', !url);
   $('urlbar-env').replaceChildren(
-    ...(s.environment ? [h('span', { class: `env-badge ${s.environment.tone}`, title: `${s.environment.name} · ⌥⌘E to switch` }, s.environment.label)] : []),
+    ...(s.environment ? [h('span', { class: `env-badge ${s.environment.tone}`, title: `${s.environment.name} · ${s.shortcuts.nextEnvironment} to switch` }, s.environment.label)] : []),
   );
 }
 

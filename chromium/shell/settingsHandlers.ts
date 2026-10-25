@@ -6,6 +6,7 @@
 import type { SettingsPatch, SettingsView, TabsEdit } from '../shared/types';
 import type { Store } from '../shared/store';
 import { applySettings, renewAgentToken, settingsView } from './lib/settingsCore';
+import { IS_MAC } from './lib/shortcuts';
 import { TabManager, type AskOptions, type TabsMenuRequest, type TabsMenuRun } from './lib/tabManager';
 import { broadcast, handle } from './hub';
 
@@ -109,7 +110,7 @@ export function registerSettings(ctx: SettingsContext) {
     // TODO(chromium): the welcome tour (ui/onboarding.ts) isn't in the shell's sidebar yet.
     'settings:show-tour': () => notYet('The welcome tour'),
     // TODO(chromium): there's no extension API for the macOS emoji picker; ⌃⌘Space opens it.
-    'settings:emoji-panel': () => notYet('The emoji picker button (press ⌃⌘Space)'),
+    'settings:emoji-panel': () => notYet(IS_MAC ? 'The emoji picker button (press ⌃⌘Space)' : 'The emoji picker button'),
 
     'settings:tabs': () => tabs.view(),
     'settings:edit-tabs': (edit: TabsEdit) => tabs.edit(edit),

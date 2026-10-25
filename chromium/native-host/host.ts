@@ -11,10 +11,9 @@
  * stdin) when the port closes. stdout carries only messages; logs go to stderr.
  */
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { detectBrowsers, readBrowser } from './browserImport';
+import { appSupport, detectBrowsers, readBrowser } from './browserImport';
 import { AGENT_TOOLS, McpBridge, fail, type AgentResult } from './agentServer';
 import type { HostMethods, ToHost, ToShell } from './protocol';
 
@@ -79,7 +78,7 @@ const methods: { [K in keyof HostMethods]: (...args: any[]) => Promise<ReturnTyp
   detectBrowsers: () => detectBrowsers(),
   readBrowser: (id: string) => readBrowser(String(id)),
   readFlechaState: () => {
-    const file = path.join(os.homedir(), 'Library', 'Application Support', 'Flecha', 'flecha-state.json');
+    const file = path.join(appSupport('Flecha'), 'flecha-state.json');
     try {
       return fs.readFileSync(file, 'utf8');
     } catch {
