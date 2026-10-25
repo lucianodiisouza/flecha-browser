@@ -1,0 +1,76 @@
+--- a/chrome/browser/app_controller_mac.mm
++++ b/chrome/browser/app_controller_mac.mm
+@@ -1297,6 +1297,65 @@
+   [appMenu insertItem:item atIndex:about + 1];
+ }
+ 
++// Flecha: registers the native messaging host a release app carries
++// (package-release.sh puts it in Contents/Resources/native-host), through
++// which the shell imports from other browsers and runs the agent bridge.
++// Chromium finds a user-level host only by its manifest in the user data
++// dir's NativeMessagingHosts (chrome::DIR_USER_NATIVE_MESSAGING), and the
++// manifest's "path" must be absolute, so it is written whenever it is
++// missing or names another path (the app moved). Dev builds carry no host
++// and leave the manifest to chromium/scripts/install-native-host.sh.
++- (void)registerFlechaNativeHost {
++  NSString* launcher = [NSBundle.mainBundle.resourcePath
++      stringByAppendingPathComponent:@"native-host/flecha-host"];
++  ProfileManager* profileManager = g_browser_process->profile_manager();
++  if (!profileManager ||
++      ![NSFileManager.defaultManager isExecutableFileAtPath:launcher]) {
++    return;
++  }
++  NSString* hosts =
++      [base::SysUTF8ToNSString(profileManager->user_data_dir().value())
++          stringByAppendingPathComponent:@"NativeMessagingHosts"];
++  // Off the main thread: it reads and maybe writes a file.
++  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
++    NSString* path =
++        [hosts stringByAppendingPathComponent:@"dev.oprimo.flecha.host.json"];
++    NSDictionary* manifest = @{
++      @"name" : @"dev.oprimo.flecha.host",
++      @"description" :
++          @"Flecha: imports from other browsers and the agent bridge",
++      @"path" : launcher,
++      @"type" : @"stdio",
++      @"allowed_origins" :
++          @[ @"chrome-extension://abdiaepfgbbhdjaecjipmaailijaaide/" ],
++    };
++    NSData* existing = [NSData dataWithContentsOfFile:path];
++    id current = existing ? [NSJSONSerialization JSONObjectWithData:existing
++                                                            options:0
++                                                              error:nil]
++                          : nil;
++    if ([current isEqual:manifest]) {
++      return;
++    }
++    NSError* error = nil;
++    NSData* json = [NSJSONSerialization
++        dataWithJSONObject:manifest
++                   options:NSJSONWritingPrettyPrinted |
++                           NSJSONWritingSortedKeys |
++                           NSJSONWritingWithoutEscapingSlashes
++                     error:&error];
++    if (!json ||
++        ![NSFileManager.defaultManager createDirectoryAtPath:hosts
++                                 withIntermediateDirectories:YES
++                                                  attributes:nil
++                                                       error:&error] ||
++        ![json writeToFile:path options:NSDataWritingAtomic error:&error]) {
++      LOG(ERROR) << "Flecha: can't register the native host: "
++                 << base::SysNSStringToUTF8(error.localizedDescription);
++    }
++  });
++}
++
+ - (void)setUpdateCheckInterval {
+ #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+   CFStringRef app = CFSTR("com.google.Keystone.Agent");
+@@ -1393,6 +1452,7 @@
+   [self registerServicesMenuTypesTo:[notify object]];
+ 
+   [self startFlechaUpdater];
++  [self registerFlechaNativeHost];
+ 
+   _startupComplete = YES;
+ 
