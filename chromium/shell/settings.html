@@ -66,6 +66,20 @@
       <section class="pane" data-pane="import">
         <p class="lead">Bring bookmarks and history over from another browser on this Mac. Bookmarks become pinned tabs in a Space of their own; passwords stay put.</p>
         <div id="browserList" class="card"></div>
+        <div class="card">
+          <div class="row">
+            <div class="browser-info">
+              <span class="browser-badge"><i data-icon="import"></i></span>
+              <div class="row-text">
+                <strong>Bookmarks File</strong>
+                <small id="bookmarksFileStatus">For a browser not listed above: export its bookmarks as an HTML file, then choose it here.</small>
+              </div>
+            </div>
+            <button id="chooseBookmarksFile" class="button">Choose File…</button>
+            <input id="bookmarksFile" type="file" accept=".html,.htm,text/html" hidden />
+          </div>
+        </div>
+        <p class="footnote">Browsers can export bookmarks but not history, so a file brings over bookmarks only.</p>
       </section>
 
       <section class="pane" data-pane="appearance">

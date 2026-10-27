@@ -294,6 +294,33 @@ function detectBrowsers() {
 }
 detectBrowsers();
 
+// A bookmarks file exported from any browser, for the ones not found above.
+const bookmarksFile = document.getElementById('bookmarksFile') as HTMLInputElement;
+const chooseBookmarksFile = document.getElementById('chooseBookmarksFile') as HTMLButtonElement;
+const bookmarksFileStatus = document.getElementById('bookmarksFileStatus')!;
+
+chooseBookmarksFile.addEventListener('click', () => bookmarksFile.click());
+bookmarksFile.addEventListener('change', async () => {
+  const file = bookmarksFile.files?.[0];
+  bookmarksFile.value = '';
+  if (!file) return;
+  chooseBookmarksFile.disabled = true;
+  chooseBookmarksFile.textContent = 'Importing…';
+  let summary: string;
+  let ok = false;
+  try {
+    const r = await api.importBookmarksFile(await file.text(), file.name);
+    ok = r.bookmarks > 0;
+    summary = ok ? `${file.name}: ${importSummary(r)}` : (r.warnings[0] ?? `No bookmarks were found in ${file.name}.`);
+  } catch {
+    summary = `Couldn’t import ${file.name}`;
+  }
+  bookmarksFileStatus.textContent = summary;
+  bookmarksFileStatus.classList.toggle('host-error', !ok);
+  chooseBookmarksFile.disabled = false;
+  chooseBookmarksFile.textContent = ok ? 'Choose Another…' : 'Choose File…';
+});
+
 // ---- appearance & tabs -------------------------------------------------------------
 
 const archiveAfter = document.getElementById('archiveAfter') as HTMLSelectElement;
