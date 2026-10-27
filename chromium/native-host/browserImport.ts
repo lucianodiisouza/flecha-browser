@@ -147,6 +147,7 @@ const PROFILE_DIR = /^(Default|Profile \d+)$/;
  */
 function otherChromiumSources(listed: BrowserSource[]): BrowserSource[] {
   const seen = new Set(listed.flatMap((s) => (s.root ? [realPath(s.root)] : [])));
+  const apps = installedApps();
   const found: BrowserSource[] = [];
   for (const top of listDirs(appSupport())) {
     if (FLECHA_FOLDERS.has(top)) continue;
@@ -157,7 +158,8 @@ function otherChromiumSources(listed: BrowserSource[]): BrowserSource[] {
       if (seen.has(real) || !hasChromiumProfile(root)) continue;
       seen.add(real);
       const rel = path.relative(appSupport(), root);
-      found.push(chromiumSource(`chromium:${rel}`, folderName(rel), root));
+      const name = folderName(rel);
+      found.push(chromiumSource(`chromium:${rel}`, appName(name, apps) ?? name, root));
     }
   }
   return found;
@@ -176,6 +178,29 @@ function folderName(rel: string) {
   const parts = rel.split(path.sep).filter((p) => p !== 'User Data');
   const last = parts[parts.length - 1] ?? rel;
   return (/^[a-z]+\.[^.]+\./i.test(last) ? last.slice(last.lastIndexOf('.') + 1) : last).replace(/[-_]+/g, ' ');
+}
+
+/** App names in /Applications and ~/Applications, without ".app". */
+function installedApps() {
+  return ['/Applications', path.join(os.homedir(), 'Applications')].flatMap((dir) => {
+    try {
+      return fs.readdirSync(dir).filter((f) => f.endsWith('.app')).map((f) => f.slice(0, -4));
+    } catch {
+      return [];
+    }
+  });
+}
+
+/**
+ * The installed app a profile folder belongs to, for its proper name: "Chrome Beta" is
+ * "Google Chrome Beta". The same letters, or the app's name ending in them; the shortest wins.
+ */
+function appName(folder: string, apps: string[]) {
+  const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const want = key(folder);
+  if (want.length < 3) return undefined;
+  const matches = apps.filter((a) => key(a) === want || key(a).endsWith(want));
+  return matches.sort((a, b) => a.length - b.length)[0];
 }
 
 /** The real path, so a folder reached through a symlink or another case isn't listed twice. */
