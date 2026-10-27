@@ -39,6 +39,8 @@ interface BrowserSource {
   profiles(): Profile[];
   readBookmarks(profile: Profile): Promise<ImportNode[]>;
   readHistory(profile: Profile): Promise<HistoryEntry[]>;
+  /** Where a Chromium browser keeps its profiles, so the scan for unlisted ones skips it. */
+  root?: string;
   /** For browsers whose sidebar says more than bookmarks do (Arc): imported in their place. */
   sidebar?: { exists(): boolean; read(): ArcImport };
 }
@@ -62,6 +64,7 @@ function chromiumSource(id: string, name: string, root: string): BrowserSource {
   return {
     id,
     name,
+    root,
     profiles: () => chromiumProfiles(root),
     readBookmarks: async (profile) => chromiumBookmarks(profile.bookmarkFiles),
     readHistory: (profile) =>
