@@ -11,3 +11,5 @@ proprietary_codecs = true
 ffmpeg_branding = "Chrome"
 use_remoteexec = false
 treat_warnings_as_errors = false
+# Without Google's experiments from fieldtrial_testing_config.json, as the release build.
+disable_fieldtrial_testing_config = true

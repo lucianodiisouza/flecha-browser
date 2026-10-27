@@ -10,6 +10,9 @@ target_cpu = "arm64"
 # No H.264/AAC: shipping Chrome's proprietary codecs needs patent licences we don't have.
 proprietary_codecs = false
 use_remoteexec = false
+# Builds that aren't official take Google's experiments from fieldtrial_testing_config.json,
+# Omnibox Everywhere's "search with Chromium from anywhere" among them; Flecha ships without.
+disable_fieldtrial_testing_config = true
 # Our patches shouldn't fail a 3-6 hour build over a warning.
 treat_warnings_as_errors = false
 # No PGO profiles in this checkout (they come with checkout_pgo_profiles).
