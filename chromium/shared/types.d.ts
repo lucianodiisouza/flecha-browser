@@ -352,6 +352,8 @@ export interface SettingsApi {
   detectBrowsers(): Promise<DetectedBrowser[]>;
   /** Imports one of the browsers `detectBrowsers` found, by id. */
   importBrowser(id: string): Promise<ImportResult>;
+  /** Imports the bookmarks in a file exported from any browser as HTML, given its text. */
+  importBookmarksFile(html: string, fileName?: string): Promise<ImportResult>;
   onPane(cb: (pane: string) => void): void;
   /** ⌘F while Settings is in front: focus its search field. */
   onFind(cb: () => void): void;
