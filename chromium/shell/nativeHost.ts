@@ -197,6 +197,15 @@ export function registerNativeHost(ctx: NativeHostContext) {
         return { spaces: 0, bookmarks: 0, history: 0, warnings: [missing ? NOT_INSTALLED : message] };
       }
     },
+    /** A bookmarks file exported from any browser as HTML, by its text, into a Space of its own. */
+    importBookmarksFile: async (html: string, fileName?: string): Promise<ImportResult> => {
+      try {
+        return await applyBrowserImport(await call('readBookmarksHtml', String(html), fileName), store, history);
+      } catch (err) {
+        const message = String(err instanceof Error ? err.message : err);
+        return { spaces: 0, bookmarks: 0, history: 0, warnings: [isMissing(message) ? NOT_INSTALLED : message] };
+      }
+    },
     /** The Electron spike's saved state as text, or undefined when there's none or no helper. */
     'nativeHost:flechaState': async () => call('readFlechaState').catch(() => undefined),
   });

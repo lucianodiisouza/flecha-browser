@@ -75,6 +75,7 @@ const api: SettingsApi = {
   // The same native host calls the tour's import step makes (nativeHost.ts).
   detectBrowsers: () => invoke<DetectedBrowser[]>('detectBrowsers'),
   importBrowser: (id) => invoke<ImportResult>('importBrowser', id),
+  importBookmarksFile: (html, fileName) => invoke<ImportResult>('importBookmarksFile', html, fileName),
   onPane: (cb) => {
     on('settings:pane', cb);
     window.addEventListener('hashchange', () => location.hash.length > 1 && cb(location.hash.slice(1)));

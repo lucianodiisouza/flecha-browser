@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { DetectedBrowser, HistoryEntry } from '../shared/types';
 import { arcSidebarPath, readArcSidebar, type ArcImport, type ImportNode } from './arcImport';
+import { parseBookmarksHtml } from './bookmarksHtml';
 import type { BrowserImportData } from '../shared/importApply';
 
 /**
@@ -40,6 +41,8 @@ interface BrowserSource {
   profiles(): Profile[];
   readBookmarks(profile: Profile): Promise<ImportNode[]>;
   readHistory(profile: Profile): Promise<HistoryEntry[]>;
+  /** Where a Chromium browser keeps its profiles, so the scan for unlisted ones skips it. */
+  root?: string;
   /** For browsers whose sidebar says more than bookmarks do (Arc): imported in their place. */
   sidebar?: { exists(): boolean; read(): ArcImport };
 }
@@ -63,6 +66,7 @@ function chromiumSource(id: string, name: string, root: string): BrowserSource {
   return {
     id,
     name,
+    root,
     profiles: () => chromiumProfiles(root),
     readBookmarks: async (profile) => chromiumBookmarks(profile.bookmarkFiles.map((f) => fs.readFileSync(f, 'utf8'))),
     readHistory: (profile) =>
@@ -170,6 +174,111 @@ async function decryptChromium(file: string, keychainService: string, denied: st
   const key = crypto.pbkdf2Sync(password, 'saltysalt', 1003, 16, 'sha1');
   const decipher = crypto.createDecipheriv('aes-128-cbc', key, Buffer.alloc(16, ' '));
   return Buffer.concat([decipher.update(data.subarray(3)), decipher.final()]).toString('utf8');
+}
+
+// ---- Chromium browsers not listed by name ------------------------------------
+
+/** Folders with a `Local State` that are Flecha's own: its Chromium build's profile, and the Electron spike's. */
+const FLECHA_FOLDERS = new Set(['Flecha Browser', 'Flecha']);
+const PROFILE_DIR = /^(Default|Profile \d+)$/;
+
+/**
+ * Any other Chromium browser (Thorium, Chrome Beta, Sidekick…): a folder in Application Support,
+ * or one level down (`X/User Data`, `Vendor/Product`), with a `Local State` and a `Default` or
+ * `Profile N` profile that has bookmarks or history. Electron apps have a `Local State` too, but
+ * keep no such profile. Browsers already listed by name are skipped.
+ */
+function otherChromiumSources(listed: BrowserSource[]): BrowserSource[] {
+  const seen = new Set(listed.flatMap((s) => (s.root ? [realPath(s.root)] : [])));
+  const apps = installedApps();
+  const found: BrowserSource[] = [];
+  for (const top of listDirs(appSupport())) {
+    if (FLECHA_FOLDERS.has(top)) continue;
+    const dir = appSupport(top);
+    const roots = hasLocalState(dir) ? [dir] : listDirs(dir).map((d) => path.join(dir, d)).filter(hasLocalState);
+    for (const root of roots) {
+      const real = realPath(root);
+      if (seen.has(real) || !hasChromiumProfile(root)) continue;
+      seen.add(real);
+      const rel = path.relative(appSupport(), root);
+      const name = folderName(rel);
+      found.push(unlistedChromiumSource(`chromium:${rel}`, appName(name, apps) ?? name, root));
+    }
+  }
+  return found;
+}
+
+const ENCRYPTED = 'EncryptedBookmarks2';
+
+/**
+ * Some Chromium browsers (Dia) write their bookmarks to EncryptedBookmarks2 and stop updating
+ * the plain Bookmarks file, so where both exist only the encrypted one is current.
+ *
+ * TODO: decrypt it with decryptChromium from lucianodiisouza/flecha#2 once that lands: v10
+ * AES-128-CBC, keyed from the "<name> Safe Storage" item in the login keychain.
+ */
+function unlistedChromiumSource(id: string, name: string, root: string): BrowserSource {
+  const source = chromiumSource(id, name, root);
+  return {
+    ...source,
+    profiles: () =>
+      chromiumProfiles(root, [ENCRYPTED, 'Bookmarks', 'AccountBookmarks']).map((p) =>
+        path.basename(p.bookmarkFiles[0] ?? '') === ENCRYPTED ? { ...p, bookmarkFiles: p.bookmarkFiles.slice(0, 1) } : p,
+      ),
+    readBookmarks: async (profile) => {
+      if (path.basename(profile.bookmarkFiles[0]) === ENCRYPTED) {
+        throw new Error(`${name} keeps its bookmarks encrypted, which Flecha can’t read yet. Export them from ${name} as an HTML file and import that instead.`);
+      }
+      return source.readBookmarks(profile);
+    },
+  };
+}
+
+function hasLocalState(dir: string) {
+  return isFile(path.join(dir, 'Local State'));
+}
+
+function hasChromiumProfile(root: string) {
+  return listDirs(root).some((d) => PROFILE_DIR.test(d) && [ENCRYPTED, 'Bookmarks', 'History'].some((f) => isFile(path.join(root, d, f))));
+}
+
+/** "BraveSoftware/Brave-Browser" → "Brave Browser", "Thorium/User Data" → "Thorium", "com.vendor.Name" → "Name". */
+function folderName(rel: string) {
+  const parts = rel.split(path.sep).filter((p) => p !== 'User Data');
+  const last = parts[parts.length - 1] ?? rel;
+  return (/^[a-z]+\.[^.]+\./i.test(last) ? last.slice(last.lastIndexOf('.') + 1) : last).replace(/[-_]+/g, ' ');
+}
+
+/** App names in /Applications and ~/Applications, without ".app". */
+function installedApps() {
+  return ['/Applications', path.join(os.homedir(), 'Applications')].flatMap((dir) => {
+    try {
+      return fs.readdirSync(dir).filter((f) => f.endsWith('.app')).map((f) => f.slice(0, -4));
+    } catch {
+      return [];
+    }
+  });
+}
+
+/**
+ * The installed app a profile folder belongs to, for its proper name: "Chrome Beta" is
+ * "Google Chrome Beta". The same letters, or the app's name ending in them; the shortest wins.
+ */
+function appName(folder: string, apps: string[]) {
+  const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const want = key(folder);
+  if (want.length < 3) return undefined;
+  const matches = apps.filter((a) => key(a) === want || key(a).endsWith(want));
+  return matches.sort((a, b) => a.length - b.length)[0];
+}
+
+/** The real path, so a folder reached through a symlink or another case isn't listed twice. */
+function realPath(dir: string) {
+  try {
+    return fs.realpathSync.native(dir);
+  } catch {
+    return path.resolve(dir);
+  }
 }
 
 // ---- Firefox ---------------------------------------------------------------
@@ -372,13 +481,14 @@ function decodeXml(s: string) {
 // ---- detecting and importing -------------------------------------------------
 
 function sources(): BrowserSource[] {
-  return [
+  const listed = [
     ...CHROMIUM.map(([id, name, dir]) => chromiumSource(id, name, appSupport(dir))),
     arcSource(),
     diaSource(),
     firefoxSource(),
     safariSource(),
   ];
+  return [...listed, ...otherChromiumSources(listed)];
 }
 
 /** Browsers on this Mac that have bookmarks or history to bring over. Only checks which files exist. */
@@ -463,6 +573,24 @@ export async function readBrowser(id: string): Promise<BrowserImportData> {
     result.bookmarkCount = tidy.count;
   }
   result.history = visits;
+  return result;
+}
+
+/**
+ * Reads a bookmarks file exported from any browser as HTML, for browsers Flecha can't read
+ * directly. The shell picks the file and sends its text. History has no such format.
+ */
+export function readBookmarksHtml(html: string, fileName = 'the file'): BrowserImportData {
+  const result: BrowserImportData = { name: 'Imported Bookmarks', bookmarkCount: 0, history: [], warnings: [] };
+  const tidy = newTidy();
+  const nodes = tidy.run(parseBookmarksHtml(html));
+  if (tidy.skipped) result.warnings.push(`Only the first ${MAX_BOOKMARKS} bookmarks were imported; ${tidy.skipped} more were left out.`);
+  if (nodes.length) {
+    result.bookmarks = nodes;
+    result.bookmarkCount = tidy.count;
+  } else {
+    result.warnings.push(`No bookmarks were found in ${fileName}. Choose the HTML file a browser saves when it exports its bookmarks.`);
+  }
   return result;
 }
 

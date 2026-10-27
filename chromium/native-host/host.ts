@@ -2,7 +2,8 @@
  * Flecha's native messaging host: the parts of the Electron spike that need Node, for the
  * Chromium build's shell extension, which can't read files or listen on a port.
  *
- * - Importing from other browsers (browserImport.ts): the host reads, the shell adds.
+ * - Importing from other browsers (browserImport.ts), or from a bookmarks file one exported:
+ *   the host reads, the shell adds.
  * - The Electron spike's own saved state, for "import from Flecha".
  * - The agent bridge (agentServer.ts): an MCP server on 127.0.0.1 whose tool calls
  *   go to the shell, which runs them with chrome.tabs, chrome.scripting and chrome.debugger.
@@ -14,7 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { detectBrowsers, readBrowser } from './browserImport';
+import { detectBrowsers, readBookmarksHtml, readBrowser } from './browserImport';
 import { AGENT_TOOLS, McpBridge, fail, type AgentResult } from './agentServer';
 import type { HostMethods, ToHost, ToShell } from './protocol';
 
@@ -78,6 +79,7 @@ process.stdin.on('end', () => void bridge.stop().finally(() => process.exit(0)))
 const methods: { [K in keyof HostMethods]: (...args: any[]) => Promise<ReturnType<HostMethods[K]>> | ReturnType<HostMethods[K]> } = {
   detectBrowsers: () => detectBrowsers(),
   readBrowser: (id: string) => readBrowser(String(id)),
+  readBookmarksHtml: (html: string, fileName?: string) => readBookmarksHtml(String(html), fileName ? String(fileName) : undefined),
   readFlechaState: () => {
     const file = path.join(os.homedir(), 'Library', 'Application Support', 'Flecha', 'flecha-state.json');
     try {

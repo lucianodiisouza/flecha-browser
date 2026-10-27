@@ -11,6 +11,8 @@ export const HOST_NAME = 'dev.oprimo.flecha.host';
 export interface HostMethods {
   detectBrowsers(): import('../shared/types').DetectedBrowser[];
   readBrowser(id: string): import('../shared/importApply').BrowserImportData;
+  /** A bookmarks file exported from any browser as HTML, by its text; `fileName` is for warnings. */
+  readBookmarksHtml(html: string, fileName?: string): import('../shared/importApply').BrowserImportData;
   /** The Electron spike's saved state (its flecha-state.json), if it has one. */
   readFlechaState(): string | undefined;
 }
