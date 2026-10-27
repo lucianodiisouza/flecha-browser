@@ -212,10 +212,9 @@ const ENCRYPTED = 'EncryptedBookmarks2';
 
 /**
  * Some Chromium browsers (Dia) write their bookmarks to EncryptedBookmarks2 and stop updating
- * the plain Bookmarks file, so where both exist only the encrypted one is current.
- *
- * TODO: decrypt it with decryptChromium from lucianodiisouza/flecha#2 once that lands: v10
- * AES-128-CBC, keyed from the "<name> Safe Storage" item in the login keychain.
+ * the plain Bookmarks file, so where both exist only the encrypted one is current. It's decrypted
+ * like Dia's, with the "<name> Safe Storage" keychain item Chromium browsers usually keep; a
+ * browser that names its item otherwise can still be imported from an exported HTML file.
  */
 function unlistedChromiumSource(id: string, name: string, root: string): BrowserSource {
   const source = chromiumSource(id, name, root);
@@ -226,10 +225,10 @@ function unlistedChromiumSource(id: string, name: string, root: string): Browser
         path.basename(p.bookmarkFiles[0] ?? '') === ENCRYPTED ? { ...p, bookmarkFiles: p.bookmarkFiles.slice(0, 1) } : p,
       ),
     readBookmarks: async (profile) => {
-      if (path.basename(profile.bookmarkFiles[0]) === ENCRYPTED) {
-        throw new Error(`${name} keeps its bookmarks encrypted, which Flecha can’t read yet. Export them from ${name} as an HTML file and import that instead.`);
-      }
-      return source.readBookmarks(profile);
+      const [file] = profile.bookmarkFiles;
+      if (path.basename(file) !== ENCRYPTED) return source.readBookmarks(profile);
+      const denied = `${name} keeps its bookmarks encrypted, with the key in your keychain. Choose Allow when macOS asks about “${name} Safe Storage”, or export them from ${name} as an HTML file and import that instead.`;
+      return chromiumBookmarks([await decryptChromium(file, `${name} Safe Storage`, denied)]);
     },
   };
 }
