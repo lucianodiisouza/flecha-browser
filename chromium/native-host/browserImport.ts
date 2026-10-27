@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { DetectedBrowser, HistoryEntry } from '../shared/types';
 import { arcSidebarPath, readArcSidebar, type ArcImport, type ImportNode } from './arcImport';
+import { parseBookmarksHtml } from './bookmarksHtml';
 import type { BrowserImportData } from '../shared/importApply';
 
 /**
@@ -531,6 +532,24 @@ export async function readBrowser(id: string): Promise<BrowserImportData> {
     result.bookmarkCount = tidy.count;
   }
   result.history = visits;
+  return result;
+}
+
+/**
+ * Reads a bookmarks file exported from any browser as HTML, for browsers Flecha can't read
+ * directly. The shell picks the file and sends its text. History has no such format.
+ */
+export function readBookmarksHtml(html: string, fileName = 'the file'): BrowserImportData {
+  const result: BrowserImportData = { name: 'Imported Bookmarks', bookmarkCount: 0, history: [], warnings: [] };
+  const tidy = newTidy();
+  const nodes = tidy.run(parseBookmarksHtml(html));
+  if (tidy.skipped) result.warnings.push(`Only the first ${MAX_BOOKMARKS} bookmarks were imported; ${tidy.skipped} more were left out.`);
+  if (nodes.length) {
+    result.bookmarks = nodes;
+    result.bookmarkCount = tidy.count;
+  } else {
+    result.warnings.push(`No bookmarks were found in ${fileName}. Choose the HTML file a browser saves when it exports its bookmarks.`);
+  }
   return result;
 }
 
