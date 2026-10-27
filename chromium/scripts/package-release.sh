@@ -10,9 +10,9 @@
 #      against chromium/shell/dist, and copies dist over it if they differ (the GN copy only
 #      notices a changed staging folder, not a changed file inside it);
 #   3. adds the native messaging host: Node as Contents/Helpers/flecha-node, the bundled host
-#      script and a launcher in Contents/Resources/native-host. Chromium needs an absolute
-#      manifest path, so register it once the app is in place:
-#      chromium/scripts/install-native-host.sh --app /Applications/Flecha.app
+#      script and a launcher in Contents/Resources/native-host. The app registers it itself
+#      on every launch (patch 0054), since Chromium needs an absolute manifest path; for an
+#      app built before that patch, chromium/scripts/install-native-host.sh --app does it;
 #   4. signs everything, innermost first: ad hoc (codesign --sign -) unless
 #      FLECHA_SIGN_IDENTITY names a keychain identity ("Developer ID Application: …"), which
 #      also gets the hardened runtime, a timestamp and Chromium's entitlements (as
@@ -272,6 +272,5 @@ fi
 
 cat <<EOF
 
-Done. To install: copy $app to /Applications, then register its native host:
-  chromium/scripts/install-native-host.sh --app /Applications/$product.app
+Done. To install: copy $app to /Applications. It registers its native host when it starts.
 EOF

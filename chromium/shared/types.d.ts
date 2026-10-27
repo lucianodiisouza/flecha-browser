@@ -265,6 +265,8 @@ export interface SettingsView {
   /** Edited as text: one `label origin` per line. */
   environments: Array<{ id: string; name: string; targetsText: string }>;
   agent: { enabled: boolean; endpoint?: string; token?: string };
+  /** Why Flecha's native host (imports, the agent bridge) last failed; undefined while it works. */
+  hostError?: string;
   theme: 'system' | 'light' | 'dark';
   archiveAfterHours: number;
   peekPinnedLinks: boolean;
@@ -346,9 +348,15 @@ export interface SettingsApi {
   openBoosts(): Promise<void>;
   /** Plays the welcome tour again in the browser window. */
   showTour(): Promise<void>;
+  /** Other browsers on this Mac with bookmarks or history to bring over. */
+  detectBrowsers(): Promise<DetectedBrowser[]>;
+  /** Imports one of the browsers `detectBrowsers` found, by id. */
+  importBrowser(id: string): Promise<ImportResult>;
   onPane(cb: (pane: string) => void): void;
   /** ⌘F while Settings is in front: focus its search field. */
   onFind(cb: () => void): void;
+  /** Something the background shows here changed on its own (the agent bridge, the native host); `get` again. */
+  onChange(cb: () => void): void;
   /** While recording, every key goes to `onKey` instead of the page or the menus. */
   recordShortcut(recording: boolean): Promise<void>;
   onKey(cb: (key: RecordedKey) => void): void;
@@ -404,13 +412,14 @@ export interface FlechaApi {
   renameFolder(folderId: string, name: string): void;
   moveTab(tabId: string, target: DropTarget): void;
   clearToday(): void;
-  /** Pops up a menu of the other browsers to import from. */
+  /** Brings over the Spaces and tabs of Flecha's Electron version. */
   importMenu(): void;
   openPalette(mode: PaletteMode): void;
   closePalette(): void;
   toggleSidebar(): void;
   setSidebarPeek(peek: boolean): void;
-  copyText(text: string): void;
+  /** Copies text and says so in the address field: "Link copied" unless `message` says otherwise. */
+  copyText(text: string, message?: string): void;
   renameTab(tabId: string, title: string): void;
   toggleMute(tabId: string): void;
   /** Screenshot of the active page, to the clipboard. */

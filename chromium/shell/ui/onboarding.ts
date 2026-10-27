@@ -1,5 +1,6 @@
 import type { IconName } from './icons.js';
 import type { FlechaApi, UiState } from '../../shared/types';
+import { browserDetail, importSummary } from './browserImport.js';
 
 /**
  * The first-run tour, full window: steps on the left, a live miniature Flecha on the right
@@ -224,9 +225,7 @@ export function setupOnboarding(api: FlechaApi, h: H, icon: (name: IconName) => 
     importing.add(b.id);
     draw();
     try {
-      const r = await api.importBrowser(b.id);
-      const parts = [r.bookmarks && `${r.bookmarks.toLocaleString()} bookmarks`, r.history && `${r.history.toLocaleString()} pages`].filter(Boolean);
-      imported.set(b.id, parts.length ? parts.join(' · ') : r.warnings[0] ?? 'Nothing to import');
+      imported.set(b.id, importSummary(await api.importBrowser(b.id)));
     } catch {
       imported.set(b.id, 'Couldn’t import this one');
     }
@@ -244,19 +243,18 @@ export function setupOnboarding(api: FlechaApi, h: H, icon: (name: IconName) => 
     const list = !browsers
       ? h('div', { class: 'tour-note' }, h('span', { class: 'tour-spinner' }), 'Looking for your browsers…')
       : !browsers.length
-        ? h('div', { class: 'tour-note' }, 'No other browsers with data on this Mac. You can import later from File → Import Browser Data.')
+        ? h('div', { class: 'tour-note' }, 'No other browsers with data on this Mac. You can import later from Settings › Import.')
         : h(
             'div',
             { class: 'tour-browsers' },
             ...browsers.map((b) => {
               const done = imported.get(b.id);
               const busy = importing.has(b.id);
-              const what = [b.hasBookmarks && 'Bookmarks', b.hasHistory && 'history'].filter(Boolean).join(' & ') || 'Data';
               return h(
                 'div',
                 { class: `tour-browser${done ? ' done' : ''}${busy ? ' busy' : ''}` },
                 browserIcon(b),
-                h('span', { class: 'tour-browser-text' }, h('strong', {}, b.name), h('small', {}, done ?? `${what}${b.profiles > 1 ? ` · ${b.profiles} profiles` : ''}`)),
+                h('span', { class: 'tour-browser-text' }, h('strong', {}, b.name), h('small', {}, done ?? browserDetail(b))),
                 done
                   ? h('span', { class: 'tour-done' }, icon('check'))
                   : h('button', { class: 'tour-ghost', disabled: busy, onclick: () => runImport(b) }, busy ? 'Importing…' : 'Import'),
@@ -304,7 +302,7 @@ export function setupOnboarding(api: FlechaApi, h: H, icon: (name: IconName) => 
         'div',
         { class: 'tour-features' },
         feature('sparkle', 'Coding agents', 'Claude Code and Cursor can read, click and debug your tabs over MCP.', h('button', { class: 'tour-ghost', onclick: () => api.openSettings('agents') }, 'Connect')),
-        feature('zap', 'Boosts', 'Your own TypeScript and CSS for any site, as files in git.', h('kbd', {}, keys('editBoost'))),
+        feature('zap', 'Boosts', 'Your own TypeScript and CSS for any site, edited right in Flecha.', h('kbd', {}, keys('editBoost'))),
         feature('phone', 'Responsive view', 'Desktop and phone side by side, following each other.', h('kbd', {}, keys('responsive'))),
         feature('code', 'Environments', 'Local → staging → prod for the same page, with a badge so prod never looks safe.', h('kbd', {}, keys('nextEnvironment'))),
       ),

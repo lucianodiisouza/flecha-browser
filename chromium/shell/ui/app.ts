@@ -369,7 +369,7 @@ function tabRow(tab: TabInfo, space: Space, target: DropTarget) {
         )
       : null,
     errorBadge(tab),
-    isBoosted(tab.url) ? h('span', { class: 'boost-mark', title: 'Boosted: a script or styles from ~/.flecha/boosts run here' }, icon('zap')) : null,
+    isBoosted(tab.url) ? h('span', { class: 'boost-mark', title: 'Boosted: your script or styles for this site run here' }, icon('zap')) : null,
     tab.device === 'mobile'
       ? h('span', { class: 'device-badge', title: 'Phone-sized mirror' }, icon('phone'))
       : h('span', { class: 'split-badge', title: 'In split view' }, icon('columns')),
@@ -751,9 +751,15 @@ const ACTIONS: Array<{ label: string; keywords: string; icon: IconName; shortcut
     label: 'Import from another browser',
     keywords: 'import migrate bookmarks history arc chrome safari firefox brave edge vivaldi opera',
     icon: 'import',
+    run: () => api.openSettings('import'),
+  },
+  {
+    label: 'Import from Flecha (Electron)',
+    keywords: 'import migrate electron flecha spaces tabs',
+    icon: 'import',
     run: () => api.importMenu(),
   },
-  { label: 'Open Boosts Folder', keywords: 'boosts folder scripts css', icon: 'zap', run: () => api.openBoostsFolder() },
+  { label: 'Open Boosts', keywords: 'boosts folder scripts css', icon: 'zap', run: () => api.openBoostsFolder() },
 ];
 
 function matchingActions(q: string) {
@@ -813,7 +819,7 @@ function updatePalette() {
         label: dev.label,
         sub: dev.sub,
         detail: dev.copy,
-        run: () => (dev.url ? open(dev.url) : api.copyText(dev.copy ?? '')),
+        run: () => (dev.url ? open(dev.url) : api.copyText(dev.copy ?? '', 'Copied')),
       });
     }
     for (const action of matchingActions(q).slice(0, 4)) {

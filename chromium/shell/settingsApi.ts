@@ -3,7 +3,7 @@
  * Electron's settings preload exposes, over the hub instead of ipcRenderer. It has to run
  * before ui/settings.ts, which reads `window.settings` as it loads.
  */
-import type { RecordedKey, SettingsApi, SettingsView, TabsMenuAction, TabsView } from '../shared/types';
+import type { DetectedBrowser, ImportResult, RecordedKey, SettingsApi, SettingsView, TabsMenuAction, TabsView } from '../shared/types';
 import type { AskOptions, TabsMenuItem } from './lib/tabManager';
 import { cmd, invoke, on } from './client';
 import type { NotYet } from './settingsHandlers';
@@ -72,11 +72,15 @@ const api: SettingsApi = {
   copy: (text) => navigator.clipboard.writeText(String(text)),
   openBoosts: () => invoke('settings:open-boosts').then(tellNotYet).then(() => undefined),
   showTour: () => invoke('settings:show-tour').then(tellNotYet).then(() => undefined),
+  // The same native host calls the tour's import step makes (nativeHost.ts).
+  detectBrowsers: () => invoke<DetectedBrowser[]>('detectBrowsers'),
+  importBrowser: (id) => invoke<ImportResult>('importBrowser', id),
   onPane: (cb) => {
     on('settings:pane', cb);
     window.addEventListener('hashchange', () => location.hash.length > 1 && cb(location.hash.slice(1)));
   },
   onFind: (cb) => void findListeners.push(cb),
+  onChange: (cb) => on('settings:changed', cb),
   recordShortcut: async (on) => setRecording(!!on),
   onKey: (cb) => void keyListeners.push(cb),
   tabs: () => invoke<TabsView>('settings:tabs'),

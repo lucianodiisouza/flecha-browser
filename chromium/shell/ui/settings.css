@@ -107,6 +107,10 @@ body {
   background: linear-gradient(#42c27a, #1f9d5b);
 }
 
+.nav-icon.cyan {
+  background: linear-gradient(#4cc6d8, #1e9db3);
+}
+
 .nav-icon.amber {
   background: linear-gradient(#f0b24a, #d98a12);
 }
@@ -262,6 +266,43 @@ code {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ---- import: one row per browser found ---------------------------------- */
+
+.browser-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.browser-badge {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.browser-done {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.browser-done svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
 }
 
 /* ---- controls ----------------------------------------------------------- */
@@ -1084,6 +1125,11 @@ code {
 
 .tm-editor.invalid .tm-input.url {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 70%, transparent);
+}
+
+.host-error,
+.row-text small.host-error {
+  color: var(--red);
 }
 
 .tm-error {
