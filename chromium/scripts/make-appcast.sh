@@ -11,7 +11,7 @@
 # The folder ($FLECHA_RELEASE_DIR/appcast by default, next to the dmg) keeps the dmgs of
 # earlier releases, for generate_appcast to make delta updates from. The feed lists only
 # the newest release: dl.flecha.dev holds only that one, and every release stays on GitHub. Release notes go next to a dmg, with its name and .html or
-# .md (Flecha-0.2.0.md). The dmgs are published at $FLECHA_DOWNLOAD_URL_PREFIX
+# .md (Flecha-0.2.0.md), embedded in the feed (flecha.dev serves no notes files). The dmgs are published at $FLECHA_DOWNLOAD_URL_PREFIX
 # (https://dl.flecha.dev/ by default, the flecha-releases R2 bucket), and the feed at
 # https://flecha.dev/appcast.xml, which the site rewrites to dl.flecha.dev. Nothing is
 # uploaded here: publish-release.sh does that.
@@ -48,6 +48,7 @@ echo "== generate_appcast $folder"
 "$sparkle/bin/generate_appcast" \
   --download-url-prefix "$prefix" \
   --maximum-versions 1 \
+  --embed-release-notes \
   -o "$folder/$release_feed" \
   --link "https://flecha.dev" \
   "$folder"
