@@ -1,7 +1,7 @@
 {
   "name": "flecha",
   "productName": "Flecha",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "license": "MIT",
   "description": "An Arc-style browser built on a Chromium fork.",
