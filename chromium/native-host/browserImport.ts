@@ -133,6 +133,60 @@ function arcSource(): BrowserSource {
   };
 }
 
+// ---- Chromium browsers not listed by name ------------------------------------
+
+/** Folders with a `Local State` that are Flecha's own: its Chromium build's profile, and the Electron spike's. */
+const FLECHA_FOLDERS = new Set(['Flecha Browser', 'Flecha']);
+const PROFILE_DIR = /^(Default|Profile \d+)$/;
+
+/**
+ * Any other Chromium browser (Thorium, Chrome Beta, Sidekick…): a folder in Application Support,
+ * or one level down (`X/User Data`, `Vendor/Product`), with a `Local State` and a `Default` or
+ * `Profile N` profile that has bookmarks or history. Electron apps have a `Local State` too, but
+ * keep no such profile. Browsers already listed by name are skipped.
+ */
+function otherChromiumSources(listed: BrowserSource[]): BrowserSource[] {
+  const seen = new Set(listed.flatMap((s) => (s.root ? [realPath(s.root)] : [])));
+  const found: BrowserSource[] = [];
+  for (const top of listDirs(appSupport())) {
+    if (FLECHA_FOLDERS.has(top)) continue;
+    const dir = appSupport(top);
+    const roots = hasLocalState(dir) ? [dir] : listDirs(dir).map((d) => path.join(dir, d)).filter(hasLocalState);
+    for (const root of roots) {
+      const real = realPath(root);
+      if (seen.has(real) || !hasChromiumProfile(root)) continue;
+      seen.add(real);
+      const rel = path.relative(appSupport(), root);
+      found.push(chromiumSource(`chromium:${rel}`, folderName(rel), root));
+    }
+  }
+  return found;
+}
+
+function hasLocalState(dir: string) {
+  return isFile(path.join(dir, 'Local State'));
+}
+
+function hasChromiumProfile(root: string) {
+  return listDirs(root).some((d) => PROFILE_DIR.test(d) && ['Bookmarks', 'History'].some((f) => isFile(path.join(root, d, f))));
+}
+
+/** "BraveSoftware/Brave-Browser" → "Brave Browser", "Thorium/User Data" → "Thorium", "com.vendor.Name" → "Name". */
+function folderName(rel: string) {
+  const parts = rel.split(path.sep).filter((p) => p !== 'User Data');
+  const last = parts[parts.length - 1] ?? rel;
+  return (/^[a-z]+\.[^.]+\./i.test(last) ? last.slice(last.lastIndexOf('.') + 1) : last).replace(/[-_]+/g, ' ');
+}
+
+/** The real path, so a folder reached through a symlink or another case isn't listed twice. */
+function realPath(dir: string) {
+  try {
+    return fs.realpathSync.native(dir);
+  } catch {
+    return path.resolve(dir);
+  }
+}
+
 // ---- Firefox ---------------------------------------------------------------
 
 /** Bookmarks and history both live in each profile's places.sqlite. */
@@ -333,12 +387,13 @@ function decodeXml(s: string) {
 // ---- detecting and importing -------------------------------------------------
 
 function sources(): BrowserSource[] {
-  return [
+  const listed = [
     ...CHROMIUM.map(([id, name, dir]) => chromiumSource(id, name, appSupport(dir))),
     arcSource(),
     firefoxSource(),
     safariSource(),
   ];
+  return [...listed, ...otherChromiumSources(listed)];
 }
 
 /** Browsers on this Mac that have bookmarks or history to bring over. Only checks which files exist. */
