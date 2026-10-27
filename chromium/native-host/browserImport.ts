@@ -77,14 +77,16 @@ function chromiumSource(id: string, name: string, root: string): BrowserSource {
   };
 }
 
-/** `Default` and `Profile N` folders (Opera keeps its one profile in the root itself). */
-function chromiumProfiles(root: string): Profile[] {
+/**
+ * `Default` and `Profile N` folders (Opera keeps its one profile in the root itself). Chrome
+ * keeps the bookmarks of a signed-in account in a file of their own, `AccountBookmarks`.
+ */
+function chromiumProfiles(root: string, bookmarkNames = ['Bookmarks', 'AccountBookmarks']): Profile[] {
   const names = chromiumProfileNames(root);
   const dirs = [root, ...listDirs(root).filter((d) => /^(Default|Profile \d+)$/.test(d)).map((d) => path.join(root, d))];
   return dirs.flatMap((dir) => {
     const key = dir === root ? 'Default' : path.basename(dir);
-    // Chrome keeps the bookmarks of a signed-in account in a file of their own.
-    const bookmarkFiles = ['Bookmarks', 'AccountBookmarks'].map((f) => path.join(dir, f)).filter(isFile);
+    const bookmarkFiles = bookmarkNames.map((f) => path.join(dir, f)).filter(isFile);
     const history = path.join(dir, 'History');
     const profile: Profile = { name: names[key] || key, bookmarkFiles, historyFile: isFile(history) ? history : undefined };
     return profile.bookmarkFiles.length || profile.historyFile ? [profile] : [];
@@ -159,10 +161,36 @@ function otherChromiumSources(listed: BrowserSource[]): BrowserSource[] {
       seen.add(real);
       const rel = path.relative(appSupport(), root);
       const name = folderName(rel);
-      found.push(chromiumSource(`chromium:${rel}`, appName(name, apps) ?? name, root));
+      found.push(unlistedChromiumSource(`chromium:${rel}`, appName(name, apps) ?? name, root));
     }
   }
   return found;
+}
+
+const ENCRYPTED = 'EncryptedBookmarks2';
+
+/**
+ * Some Chromium browsers (Dia) write their bookmarks to EncryptedBookmarks2 and stop updating
+ * the plain Bookmarks file, so where both exist only the encrypted one is current.
+ *
+ * TODO: decrypt it with decryptChromium from lucianodiisouza/flecha#2 once that lands: v10
+ * AES-128-CBC, keyed from the "<name> Safe Storage" item in the login keychain.
+ */
+function unlistedChromiumSource(id: string, name: string, root: string): BrowserSource {
+  const source = chromiumSource(id, name, root);
+  return {
+    ...source,
+    profiles: () =>
+      chromiumProfiles(root, [ENCRYPTED, 'Bookmarks', 'AccountBookmarks']).map((p) =>
+        path.basename(p.bookmarkFiles[0] ?? '') === ENCRYPTED ? { ...p, bookmarkFiles: p.bookmarkFiles.slice(0, 1) } : p,
+      ),
+    readBookmarks: async (profile) => {
+      if (path.basename(profile.bookmarkFiles[0]) === ENCRYPTED) {
+        throw new Error(`${name} keeps its bookmarks encrypted, which Flecha can’t read yet. Export them from ${name} as an HTML file and import that instead.`);
+      }
+      return source.readBookmarks(profile);
+    },
+  };
 }
 
 function hasLocalState(dir: string) {
@@ -170,7 +198,7 @@ function hasLocalState(dir: string) {
 }
 
 function hasChromiumProfile(root: string) {
-  return listDirs(root).some((d) => PROFILE_DIR.test(d) && ['Bookmarks', 'History'].some((f) => isFile(path.join(root, d, f))));
+  return listDirs(root).some((d) => PROFILE_DIR.test(d) && [ENCRYPTED, 'Bookmarks', 'History'].some((f) => isFile(path.join(root, d, f))));
 }
 
 /** "BraveSoftware/Brave-Browser" → "Brave Browser", "Thorium/User Data" → "Thorium", "com.vendor.Name" → "Name". */
