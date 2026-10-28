@@ -68,6 +68,8 @@ export interface DetectedBrowser {
   profiles: number;
   hasBookmarks: boolean;
   hasHistory: boolean;
+  /** Cookies to bring over, so sites stay signed in. */
+  hasCookies?: boolean;
 }
 
 /** What one import brought over. Problems that didn't stop it are listed in `warnings`. */
@@ -75,6 +77,8 @@ export interface ImportResult {
   spaces: number;
   bookmarks: number;
   history: number;
+  /** Cookies set, so sites stay signed in. */
+  cookies: number;
   warnings: string[];
 }
 

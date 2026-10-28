@@ -62,7 +62,7 @@ It is a Chromium 158 fork rather than an Electron app because Google blocks sign
 
 - Built-in ad and tracker blocking (EasyList and EasyPrivacy as declarativeNetRequest rules, plus element hiding), toggled in Settings
 - Incognito windows get the same Flecha frame, with one in-memory Space that is forgotten when the last incognito window closes
-- Import bookmarks and history from other browsers and from Arc's sidebar (needs the native host)
+- Import bookmarks, history and cookies (so you stay signed in) from other browsers, and Arc's sidebar (needs the native host). Chromium browsers' cookies are decrypted with the key in your keychain, so macOS asks first
 - Chrome extensions: install from the Chrome Web Store; their buttons appear under the address bar
 - Light, dark or system theme; Flecha's shortcuts can be re-recorded in Settings (except a few Chromium keeps, like ⌘T and ⌘W) (⌘/ lists them)
 - Settings (⌘,): importing from other browsers, search engine (Google, DuckDuckGo, Bing, Brave, Kagi, Ecosia), ad blocking, default browser, Peek behaviour, shortcuts, environments

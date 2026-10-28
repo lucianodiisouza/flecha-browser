@@ -275,7 +275,7 @@ async function runImport(b: DetectedBrowser) {
   failed.delete(b.id);
   try {
     const r = await api.importBrowser(b.id);
-    if (!r.bookmarks && !r.history && r.warnings.length) failed.set(b.id, r.warnings[0]);
+    if (!r.bookmarks && !r.history && !r.cookies && r.warnings.length) failed.set(b.id, r.warnings[0]);
     else imported.set(b.id, importSummary(r));
   } catch {
     failed.set(b.id, 'Couldn’t import this one');
