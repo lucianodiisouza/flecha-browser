@@ -322,7 +322,7 @@ function hasLocalState(dir: string) {
 }
 
 function hasChromiumProfile(root: string) {
-  return listDirs(root).some((d) => PROFILE_DIR.test(d) && [ENCRYPTED, 'Bookmarks', 'History', 'Cookies'].some((f) => isFile(path.join(root, d, f))));
+  return listDirs(root).some((d) => PROFILE_DIR.test(d) && [ENCRYPTED, 'Bookmarks', 'History'].some((f) => isFile(path.join(root, d, f))));
 }
 
 /** "BraveSoftware/Brave-Browser" → "Brave Browser", "Thorium/User Data" → "Thorium", "com.vendor.Name" → "Name". */
