@@ -7,8 +7,10 @@ symbol_level = 0
 blink_symbol_level = 0
 v8_symbol_level = 0
 target_cpu = "arm64"
-# No H.264/AAC: shipping Chrome's proprietary codecs needs patent licences we don't have.
-proprietary_codecs = false
+# H.264/AAC, as in the dev build: X/Twitter, Instagram, Twitch and most MP4 video on the
+# web have no VP9/AV1 version, and without them it doesn't play.
+proprietary_codecs = true
+ffmpeg_branding = "Chrome"
 use_remoteexec = false
 # Builds that aren't official take Google's experiments from fieldtrial_testing_config.json,
 # Omnibox Everywhere's "search with Chromium from anywhere" among them; Flecha ships without.
