@@ -4,6 +4,22 @@ import type { Store } from './store';
 export type ImportTab = { url: string; title: string };
 export type ImportNode = ({ kind: 'tab' } & ImportTab) | { kind: 'folder'; name: string; children: ImportNode[] };
 
+/** A cookie from another browser, already decrypted, in the terms chrome.cookies.set uses. */
+export interface ImportCookie {
+  /** With a leading dot for a cookie the whole domain shares, without one for a host-only cookie. */
+  domain: string;
+  name: string;
+  value: string;
+  path: string;
+  secure: boolean;
+  httpOnly: boolean;
+  sameSite: 'no_restriction' | 'lax' | 'strict' | 'unspecified';
+  /** Seconds since 1970; none for a session cookie. */
+  expires?: number;
+  /** The top-level site of a partitioned (CHIPS) cookie. */
+  partitionSite?: string;
+}
+
 /** Arc's sidebar, as arcImport.ts reads it. */
 export interface ArcImport {
   spaces: Array<{ name: string; emoji?: string; pinned: ImportNode[]; today: ImportTab[] }>;
@@ -23,6 +39,8 @@ export interface BrowserImportData {
   bookmarks?: ImportNode[];
   bookmarkCount: number;
   history: HistoryEntry[];
+  /** So sites stay signed in. */
+  cookies: ImportCookie[];
   warnings: string[];
 }
 
@@ -34,8 +52,9 @@ export async function applyBrowserImport(
   data: BrowserImportData,
   store: Pick<Store, 'importArc' | 'importBookmarks'>,
   history: { merge(entries: HistoryEntry[]): number | Promise<number> },
+  cookies: { set(cookies: ImportCookie[]): number | Promise<number> },
 ): Promise<ImportResult> {
-  const result: ImportResult = { spaces: 0, bookmarks: 0, history: 0, warnings: [...data.warnings] };
+  const result: ImportResult = { spaces: 0, bookmarks: 0, history: 0, cookies: 0, warnings: [...data.warnings] };
   if (data.arc) {
     store.importArc(data.arc);
     result.spaces = data.arc.spaces.length;
@@ -47,6 +66,7 @@ export async function applyBrowserImport(
     result.bookmarks = data.bookmarkCount;
   }
   if (data.history.length) result.history = await history.merge(data.history);
+  if (data.cookies?.length) result.cookies = await cookies.set(data.cookies);
   return result;
 }
 

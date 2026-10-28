@@ -7,12 +7,12 @@ import { promisify } from 'node:util';
 import type { DetectedBrowser, HistoryEntry } from '../shared/types';
 import { arcSidebarPath, readArcSidebar, type ArcImport, type ImportNode } from './arcImport';
 import { parseBookmarksHtml } from './bookmarksHtml';
-import type { BrowserImportData } from '../shared/importApply';
+import type { BrowserImportData, ImportCookie } from '../shared/importApply';
 
 /**
- * Brings bookmarks and history over from the other browsers on this Mac. Their files are
- * only ever read: databases are copied to a temporary folder first, since the browser may
- * have them open and locked. Passwords and cookies are left where they are.
+ * Brings bookmarks, history and cookies (so sites stay signed in) over from the other browsers
+ * on this Mac. Their files are only ever read: databases are copied to a temporary folder first,
+ * since the browser may have them open and locked. Passwords are left where they are.
  *
  * Reading (`readBrowser`) is kept apart from adding to Flecha (`applyBrowserImport`), so the
  * Chromium build's native messaging host can read and its shell extension can add. Nothing
@@ -33,6 +33,7 @@ interface Profile {
   name: string;
   bookmarkFiles: string[];
   historyFile?: string;
+  cookiesFile?: string;
 }
 
 interface BrowserSource {
@@ -41,6 +42,8 @@ interface BrowserSource {
   profiles(): Profile[];
   readBookmarks(profile: Profile): Promise<ImportNode[]>;
   readHistory(profile: Profile): Promise<HistoryEntry[]>;
+  /** Called once per import, so a keychain prompt covers every profile. */
+  cookieReader?(): (profile: Profile) => Promise<ImportCookie[]>;
   /** Where a Chromium browser keeps its profiles, so the scan for unlisted ones skips it. */
   root?: string;
   /** For browsers whose sidebar says more than bookmarks do (Arc): imported in their place. */
@@ -52,22 +55,27 @@ const appSupport = (...parts: string[]) => path.join(os.homedir(), 'Library', 'A
 
 // ---- Chromium family -------------------------------------------------------
 
-const CHROMIUM: Array<[id: string, name: string, dir: string]> = [
-  ['chrome', 'Chrome', 'Google/Chrome'],
-  ['brave', 'Brave', 'BraveSoftware/Brave-Browser'],
-  ['edge', 'Edge', 'Microsoft Edge'],
-  ['vivaldi', 'Vivaldi', 'Vivaldi'],
-  ['opera', 'Opera', 'com.operasoftware.Opera'],
-  ['opera-gx', 'Opera GX', 'com.operasoftware.OperaGX'],
-  ['chromium', 'Chromium', 'Chromium'],
+/** The last field is the keychain item the browser keeps its cookie key in. */
+const CHROMIUM: Array<[id: string, name: string, dir: string, safeStorage: string]> = [
+  ['chrome', 'Chrome', 'Google/Chrome', 'Chrome Safe Storage'],
+  ['brave', 'Brave', 'BraveSoftware/Brave-Browser', 'Brave Safe Storage'],
+  ['edge', 'Edge', 'Microsoft Edge', 'Microsoft Edge Safe Storage'],
+  ['vivaldi', 'Vivaldi', 'Vivaldi', 'Vivaldi Safe Storage'],
+  ['opera', 'Opera', 'com.operasoftware.Opera', 'Opera Safe Storage'],
+  ['opera-gx', 'Opera GX', 'com.operasoftware.OperaGX', 'Opera Safe Storage'],
+  ['chromium', 'Chromium', 'Chromium', 'Chromium Safe Storage'],
 ];
 
-function chromiumSource(id: string, name: string, root: string): BrowserSource {
+function chromiumSource(id: string, name: string, root: string, safeStorage = `${name} Safe Storage`): BrowserSource {
   return {
     id,
     name,
     root,
     profiles: () => chromiumProfiles(root),
+    cookieReader: () => {
+      const key = once(() => chromiumKey(safeStorage, keychainDenied(name, safeStorage)));
+      return async (profile) => chromiumCookies(await querySqlite<ChromiumCookie>(profile.cookiesFile!, CHROMIUM_COOKIES), key);
+    },
     readBookmarks: async (profile) => chromiumBookmarks(profile.bookmarkFiles.map((f) => fs.readFileSync(f, 'utf8'))),
     readHistory: (profile) =>
       // Chromium counts in microseconds since 1601.
@@ -90,8 +98,9 @@ function chromiumProfiles(root: string, bookmarkNames = ['Bookmarks', 'AccountBo
     const key = dir === root ? 'Default' : path.basename(dir);
     const bookmarkFiles = bookmarkNames.map((f) => path.join(dir, f)).filter(isFile);
     const history = path.join(dir, 'History');
-    const profile: Profile = { name: names[key] || key, bookmarkFiles, historyFile: isFile(history) ? history : undefined };
-    return profile.bookmarkFiles.length || profile.historyFile ? [profile] : [];
+    const cookies = [path.join(dir, 'Cookies'), path.join(dir, 'Network', 'Cookies')].find(isFile);
+    const profile: Profile = { name: names[key] || key, bookmarkFiles, historyFile: isFile(history) ? history : undefined, cookiesFile: cookies };
+    return profile.bookmarkFiles.length || profile.historyFile || profile.cookiesFile ? [profile] : [];
   });
 }
 
@@ -132,7 +141,7 @@ function chromiumNode(node: any): ImportNode[] {
 /** Arc is Chromium underneath, but its Spaces and pinned tabs live in its own sidebar file. */
 function arcSource(): BrowserSource {
   return {
-    ...chromiumSource('arc', 'Arc', appSupport('Arc', 'User Data')),
+    ...chromiumSource('arc', 'Arc', appSupport('Arc', 'User Data'), 'Arc Safe Storage'),
     sidebar: { exists: () => isFile(arcSidebarPath()), read: () => readArcSidebar() },
   };
 }
@@ -147,7 +156,7 @@ const DIA_KEYCHAIN =
 function diaSource(): BrowserSource {
   const root = appSupport('Dia', 'User Data');
   return {
-    ...chromiumSource('dia', 'Dia', root),
+    ...chromiumSource('dia', 'Dia', root, 'Dia Safe Storage'),
     // Only the newest of the two, so bookmarks deleted since don't come back from the old file.
     profiles: () =>
       chromiumProfiles(root, ['EncryptedBookmarks2', 'Bookmarks']).map((p) => ({ ...p, bookmarkFiles: p.bookmarkFiles.slice(0, 1) })),
@@ -165,15 +174,90 @@ function diaSource(): BrowserSource {
 async function decryptChromium(file: string, keychainService: string, denied: string): Promise<string> {
   const data = await fs.promises.readFile(file);
   if (data.subarray(0, 3).toString() !== 'v10') throw new Error(`${path.basename(file)} is encrypted in a way Flecha doesn’t know.`);
+  return decryptV10(data, await chromiumKey(keychainService, denied)).toString('utf8');
+}
+
+async function chromiumKey(keychainService: string, denied: string): Promise<Buffer> {
   let password: string;
   try {
     password = (await run('/usr/bin/security', ['find-generic-password', '-w', '-s', keychainService])).stdout.trim();
   } catch {
     throw new Error(denied);
   }
-  const key = crypto.pbkdf2Sync(password, 'saltysalt', 1003, 16, 'sha1');
+  return crypto.pbkdf2Sync(password, 'saltysalt', 1003, 16, 'sha1');
+}
+
+/** `data` still starts with "v10". */
+function decryptV10(data: Buffer, key: Buffer): Buffer {
   const decipher = crypto.createDecipheriv('aes-128-cbc', key, Buffer.alloc(16, ' '));
-  return Buffer.concat([decipher.update(data.subarray(3)), decipher.final()]).toString('utf8');
+  return Buffer.concat([decipher.update(data.subarray(3)), decipher.final()]);
+}
+
+const keychainDenied = (name: string, item: string) =>
+  `${name} keeps its cookies encrypted, with the key in your keychain. Choose Allow when macOS asks about “${item}”, then import again to stay signed in to your sites.`;
+
+interface ChromiumCookie {
+  host: string;
+  name: string;
+  value: string;
+  /** encrypted_value as hex, since the two ways of running SQL hand blobs back differently. */
+  encrypted: string;
+  path: string;
+  /** Seconds since 1970, or 0 for a session cookie. */
+  expires: number;
+  secure: number;
+  httpOnly: number;
+  /** -1 unspecified, 0 none, 1 lax, 2 strict. */
+  sameSite: number;
+  partitionSite: string | null;
+  /** The database's schema version; from 24 on, values start with a hash of their host. */
+  version: string | null;
+}
+
+// Chromium counts in microseconds since 1601, past what a JavaScript number holds exactly,
+// so the conversion happens in SQL.
+const CHROMIUM_COOKIES = `SELECT host_key AS host, name, value, hex(encrypted_value) AS encrypted, path,
+    CASE WHEN has_expires THEN expires_utc / 1000000 - 11644473600 ELSE 0 END AS expires,
+    is_secure AS secure, is_httponly AS httpOnly, samesite AS sameSite, top_frame_site_key AS partitionSite,
+    (SELECT value FROM meta WHERE key = 'version') AS version
+  FROM cookies`;
+
+const SAME_SITE: Record<number, ImportCookie['sameSite']> = { 0: 'no_restriction', 1: 'lax', 2: 'strict' };
+
+async function chromiumCookies(rows: ChromiumCookie[], key: () => Promise<Buffer>): Promise<ImportCookie[]> {
+  const now = Date.now() / 1000;
+  const cookies: ImportCookie[] = [];
+  for (const row of rows) {
+    if (row.expires && row.expires < now) continue;
+    let value = row.value ?? '';
+    if (!value && row.encrypted) {
+      const data = Buffer.from(row.encrypted, 'hex');
+      if (data.subarray(0, 3).toString() !== 'v10') continue;
+      let plain: Buffer;
+      try {
+        plain = decryptV10(data, await key());
+      } catch (err) {
+        // The keychain said no: nothing else will decrypt either.
+        if (!(err instanceof Error) || !err.message.includes('keychain')) continue;
+        throw err;
+      }
+      const hostHash = crypto.createHash('sha256').update(row.host).digest();
+      if (Number(row.version) >= 24 && plain.subarray(0, 32).equals(hostHash)) plain = plain.subarray(32);
+      value = plain.toString('utf8');
+    }
+    cookies.push({
+      domain: row.host,
+      name: row.name,
+      value,
+      path: row.path || '/',
+      secure: !!row.secure,
+      httpOnly: !!row.httpOnly,
+      sameSite: SAME_SITE[row.sameSite] ?? 'unspecified',
+      expires: row.expires || undefined,
+      partitionSite: row.partitionSite || undefined,
+    });
+  }
+  return cookies;
 }
 
 // ---- Chromium browsers not listed by name ------------------------------------
@@ -282,7 +366,7 @@ function realPath(dir: string) {
 
 // ---- Firefox ---------------------------------------------------------------
 
-/** Bookmarks and history both live in each profile's places.sqlite. */
+/** Bookmarks and history both live in each profile's places.sqlite, cookies (unencrypted) in cookies.sqlite. */
 function firefoxSource(): BrowserSource {
   const root = appSupport('Firefox', 'Profiles');
   return {
@@ -291,9 +375,13 @@ function firefoxSource(): BrowserSource {
     profiles: () =>
       listDirs(root).flatMap((dir) => {
         const places = path.join(root, dir, 'places.sqlite');
+        const cookies = path.join(root, dir, 'cookies.sqlite');
         // Profile folders are named "<random>.<name>", e.g. "x1y2z3.default-release".
-        return isFile(places) ? [{ name: dir.replace(/^[^.]+\./, ''), bookmarkFiles: [places], historyFile: places }] : [];
+        return isFile(places)
+          ? [{ name: dir.replace(/^[^.]+\./, ''), bookmarkFiles: [places], historyFile: places, cookiesFile: isFile(cookies) ? cookies : undefined }]
+          : [];
       }),
+    cookieReader: () => async (profile) => firefoxCookies(await querySqlite<FirefoxCookie>(profile.cookiesFile!, FIREFOX_COOKIES)),
     readBookmarks: async (profile) => firefoxBookmarks(await querySqlite<FirefoxBookmark>(profile.bookmarkFiles[0], FIREFOX_BOOKMARKS)),
     readHistory: (profile) =>
       // Firefox counts in microseconds since 1970.
@@ -343,6 +431,45 @@ function firefoxBookmarks(rows: FirefoxBookmark[]): ImportNode[] {
     folder('Other Bookmarks', root('unfiled_____')),
     folder('Mobile Bookmarks', root('mobile______')),
   ];
+}
+
+interface FirefoxCookie {
+  host: string;
+  name: string;
+  value: string;
+  path: string;
+  /** Seconds since 1970 in older versions, milliseconds in newer ones. */
+  expiry: number;
+  secure: number;
+  httpOnly: number;
+  /** 0 none, 1 lax, 2 strict. */
+  sameSite: number;
+}
+
+// Containers and partitioned cookies carry origin attributes; only the plain jar comes over.
+const FIREFOX_COOKIES = `SELECT host, name, value, path, expiry, isSecure AS secure, isHttpOnly AS httpOnly, sameSite
+  FROM moz_cookies WHERE originAttributes = ''`;
+
+function firefoxCookies(rows: FirefoxCookie[]): ImportCookie[] {
+  const now = Date.now() / 1000;
+  return rows.flatMap((row): ImportCookie[] => {
+    const expires = row.expiry > 1e11 ? Math.floor(row.expiry / 1000) : row.expiry;
+    if (expires && expires < now) return [];
+    // Firefox stores an unspecified SameSite as none, which Chromium refuses on a cookie that isn't secure.
+    const sameSite = row.sameSite === 1 ? 'lax' : row.sameSite === 2 ? 'strict' : row.secure ? 'no_restriction' : 'unspecified';
+    return [
+      {
+        domain: row.host,
+        name: row.name,
+        value: row.value ?? '',
+        path: row.path || '/',
+        secure: !!row.secure,
+        httpOnly: !!row.httpOnly,
+        sameSite,
+        expires: expires || undefined,
+      },
+    ];
+  });
 }
 
 // ---- Safari ----------------------------------------------------------------
@@ -481,7 +608,7 @@ function decodeXml(s: string) {
 
 function sources(): BrowserSource[] {
   const listed = [
-    ...CHROMIUM.map(([id, name, dir]) => chromiumSource(id, name, appSupport(dir))),
+    ...CHROMIUM.map(([id, name, dir, safeStorage]) => chromiumSource(id, name, appSupport(dir), safeStorage)),
     arcSource(),
     diaSource(),
     firefoxSource(),
@@ -504,6 +631,7 @@ export async function detectBrowsers(): Promise<DetectedBrowser[]> {
           profiles: Math.max(profiles.length, 1),
           hasBookmarks: sidebar || profiles.some((p) => p.bookmarkFiles.length > 0),
           hasHistory: profiles.some((p) => !!p.historyFile),
+          hasCookies: !!source.cookieReader && profiles.some((p) => !!p.cookiesFile),
         },
       ];
     } catch {
@@ -514,7 +642,7 @@ export async function detectBrowsers(): Promise<DetectedBrowser[]> {
 
 /** Reads what the shell's `importBrowser` brings over, without adding it anywhere. */
 export async function readBrowser(id: string): Promise<BrowserImportData> {
-  const result: BrowserImportData = { name: id, bookmarkCount: 0, history: [], warnings: [] };
+  const result: BrowserImportData = { name: id, bookmarkCount: 0, history: [], cookies: [], warnings: [] };
   const source = sources().find((s) => s.id === id);
   if (!source) {
     result.warnings.push(`No data from “${id}” was found on this Mac.`);
@@ -532,7 +660,7 @@ export async function readBrowser(id: string): Promise<BrowserImportData> {
   // Missing Full Disk Access blocks every file alike, so it is explained once.
   const warn = (what: string, err: unknown) => {
     const message = reason(err);
-    const warning = message === FULL_DISK_ACCESS ? message : `Couldn’t read ${what}: ${message}`;
+    const warning = message === FULL_DISK_ACCESS || message.includes('keychain') ? message : `Couldn’t read ${what}: ${message}`;
     if (!result.warnings.includes(warning)) result.warnings.push(warning);
   };
 
@@ -547,6 +675,11 @@ export async function readBrowser(id: string): Promise<BrowserImportData> {
   const tidy = newTidy();
   const perProfile: Array<{ profile: Profile; nodes: ImportNode[] }> = [];
   const visits: HistoryEntry[] = [];
+  const readCookies = source.cookieReader?.();
+  // A browser's profiles are often signed in as different people; the first profile's login to a site wins.
+  const cookies = new Map<string, ImportCookie>();
+  let cookieProfiles = 0;
+  let keychainRefused = false;
   for (const profile of profiles) {
     if (profile.bookmarkFiles.length && !source.sidebar) {
       try {
@@ -563,6 +696,20 @@ export async function readBrowser(id: string): Promise<BrowserImportData> {
         warn(`history from ${label(profile)}`, err);
       }
     }
+    if (profile.cookiesFile && readCookies && !keychainRefused) {
+      try {
+        const found = await readCookies(profile);
+        if (found.length) cookieProfiles++;
+        for (const c of found) {
+          const id = [c.domain, c.name, c.path, c.partitionSite ?? ''].join('\n');
+          if (!cookies.has(id)) cookies.set(id, c);
+        }
+      } catch (err) {
+        // A refused keychain prompt is the same answer for every profile: don't ask again.
+        keychainRefused = reason(err).includes('keychain');
+        warn(keychainRefused ? 'cookies' : `cookies from ${label(profile)}`, err);
+      }
+    }
   }
 
   if (tidy.skipped) result.warnings.push(`Only the first ${MAX_BOOKMARKS} bookmarks were imported; ${tidy.skipped} more were left out.`);
@@ -572,6 +719,10 @@ export async function readBrowser(id: string): Promise<BrowserImportData> {
     result.bookmarkCount = tidy.count;
   }
   result.history = visits;
+  result.cookies = [...cookies.values()];
+  if (cookieProfiles > 1) {
+    result.warnings.push(`Where more than one ${source.name} profile was signed in to the same site, the ${profiles[0].name} profile’s login was kept.`);
+  }
   return result;
 }
 
@@ -580,7 +731,7 @@ export async function readBrowser(id: string): Promise<BrowserImportData> {
  * directly. The shell picks the file and sends its text. History has no such format.
  */
 export function readBookmarksHtml(html: string, fileName = 'the file'): BrowserImportData {
-  const result: BrowserImportData = { name: 'Imported Bookmarks', bookmarkCount: 0, history: [], warnings: [] };
+  const result: BrowserImportData = { name: 'Imported Bookmarks', bookmarkCount: 0, history: [], cookies: [], warnings: [] };
   const tidy = newTidy();
   const nodes = tidy.run(parseBookmarksHtml(html));
   if (tidy.skipped) result.warnings.push(`Only the first ${MAX_BOOKMARKS} bookmarks were imported; ${tidy.skipped} more were left out.`);
@@ -624,6 +775,12 @@ function newTidy() {
     },
   };
   return tidy;
+}
+
+/** Runs `make` the first time it's asked for, then hands back the same promise. */
+function once<T>(make: () => Promise<T>): () => Promise<T> {
+  let made: Promise<T> | undefined;
+  return () => (made ??= make());
 }
 
 function folder(name: string, children: ImportNode[]): ImportNode {
