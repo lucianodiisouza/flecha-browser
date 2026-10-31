@@ -6,7 +6,7 @@
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA9emn2yaklQs6XFSayFO7A5Z/isGHzvL5vhaS8k+SNCT6mLBtBq0sq2uyLZ6dCU9AMZvhPh/orvZBczDRztTXWTVUToZPCJRXf6J9x9PNHbU3hsEMYGGFx/nFmrx2v3O/l4W+cARKu1WaAgViouWk5Z0oDXSo0hHKN+fQO0CbvbVbvssoB9RUrB5PnpaNsRdGadkLQRdudPwKT4gXzS1oI4sABoCwODcWGCCoAAe9VJ0OBK49hwgp/eLZ8PGyneJ6lIXAFfRn1jXXgyAWEaFGAlzNVgKiCODwvI/7+rLCEqOPD8g9yy/ikhSSw5nYEV8NkZMAA9jAa5lK2EYJGc3GwwIDAQAB",
   "minimum_chrome_version": "158",
   "incognito": "split",
-  "permissions": ["tabs", "storage", "unlimitedStorage", "sidePanel", "history", "topSites", "favicon", "clipboardWrite", "flechaPrivate", "nativeMessaging", "debugger", "downloads", "downloads.open", "downloads.ui", "browsingData", "contentSettings", "alarms", "scripting", "userScripts", "webNavigation", "declarativeNetRequest"],
+  "permissions": ["tabs", "cookies", "storage", "unlimitedStorage", "sidePanel", "history", "topSites", "favicon", "clipboardWrite", "flechaPrivate", "nativeMessaging", "debugger", "downloads", "downloads.open", "downloads.ui", "browsingData", "contentSettings", "alarms", "scripting", "userScripts", "webNavigation", "declarativeNetRequest"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js", "type": "module" },
   "side_panel": { "default_path": "sidebar.html" },

@@ -48,6 +48,8 @@ export function setupOnboarding(api: FlechaApi, h: H, icon: (name: IconName) => 
   let browsers: DetectedBrowser[] | undefined;
   const appIcons = new Map<string, string | undefined>();
   const imported = new Map<string, string>();
+  /** Imports that came over without their cookies, since the keychain said no. */
+  const refused = new Set<string>();
   const importing = new Set<string>();
   const tried = new Set<string>();
   let drawn = '';
@@ -225,7 +227,10 @@ export function setupOnboarding(api: FlechaApi, h: H, icon: (name: IconName) => 
     importing.add(b.id);
     draw();
     try {
-      imported.set(b.id, importSummary(await api.importBrowser(b.id)));
+      const r = await (refused.has(b.id) ? api.importBrowserCookies(b.id) : api.importBrowser(b.id));
+      imported.set(b.id, importSummary(r));
+      if (r.cookiesRefused) refused.add(b.id);
+      else refused.delete(b.id);
     } catch {
       imported.set(b.id, 'Couldn’t import this one');
     }
@@ -255,9 +260,9 @@ export function setupOnboarding(api: FlechaApi, h: H, icon: (name: IconName) => 
                 { class: `tour-browser${done ? ' done' : ''}${busy ? ' busy' : ''}` },
                 browserIcon(b),
                 h('span', { class: 'tour-browser-text' }, h('strong', {}, b.name), h('small', {}, done ?? browserDetail(b))),
-                done
+                done && !refused.has(b.id)
                   ? h('span', { class: 'tour-done' }, icon('check'))
-                  : h('button', { class: 'tour-ghost', disabled: busy, onclick: () => runImport(b) }, busy ? 'Importing…' : 'Import'),
+                  : h('button', { class: 'tour-ghost', disabled: busy, onclick: () => runImport(b) }, busy ? 'Importing…' : refused.has(b.id) ? 'Try Again' : 'Import'),
               );
             }),
           );

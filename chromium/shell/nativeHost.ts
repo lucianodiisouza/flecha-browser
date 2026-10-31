@@ -13,7 +13,7 @@
 import type { DetectedBrowser, HistoryEntry, ImportResult, UiState } from '../shared/types';
 import type { Store } from '../shared/store';
 import type { AgentResult, AgentTab, AgentToolName } from '../shared/agentTools';
-import { applyBrowserImport } from '../shared/importApply';
+import { applyBrowserImport, type ImportCookie } from '../shared/importApply';
 import { HOST_NAME, type HostMethods, type ToHost, type ToShell } from '../native-host/protocol';
 import { broadcast, handle } from './hub';
 import { hold, release } from './features/debuggee';
@@ -179,6 +179,39 @@ export function registerNativeHost(ctx: NativeHostContext) {
     },
   };
 
+  /**
+   * Into the default cookie jar, so the sites are signed in outside Spaces with separate
+   * cookies. A cookie Chromium won't take (a malformed one, say) is skipped.
+   */
+  const cookies = {
+    async set(list: ImportCookie[]) {
+      let set = 0;
+      for (let i = 0; i < list.length; i += 100) {
+        const results = await Promise.all(
+          list.slice(i, i + 100).map((c) =>
+            chrome.cookies
+              .set({
+                url: `${c.secure ? 'https' : 'http'}://${c.domain.replace(/^\./, '')}${c.path}`,
+                // A host-only cookie is set without a domain, or Chromium would share it with subdomains.
+                domain: c.domain.startsWith('.') ? c.domain : undefined,
+                name: c.name,
+                value: c.value,
+                path: c.path,
+                secure: c.secure,
+                httpOnly: c.httpOnly,
+                sameSite: c.sameSite,
+                expirationDate: c.expires,
+                partitionKey: c.partitionSite ? { topLevelSite: c.partitionSite } : undefined,
+              })
+              .then((cookie) => !!cookie, () => false),
+          ),
+        );
+        set += results.filter(Boolean).length;
+      }
+      return set;
+    },
+  };
+
   handle({
     detectBrowsers: async (): Promise<DetectedBrowser[]> => {
       try {
@@ -191,20 +224,29 @@ export function registerNativeHost(ctx: NativeHostContext) {
     },
     importBrowser: async (id: string): Promise<ImportResult> => {
       try {
-        return await applyBrowserImport(await call('readBrowser', String(id)), store, history);
+        return await applyBrowserImport(await call('readBrowser', String(id)), store, history, cookies);
       } catch (err) {
         const message = String(err instanceof Error ? err.message : err);
         const missing = isMissing(message);
-        return { spaces: 0, bookmarks: 0, history: 0, warnings: [missing ? NOT_INSTALLED : message] };
+        return { spaces: 0, bookmarks: 0, history: 0, cookies: 0, warnings: [missing ? NOT_INSTALLED : message] };
+      }
+    },
+    /** Only the cookies, so trying again after a refused keychain prompt doesn't add the bookmarks twice. */
+    importBrowserCookies: async (id: string): Promise<ImportResult> => {
+      try {
+        return await applyBrowserImport(await call('readBrowser', String(id), true), store, history, cookies);
+      } catch (err) {
+        const message = String(err instanceof Error ? err.message : err);
+        return { spaces: 0, bookmarks: 0, history: 0, cookies: 0, warnings: [isMissing(message) ? NOT_INSTALLED : message] };
       }
     },
     /** A bookmarks file exported from any browser as HTML, by its text, into a Space of its own. */
     importBookmarksFile: async (html: string, fileName?: string): Promise<ImportResult> => {
       try {
-        return await applyBrowserImport(await call('readBookmarksHtml', String(html), fileName), store, history);
+        return await applyBrowserImport(await call('readBookmarksHtml', String(html), fileName), store, history, cookies);
       } catch (err) {
         const message = String(err instanceof Error ? err.message : err);
-        return { spaces: 0, bookmarks: 0, history: 0, warnings: [isMissing(message) ? NOT_INSTALLED : message] };
+        return { spaces: 0, bookmarks: 0, history: 0, cookies: 0, warnings: [isMissing(message) ? NOT_INSTALLED : message] };
       }
     },
     /** The Electron spike's saved state as text, or undefined when there's none or no helper. */

@@ -80,6 +80,7 @@ const api: FlechaApi = {
   appIcon: async () => undefined,
   detectBrowsers: () => invoke('detectBrowsers'),
   importBrowser: (id) => invoke('importBrowser', id),
+  importBrowserCookies: (id) => invoke('importBrowserCookies', id),
   // On the new tab page, what you type opens in this tab.
   newTab: surface === 'newtab' ? cmd('navigate') : cmd('newTab'),
   navigate: cmd('navigate'),

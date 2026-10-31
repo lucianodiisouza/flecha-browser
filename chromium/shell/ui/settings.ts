@@ -225,6 +225,8 @@ const imported = new Map<string, string>();
 const importing = new Set<string>();
 /** Imports that brought nothing over, with why; their row offers to try again. */
 const failed = new Map<string, string>();
+/** Imports that came over without their cookies, since the keychain said no; their row offers to ask again. */
+const refused = new Set<string>();
 /** Why the native host, which reads the other browsers, last failed (SettingsView.hostError). */
 let hostError: string | undefined;
 
@@ -250,17 +252,17 @@ function renderBrowsers() {
       const why = failed.get(b.id);
       text.append(
         Object.assign(document.createElement('strong'), { textContent: b.name }),
-        Object.assign(document.createElement('small'), { className: why ? 'host-error' : '', textContent: done ?? why ?? browserDetail(b) }),
+        Object.assign(document.createElement('small'), { className: why || refused.has(b.id) ? 'host-error' : '', textContent: done ?? why ?? browserDetail(b) }),
       );
       const info = document.createElement('div');
       info.className = 'browser-info';
       info.append(Object.assign(document.createElement('span'), { className: 'browser-badge', textContent: b.name[0] }), text);
-      if (done) {
+      if (done && !refused.has(b.id)) {
         const mark = Object.assign(document.createElement('span'), { className: 'browser-done', textContent: 'Imported' });
         mark.prepend(icon('check'));
         row.append(info, mark);
       } else {
-        const button = Object.assign(document.createElement('button'), { className: 'button', disabled: busy, textContent: busy ? 'Importing…' : why ? 'Try Again' : 'Import' });
+        const button = Object.assign(document.createElement('button'), { className: 'button', disabled: busy, textContent: busy ? 'Importing…' : why || refused.has(b.id) ? 'Try Again' : 'Import' });
         button.addEventListener('click', () => runImport(b));
         row.append(info, button);
       }
@@ -274,9 +276,14 @@ async function runImport(b: DetectedBrowser) {
   renderBrowsers();
   failed.delete(b.id);
   try {
-    const r = await api.importBrowser(b.id);
-    if (!r.bookmarks && !r.history && r.warnings.length) failed.set(b.id, r.warnings[0]);
-    else imported.set(b.id, importSummary(r));
+    const retrying = refused.has(b.id);
+    const r = await (retrying ? api.importBrowserCookies(b.id) : api.importBrowser(b.id));
+    if (!retrying && !r.spaces && !r.bookmarks && !r.history && !r.cookies && r.warnings.length) failed.set(b.id, r.warnings[0]);
+    else {
+      imported.set(b.id, importSummary(r));
+      if (r.cookiesRefused) refused.add(b.id);
+      else refused.delete(b.id);
+    }
   } catch {
     failed.set(b.id, 'Couldn’t import this one');
   }
