@@ -16,6 +16,7 @@ import type { AgentResult, AgentTab, AgentToolName } from '../shared/agentTools'
 import { applyBrowserImport } from '../shared/importApply';
 import { HOST_NAME, type HostMethods, type ToHost, type ToShell } from '../native-host/protocol';
 import { broadcast, handle } from './hub';
+import { hold, release } from './features/debuggee';
 
 export interface NativeHostContext {
   store: Store;
@@ -408,9 +409,12 @@ export function registerNativeHost(ctx: NativeHostContext) {
 
   // ---- chrome.debugger --------------------------------------------------------
   // Attached on first use and kept while the agent works, so console messages keep coming
-  // (Runtime.enable replays the ones logged before); let go after two quiet minutes.
+  // (Runtime.enable replays the ones logged before); let go after two quiet minutes. Held
+  // through debuggee.ts like the other features, so a responsive mirror stays a phone while
+  // the agent works on it, and letting go doesn't detach a tab another feature still holds.
 
   const DEBUG_IDLE = 120_000;
+  const HOLDER = 'agent';
   const attached = new Map<number, ReturnType<typeof setTimeout>>();
   const attaching = new Map<number, Promise<void>>();
   const consoleLogs = new Map<number, Array<{ level: string; message: string; source: string; time: number }>>();
@@ -419,7 +423,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     clearTimeout(attached.get(chromeId));
     attached.set(
       chromeId,
-      setTimeout(() => void chrome.debugger.detach({ tabId: chromeId }).catch(() => undefined).finally(() => forget(chromeId)), DEBUG_IDLE),
+      setTimeout(() => void release(chromeId, HOLDER).finally(() => forget(chromeId)), DEBUG_IDLE),
     );
   }
 
@@ -437,7 +441,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     let pending = attaching.get(chromeId);
     if (!pending) {
       pending = (async () => {
-        await chrome.debugger.attach({ tabId: chromeId }, '1.3');
+        if (!(await hold(chromeId, HOLDER))) throw new Error("Flecha can't attach the debugger to this tab");
         keepAttached(chromeId);
         consoleLogs.set(chromeId, []);
         await chrome.debugger.sendCommand({ tabId: chromeId }, 'Runtime.enable');
