@@ -9,6 +9,7 @@ import type { Store } from '../shared/store';
 import { SHORTCUTS, keysFor } from './lib/shortcuts';
 import { broadcast, handle } from './hub';
 import { incognito } from './incognito';
+import { PHONE } from './features/responsive';
 
 export interface NativeContext {
   store: Store;
@@ -209,8 +210,10 @@ if (has('setSplitRatio')) {
   // Dragging the gap between the panes: the Store keeps the ratio (store.setSplitRatio clamps it).
   chrome.flechaPrivate.onSplitRatioChanged.addListener(
     when((ctx, tabId: number, ratio: number) => {
-      const split = ctx.store.activeSpace.split;
-      if (split && ctx.flechaTabId?.(tabId) === split[0]) ctx.store.setSplitRatio(ratio);
+      const space = ctx.store.activeSpace;
+      // The responsive view sizes its own split (phoneRatio); the Space's ratio is for the next one.
+      if (space.splitMode === 'responsive') return;
+      if (space.split && ctx.flechaTabId?.(tabId) === space.split[0]) ctx.store.setSplitRatio(ratio);
     }),
   );
 }
@@ -219,11 +222,12 @@ if (has('setSplitRatio')) {
 function registerSplitRatio(ctx: NativeContext) {
   if (!has('setSplitRatio') || !ctx.chromeTabId) return;
   let sent = '';
-  const apply = () => {
+  const apply = async () => {
     const space = ctx.store.activeSpace;
     const left = space.split && ctx.chromeTabId!(space.split[0]);
     if (left === undefined || !space.split) return;
-    const ratio = space.splitRatio ?? 0.5;
+    const ratio = space.splitMode === 'responsive' ? await phoneRatio(left, ctx.chromeTabId!(space.split[1])) : (space.splitRatio ?? 0.5);
+    if (ratio === undefined) return;
     const key = `${left}:${ratio}`;
     if (key === sent) return;
     // Fails until Chromium has made the split; tabs.onUpdated (splitViewId) tries again.
@@ -232,11 +236,26 @@ function registerSplitRatio(ctx: NativeContext) {
       () => undefined,
     );
   };
-  apply();
-  ctx.store.onChange(apply);
+  void apply();
+  ctx.store.onChange(() => void apply());
   chrome.tabs.onUpdated.addListener((_id, info) => {
-    if ('splitViewId' in info) apply();
+    if ('splitViewId' in info) void apply();
   });
+  // The phone keeps its width when the window is resized.
+  chrome.windows.onBoundsChanged.addListener(() => void apply());
+}
+
+/**
+ * The ratio that leaves the right pane as wide as the phone, from the two panes' widths now
+ * (their sum doesn't change with the ratio). Undefined until Chromium has laid both out.
+ */
+async function phoneRatio(left: number, right: number | undefined): Promise<number | undefined> {
+  if (right === undefined) return undefined;
+  const [a, b] = await Promise.all([chrome.tabs.get(left), chrome.tabs.get(right)]).catch(() => []);
+  if (!a?.width || !b?.width) return undefined;
+  const total = a.width + b.width;
+  // Rounded so small layout differences don't resend the same split.
+  return Math.round(Math.min(0.9, Math.max(0.1, (total - PHONE.width) / total)) * 1000) / 1000;
 }
 
 // ---- theme (patch 0018) ------------------------------------------------------------------
