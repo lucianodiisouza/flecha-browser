@@ -79,6 +79,8 @@ export interface ImportResult {
   history: number;
   /** Cookies set, so sites stay signed in. */
   cookies: number;
+  /** The keychain said no; `importBrowserCookies` asks again without repeating the rest. */
+  cookiesRefused?: boolean;
   warnings: string[];
 }
 
@@ -356,6 +358,8 @@ export interface SettingsApi {
   detectBrowsers(): Promise<DetectedBrowser[]>;
   /** Imports one of the browsers `detectBrowsers` found, by id. */
   importBrowser(id: string): Promise<ImportResult>;
+  /** Tries a browser's cookies again after a refused keychain prompt, leaving the rest as it is. */
+  importBrowserCookies(id: string): Promise<ImportResult>;
   /** Imports the bookmarks in a file exported from any browser as HTML, given its text. */
   importBookmarksFile(html: string, fileName?: string): Promise<ImportResult>;
   onPane(cb: (pane: string) => void): void;
@@ -400,6 +404,8 @@ export interface FlechaApi {
   detectBrowsers(): Promise<DetectedBrowser[]>;
   /** Imports one of the browsers `detectBrowsers` found, by id. */
   importBrowser(id: string): Promise<ImportResult>;
+  /** Tries a browser's cookies again after a refused keychain prompt, leaving the rest as it is. */
+  importBrowserCookies(id: string): Promise<ImportResult>;
   newTab(input: string): void;
   navigate(input: string): void;
   activate(tabId: string): void;

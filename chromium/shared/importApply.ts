@@ -41,6 +41,8 @@ export interface BrowserImportData {
   history: HistoryEntry[];
   /** So sites stay signed in. */
   cookies: ImportCookie[];
+  /** The keychain said no, so asking again can still bring the cookies. */
+  cookiesRefused?: boolean;
   warnings: string[];
 }
 
@@ -54,7 +56,7 @@ export async function applyBrowserImport(
   history: { merge(entries: HistoryEntry[]): number | Promise<number> },
   cookies: { set(cookies: ImportCookie[]): number | Promise<number> },
 ): Promise<ImportResult> {
-  const result: ImportResult = { spaces: 0, bookmarks: 0, history: 0, cookies: 0, warnings: [...data.warnings] };
+  const result: ImportResult = { spaces: 0, bookmarks: 0, history: 0, cookies: 0, cookiesRefused: data.cookiesRefused, warnings: [...data.warnings] };
   if (data.arc) {
     store.importArc(data.arc);
     result.spaces = data.arc.spaces.length;

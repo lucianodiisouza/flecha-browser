@@ -78,7 +78,7 @@ process.stdin.on('end', () => void bridge.stop().finally(() => process.exit(0)))
 
 const methods: { [K in keyof HostMethods]: (...args: any[]) => Promise<ReturnType<HostMethods[K]>> | ReturnType<HostMethods[K]> } = {
   detectBrowsers: () => detectBrowsers(),
-  readBrowser: (id: string) => readBrowser(String(id)),
+  readBrowser: (id: string, cookiesOnly?: boolean) => readBrowser(String(id), !!cookiesOnly),
   readBookmarksHtml: (html: string, fileName?: string) => readBookmarksHtml(String(html), fileName ? String(fileName) : undefined),
   readFlechaState: () => {
     const file = path.join(os.homedir(), 'Library', 'Application Support', 'Flecha', 'flecha-state.json');

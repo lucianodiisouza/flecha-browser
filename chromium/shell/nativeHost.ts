@@ -230,6 +230,15 @@ export function registerNativeHost(ctx: NativeHostContext) {
         return { spaces: 0, bookmarks: 0, history: 0, cookies: 0, warnings: [missing ? NOT_INSTALLED : message] };
       }
     },
+    /** Only the cookies, so trying again after a refused keychain prompt doesn't add the bookmarks twice. */
+    importBrowserCookies: async (id: string): Promise<ImportResult> => {
+      try {
+        return await applyBrowserImport(await call('readBrowser', String(id), true), store, history, cookies);
+      } catch (err) {
+        const message = String(err instanceof Error ? err.message : err);
+        return { spaces: 0, bookmarks: 0, history: 0, cookies: 0, warnings: [isMissing(message) ? NOT_INSTALLED : message] };
+      }
+    },
     /** A bookmarks file exported from any browser as HTML, by its text, into a Space of its own. */
     importBookmarksFile: async (html: string, fileName?: string): Promise<ImportResult> => {
       try {

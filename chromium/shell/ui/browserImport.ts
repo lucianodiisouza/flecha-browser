@@ -7,12 +7,13 @@ export function browserDetail(b: DetectedBrowser) {
   return `${what[0].toUpperCase()}${what.slice(1)}${b.profiles > 1 ? ` · ${b.profiles} profiles` : ''}`;
 }
 
-/** One line on what an import brought over, or the first thing that went wrong. */
+/** What an import brought over and anything that went wrong along the way, or the first thing that went wrong. */
 export function importSummary(r: ImportResult) {
   const parts = [
     r.bookmarks && `${r.bookmarks.toLocaleString()} bookmarks`,
     r.history && `${r.history.toLocaleString()} pages`,
     r.cookies && `${r.cookies.toLocaleString()} cookies`,
   ].filter(Boolean);
-  return parts.length ? parts.join(' · ') : (r.warnings[0] ?? 'Nothing to import');
+  if (!parts.length) return r.warnings[0] ?? 'Nothing to import';
+  return r.warnings.length ? `${parts.join(' · ')}. ${r.warnings.join(' ')}` : parts.join(' · ');
 }

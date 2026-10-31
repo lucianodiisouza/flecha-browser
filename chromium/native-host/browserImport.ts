@@ -194,7 +194,7 @@ function decryptV10(data: Buffer, key: Buffer): Buffer {
 }
 
 const keychainDenied = (name: string, item: string) =>
-  `${name} keeps its cookies encrypted, with the key in your keychain. Choose Allow when macOS asks about “${item}”, then import again to stay signed in to your sites.`;
+  `${name} keeps its cookies encrypted, with the key in your keychain. Choose Allow when macOS asks about “${item}”, then try again to stay signed in to your sites.`;
 
 interface ChromiumCookie {
   host: string;
@@ -640,8 +640,11 @@ export async function detectBrowsers(): Promise<DetectedBrowser[]> {
   });
 }
 
-/** Reads what the shell's `importBrowser` brings over, without adding it anywhere. */
-export async function readBrowser(id: string): Promise<BrowserImportData> {
+/**
+ * Reads what the shell's `importBrowser` brings over, without adding it anywhere. `cookiesOnly` is
+ * for trying again after a refused keychain prompt, when the rest has already come over.
+ */
+export async function readBrowser(id: string, cookiesOnly = false): Promise<BrowserImportData> {
   const result: BrowserImportData = { name: id, bookmarkCount: 0, history: [], cookies: [], warnings: [] };
   const source = sources().find((s) => s.id === id);
   if (!source) {
@@ -664,7 +667,7 @@ export async function readBrowser(id: string): Promise<BrowserImportData> {
     if (!result.warnings.includes(warning)) result.warnings.push(warning);
   };
 
-  if (source.sidebar) {
+  if (source.sidebar && !cookiesOnly) {
     try {
       result.arc = source.sidebar.read();
     } catch (err) {
@@ -681,7 +684,7 @@ export async function readBrowser(id: string): Promise<BrowserImportData> {
   let cookieProfiles = 0;
   let keychainRefused = false;
   for (const profile of profiles) {
-    if (profile.bookmarkFiles.length && !source.sidebar) {
+    if (profile.bookmarkFiles.length && !source.sidebar && !cookiesOnly) {
       try {
         const nodes = tidy.run(await source.readBookmarks(profile));
         if (nodes.length) perProfile.push({ profile, nodes });
@@ -689,7 +692,7 @@ export async function readBrowser(id: string): Promise<BrowserImportData> {
         warn(`bookmarks from ${label(profile)}`, err);
       }
     }
-    if (profile.historyFile) {
+    if (profile.historyFile && !cookiesOnly) {
       try {
         visits.push(...(await source.readHistory(profile)).map(cleanEntry));
       } catch (err) {
@@ -720,6 +723,7 @@ export async function readBrowser(id: string): Promise<BrowserImportData> {
   }
   result.history = visits;
   result.cookies = [...cookies.values()];
+  result.cookiesRefused = keychainRefused;
   if (cookieProfiles > 1) {
     result.warnings.push(`Where more than one ${source.name} profile was signed in to the same site, the ${profiles[0].name} profile’s login was kept.`);
   }
