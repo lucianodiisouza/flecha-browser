@@ -196,6 +196,21 @@ function decryptV10(data: Buffer, key: Buffer): Buffer {
 const keychainDenied = (name: string, item: string) =>
   `${name} keeps its cookies encrypted, with the key in your keychain. Choose Allow when macOS asks about “${item}”, then try again to stay signed in to your sites.`;
 
+/** Second-level names countries sell domains under: foo.com.br is a site, com.br isn't. */
+const COUNTRY_SECOND_LEVEL = /^(ac|co|com|edu|gov|ne|net|or|org)$/;
+
+/**
+ * The site a cookie's domain belongs to, near enough without the public suffix list: where
+ * it's wrong it joins sites (*.github.io), which at worst leaves a later profile's cookies out.
+ */
+function cookieSite(domain: string) {
+  const host = domain.replace(/^\./, '').toLowerCase();
+  if (/^[\d.]+$/.test(host) || host.includes(':')) return host;
+  const labels = host.split('.');
+  const country = labels[labels.length - 1].length === 2 && COUNTRY_SECOND_LEVEL.test(labels[labels.length - 2] ?? '');
+  return labels.slice(country ? -3 : -2).join('.');
+}
+
 interface ChromiumCookie {
   host: string;
   name: string;
@@ -679,9 +694,11 @@ export async function readBrowser(id: string, cookiesOnly = false): Promise<Brow
   const perProfile: Array<{ profile: Profile; nodes: ImportNode[] }> = [];
   const visits: HistoryEntry[] = [];
   const readCookies = source.cookieReader?.();
-  // A browser's profiles are often signed in as different people; the first profile's login to a site wins.
-  const cookies = new Map<string, ImportCookie>();
-  let cookieProfiles = 0;
+  // A browser's profiles are often signed in as different people, and one login's cookies mixed
+  // with another's break both: all of a site's cookies come from the first profile that has any.
+  const cookies: ImportCookie[] = [];
+  const cookieSites = new Set<string>();
+  let sharedSites = false;
   let keychainRefused = false;
   for (const profile of profiles) {
     if (profile.bookmarkFiles.length && !source.sidebar && !cookiesOnly) {
@@ -702,11 +719,10 @@ export async function readBrowser(id: string, cookiesOnly = false): Promise<Brow
     if (profile.cookiesFile && readCookies && !keychainRefused) {
       try {
         const found = await readCookies(profile);
-        if (found.length) cookieProfiles++;
-        for (const c of found) {
-          const id = [c.domain, c.name, c.path, c.partitionSite ?? ''].join('\n');
-          if (!cookies.has(id)) cookies.set(id, c);
-        }
+        const own = found.filter((c) => !cookieSites.has(cookieSite(c.domain)));
+        sharedSites ||= own.length < found.length;
+        cookies.push(...own);
+        for (const c of own) cookieSites.add(cookieSite(c.domain));
       } catch (err) {
         // A refused keychain prompt is the same answer for every profile: don't ask again.
         keychainRefused = reason(err).includes('keychain');
@@ -722,10 +738,10 @@ export async function readBrowser(id: string, cookiesOnly = false): Promise<Brow
     result.bookmarkCount = tidy.count;
   }
   result.history = visits;
-  result.cookies = [...cookies.values()];
+  result.cookies = cookies;
   result.cookiesRefused = keychainRefused;
-  if (cookieProfiles > 1) {
-    result.warnings.push(`Where more than one ${source.name} profile was signed in to the same site, the ${profiles[0].name} profile’s login was kept.`);
+  if (sharedSites) {
+    result.warnings.push(`Some sites have cookies in more than one ${source.name} profile. Each came over from the first profile that had any, so you may need to sign in to those again.`);
   }
   return result;
 }
