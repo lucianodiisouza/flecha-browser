@@ -806,7 +806,7 @@ async function start() {
     actualSize: () => call('zoom', 0),
     // Owned by other shell modules, which handle a hub command of the same name.
     devTools: () => call('devTools'),
-    responsive: () => call('responsive'),
+    responsive: () => call('toggleResponsive'),
     nextEnvironment: () => call('nextEnvironment'),
     editBoost: () => call('editBoost'),
     closePeek: () => call('closePeek'),
