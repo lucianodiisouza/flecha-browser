@@ -1,0 +1,201 @@
+--- a/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
++++ b/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
+@@ -18,6 +18,8 @@
+ #include "chrome/browser/ui/browser_commands.h"
+ #include "chrome/browser/ui/browser_tabstrip.h"
+ #include "chrome/browser/ui/browser_window/public/create_browser_window.h"
++#include "chrome/browser/ui/extensions/extensions_container.h"
++#include "chrome/browser/ui/toolbar/toolbar_action_view_model.h"
+ #include "chrome/common/webui_url_constants.h"
+ #include "ui/base/base_window.h"
+ #include "ui/display/screen.h"
+@@ -493,6 +495,35 @@
+   return RespondNow(NoArguments());
+ }
+ 
++ExtensionFunction::ResponseAction
++FlechaPrivateOpenExtensionActionFunction::Run() {
++  auto params = flecha_private::OpenExtensionAction::Params::Create(args());
++  EXTENSION_FUNCTION_VALIDATE(params);
++  FlechaFrameHost* host =
++      params->window_id ? HostForWindow(*params->window_id, browser_context())
++                        : HostForContents(GetSenderWebContents());
++  if (!host) {
++    return RespondNow(Error(kNoWindowError, "(extension action)"));
++  }
++  BrowserWindowInterface* browser = host->GetBrowserWindowInterface();
++  ExtensionsContainer* container = ExtensionsContainer::From(*browser);
++  ToolbarActionViewModel* action =
++      container ? container->GetActionForId(params->extension_id) : nullptr;
++  if (!action) {
++    return RespondNow(Error("No action for extension *.", params->extension_id));
++  }
++  // Chromium would fall back to the action's context menu, on a toolbar button
++  // nobody can see.
++  if (!action->IsEnabled(browser->GetActiveTabInterface()->GetContents())) {
++    return RespondNow(Error("The action is disabled on this tab."));
++  }
++  host->SetPopupAnchor(gfx::Rect(params->anchor.x, params->anchor.y,
++                                 params->anchor.width, params->anchor.height));
++  action->ExecuteUserAction(
++      ToolbarActionViewModel::InvocationSource::kToolbarButton);
++  return RespondNow(NoArguments());
++}
++
+ ExtensionFunction::ResponseAction FlechaPrivateShowFindBarFunction::Run() {
+   auto params = flecha_private::ShowFindBar::Params::Create(args());
+   EXTENSION_FUNCTION_VALIDATE(params);
+--- a/chrome/browser/extensions/api/flecha_private/flecha_private_api.h
++++ b/chrome/browser/extensions/api/flecha_private/flecha_private_api.h
+@@ -142,6 +142,15 @@
+   ResponseAction Run() override;
+ };
+ 
++class FlechaPrivateOpenExtensionActionFunction : public ExtensionFunction {
++ public:
++  DECLARE_EXTENSION_FUNCTION("flechaPrivate.openExtensionAction", UNKNOWN)
++
++ protected:
++  ~FlechaPrivateOpenExtensionActionFunction() override = default;
++  ResponseAction Run() override;
++};
++
+ class FlechaPrivateShowFindBarFunction : public ExtensionFunction {
+  public:
+   DECLARE_EXTENSION_FUNCTION("flechaPrivate.showFindBar", UNKNOWN)
+--- a/chrome/common/extensions/api/flecha_private.idl
++++ b/chrome/common/extensions/api/flecha_private.idl
+@@ -34,6 +34,13 @@
+     dark
+   };
+ 
++  dictionary AnchorRect {
++    long x;
++    long y;
++    long width;
++    long height;
++  };
++
+   dictionary FrameState {
+     SidebarMode sidebar;
+     // The frame page covers the whole window (command bar, Peek, tour, tab
+@@ -182,6 +189,15 @@
+         optional DevToolsOptions options,
+         optional DoneCallback callback);
+ 
++    // Does what clicking an extension's toolbar button does in Chromium (its
++    // popup, or action.onClicked) in the given window or the caller's. With the
++    // toolbar hidden, the popup opens beside `anchor`, a rect in the frame
++    // page's coordinates. Fails while the action is disabled on the active tab.
++    static void openExtensionAction(DOMString extensionId,
++        AnchorRect anchor,
++        optional long windowId,
++        optional DoneCallback callback);
++
+     // Chromium's find bar (find in page) in the given window or the main
+     // one, at the page area's top right.
+     static void showFindBar(optional long windowId, optional DoneCallback callback);
+--- a/chrome/browser/flecha/flecha_frame_host.h
++++ b/chrome/browser/flecha/flecha_frame_host.h
+@@ -203,6 +203,8 @@
+   virtual void SetFrameState(const FlechaFrameState& state) = 0;
+   virtual void FocusFrame() = 0;
+   virtual void FocusPage() = 0;
++  // Where extension popups open, in the frame page's coordinates.
++  virtual void SetPopupAnchor(const gfx::Rect& rect) = 0;
+   // Takes the keys in Shortcuts() from now on, and lets go of any others.
+   virtual void UpdateShortcuts() = 0;
+   // Whether the window is a Flechinha, Flecha's small window for one page.
+--- a/chrome/browser/ui/views/frame/flecha_frame_view.h
++++ b/chrome/browser/ui/views/frame/flecha_frame_view.h
+@@ -67,6 +67,10 @@
+   // Peek's card (a web view above the frame), hidden unless a Peek is open.
+   views::View* peek_view() { return peek_view_.view(); }
+ 
++  // What extension popups anchor to, the toolbar being hidden: an empty view
++  // over the frame, placed by SetPopupAnchor().
++  views::View* popup_anchor() { return popup_anchor_.view(); }
++
+   const FlechaFrameState& state() const { return state_; }
+ 
+   // Whether the frame lays out the window (the shell is loaded).
+@@ -94,6 +98,7 @@
+   void SetFrameState(const FlechaFrameState& state) override;
+   void FocusFrame() override;
+   void FocusPage() override;
++  void SetPopupAnchor(const gfx::Rect& rect) override;
+   void UpdateShortcuts() override;
+   void OpenPeek(const GURL& url, content::WebContents* source) override;
+   void OpenPeekWithContents(
+@@ -168,6 +173,7 @@
+   // Owned by `browser_view_`, like this view; it may go first.
+   views::ViewTracker background_view_;
+   views::ViewTracker peek_view_;
++  views::ViewTracker popup_anchor_;
+   std::unique_ptr<content::WebContents> frame_contents_;
+   FlechaFrameState state_;
+   // The frame page's -webkit-app-region: drag areas, in this view's
+--- a/chrome/browser/ui/views/frame/flecha_frame_view.cc
++++ b/chrome/browser/ui/views/frame/flecha_frame_view.cc
+@@ -288,6 +288,13 @@
+   // Under every other view of the window.
+   background_view_.SetView(browser_view->AddChildViewAt(
+       std::make_unique<FlechaFrameBackgroundView>(), 0));
++  // Until the shell says otherwise (a popup an extension's shortcut opened),
++  // just past the sidebar's top.
++  auto popup_anchor = std::make_unique<views::View>();
++  popup_anchor->SetCanProcessEventsWithinSubtree(false);
++  popup_anchor->SetBoundsRect(
++      gfx::Rect(kFlechaSidebarWidth - kFlechaGap, kFlechaGap, 1, 1));
++  popup_anchor_.SetView(browser_view->AddChildView(std::move(popup_anchor)));
+   if (const auto& state = FlechaFrameHost::DefaultState()) {
+     state_ = *state;
+   }
+@@ -538,6 +545,14 @@
+   }
+ }
+ 
++void FlechaFrameView::SetPopupAnchor(const gfx::Rect& rect) {
++  if (views::View* anchor = popup_anchor_.view()) {
++    gfx::Point origin = rect.origin();
++    views::View::ConvertPointToTarget(this, browser_view_, &origin);
++    anchor->SetBoundsRect(gfx::Rect(origin, rect.size()));
++  }
++}
++
+ void FlechaFrameView::FocusPage() {
+   if (views::WebView* page = browser_view_->GetActiveContentsWebView()) {
+     page->RequestFocus();
+--- a/chrome/browser/ui/views/extensions/extension_action_delegate_desktop.cc
++++ b/chrome/browser/ui/views/extensions/extension_action_delegate_desktop.cc
+@@ -14,6 +14,8 @@
+ #include "chrome/browser/ui/extensions/extension_action_view_model.h"
+ #include "chrome/browser/ui/views/extensions/extension_popup.h"
+ #include "chrome/browser/ui/views/extensions/extensions_container_views.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/frame/flecha_frame_view.h"
+ #include "extensions/common/api/extension_action/action_info.h"
+ #include "extensions/common/command.h"
+ #include "ui/views/view.h"
+@@ -89,10 +91,17 @@
+   views::BubbleBorder::Arrow arrow =
+       extensions_container_views_ ? extensions_container_views_->GetPopupArrow()
+                                   : views::BubbleBorder::TOP_RIGHT;
+-  ExtensionPopup::ShowPopup(
+-      browser_, std::move(host),
+-      extensions_container_views_->GetReferenceButtonForPopup(model_->GetId()),
+-      arrow, show_action, std::move(callback));
++  views::BubbleAnchor anchor =
++      extensions_container_views_->GetReferenceButtonForPopup(model_->GetId());
++  // Flecha: the toolbar button is hidden; the popup opens beside the sidebar.
++  FlechaFrameView* frame =
++      FlechaFrameView::From(BrowserView::GetBrowserViewForBrowser(browser_));
++  if (frame && frame->IsActive() && frame->popup_anchor()) {
++    anchor = views::BubbleAnchor(frame->popup_anchor());
++    arrow = views::BubbleBorder::LEFT_TOP;
++  }
++  ExtensionPopup::ShowPopup(browser_, std::move(host), anchor, arrow,
++                            show_action, std::move(callback));
+ 
+   extensions_container_views_->OnPopupShown(model_->GetId(), by_user);
+ }

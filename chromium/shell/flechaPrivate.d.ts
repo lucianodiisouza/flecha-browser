@@ -187,6 +187,18 @@ declare namespace chrome.flechaPrivate {
   function openDevTools(tabId: number, options?: DevToolsOptions): Promise<void>;
 
   /**
+   * What clicking an extension's toolbar button does in Chromium, its popup or
+   * action.onClicked (patch 0042). The toolbar being hidden, the popup opens beside `anchor`,
+   * a rect in the frame page's coordinates. Rejects while the action is disabled on the
+   * active tab.
+   */
+  function openExtensionAction(
+    extensionId: string,
+    anchor: { x: number; y: number; width: number; height: number },
+    windowId?: number,
+  ): Promise<void>;
+
+  /**
    * Chromium's find bar (find in page) in `windowId` or the main window (patch 0030). With
    * the toolbar hidden it floats at the page area's top right, just inside it.
    */
