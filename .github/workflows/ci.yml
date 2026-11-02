@@ -22,6 +22,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - run: npm test
       - run: npm run shell:build
       - run: npm run host:build
       # Patches are left out: their context lines keep Chromium's own trailing spaces.
