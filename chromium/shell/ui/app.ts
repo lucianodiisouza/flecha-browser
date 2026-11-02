@@ -2,6 +2,7 @@ import { devSuggestions } from './devCommands.js';
 import { ICONS, type IconName } from './icons.js';
 import { setupOnboarding } from './onboarding.js';
 import { SPACE_COLORS, SPACE_EMOJIS } from './spaceChoices.js';
+import { webAddress } from '../lib/url';
 import type { DownloadInfo, DropTarget, ExtensionsView, FlechaApi, HistoryEntry, PaletteMode, PeekState, PinnedNode, Space, TabInfo, UiState } from '../../shared/types';
 
 declare global {
@@ -782,10 +783,6 @@ let paletteMode: PaletteMode = 'new-tab';
 let paletteItems: PaletteItem[] = [];
 let selected = 0;
 
-function looksLikeUrl(q: string) {
-  return /^[a-z][a-z0-9+.-]*:\/\//i.test(q) || (!/\s/.test(q) && /\.[a-z]{2,}(:\d+)?(\/|$)/i.test(q)) || /^localhost(:\d+)?/.test(q);
-}
-
 function openPalette(mode: PaletteMode) {
   paletteMode = mode;
   palette.hidden = false;
@@ -862,7 +859,7 @@ function updatePalette() {
   $('palette-mode').textContent = { navigate: 'Current Tab', split: 'Split View', 'new-tab': '' }[paletteMode];
 
   if (q) {
-    const isUrl = looksLikeUrl(q);
+    const isUrl = webAddress(q) !== undefined;
     const searchItem: PaletteItem = {
       group: '',
       icon: isUrl ? 'globe' : 'search',
