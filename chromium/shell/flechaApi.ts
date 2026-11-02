@@ -156,6 +156,14 @@ const api: FlechaApi = {
   setPreferences: cmd('setPreferences'),
   makeDefaultBrowser: cmd('makeDefaultBrowser'),
   newFlechinha: cmd('newFlechinha'),
+  onExtensions: (cb) => on('extensions', cb),
+  openExtension: async (id, name, anchor) => {
+    if (!windowId) return;
+    await chrome.flechaPrivate.openExtensionAction(id, anchor, await windowId).catch(() => cmd('flash')(`${name} isn’t available on this page`));
+  },
+  extensionMenu: (id) => void showMenu('extensionMenu', id),
+  moveExtension: cmd('moveExtension'),
+  setExtensionsCollapsed: cmd('setExtensionsCollapsed'),
 };
 
 window.flecha = api;

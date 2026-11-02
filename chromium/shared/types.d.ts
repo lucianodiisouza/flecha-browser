@@ -382,7 +382,28 @@ export interface SettingsApi {
   showEmojiPanel(): Promise<void>;
 }
 
+export interface InstalledExtension {
+  id: string;
+  name: string;
+  icon?: string;
+  optionsUrl?: string;
+  /** Shown in the sidebar, not only in the site panel. */
+  pinned: boolean;
+}
+
+/** In the user's order. */
+export interface ExtensionsView {
+  items: InstalledExtension[];
+  collapsed: boolean;
+}
+
 export interface FlechaApi {
+  onExtensions(cb: (view: ExtensionsView) => void): void;
+  /** Opens its popup beside `anchor`, in this page's coordinates. */
+  openExtension(id: string, name: string, anchor: { x: number; y: number; width: number; height: number }): void;
+  extensionMenu(id: string): void;
+  moveExtension(id: string, beforeId?: string): void;
+  setExtensionsCollapsed(collapsed: boolean): void;
   onState(cb: (state: UiState) => void): void;
   onPalette(cb: (mode: PaletteMode) => void): void;
   /** Main asks the sidebar to open the Space editor (new Space, menu, shortcut). */
