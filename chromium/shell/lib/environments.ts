@@ -64,7 +64,9 @@ export function parseTargets(text: string): EnvironmentTarget[] {
     if (!parts.length) continue;
     const raw = parts[parts.length - 1];
     try {
-      const origin = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : `https://${raw}`).origin;
+      // Dev servers and devices on the network speak plain http, so these don't get https.
+      const scheme = /^(localhost|[a-z0-9.-]+\.localhost|(\d{1,3}\.){3}\d{1,3}|\[::1\])(:\d+)?(\/|$)/i.test(raw) ? 'http' : 'https';
+      const origin = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : `${scheme}://${raw}`).origin;
       const label = parts.length > 1 ? parts.slice(0, -1).join(' ') : new URL(origin).host;
       targets.push({ label, origin });
     } catch {

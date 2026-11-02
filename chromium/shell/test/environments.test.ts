@@ -40,3 +40,21 @@ for (const [name, lines] of Object.entries(tones)) {
     for (const [line, tone] of Object.entries(lines)) assert.equal(toneOf(line), tone, line);
   });
 }
+
+test('a target without a scheme gets http when local, https otherwise', () => {
+  const origins: Record<string, string> = {
+    'localhost:3000': 'http://localhost:3000',
+    '127.0.0.1:8080': 'http://127.0.0.1:8080',
+    '192.168.0.10:3000': 'http://192.168.0.10:3000',
+    'app.localhost:3000': 'http://app.localhost:3000',
+    'example.com': 'https://example.com',
+    'http://example.com': 'http://example.com',
+    'https://localhost:3000': 'https://localhost:3000',
+  };
+  for (const [raw, origin] of Object.entries(origins)) assert.equal(parseTargets(`x ${raw}`)[0].origin, origin, raw);
+});
+
+test('a local target without a scheme matches the page it names', () => {
+  const targets = parseTargets('local localhost:3000');
+  assert.ok(findEnvironment('http://localhost:3000/a', [{ id: '1', name: 'Project', targets }]));
+});
