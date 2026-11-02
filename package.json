@@ -11,7 +11,8 @@
     "shell:typecheck": "tsc -p chromium/shell",
     "host:build": "node chromium/native-host/build.mjs",
     "host:typecheck": "tsc -p chromium/native-host",
-    "typecheck": "tsc -p chromium/shell && tsc -p chromium/native-host"
+    "typecheck": "tsc -p chromium/shell && tsc -p chromium/native-host",
+    "test": "node --test chromium/shell/test/*.test.ts"
   },
   "devDependencies": {
     "@types/chrome": "^0.3.6",
