@@ -27,7 +27,9 @@ export function devSuggestions(query: string, currentUrl?: string): DevSuggestio
   const arg = rest.join(' ');
 
   if (keyword === 'gh' && arg) return [github(arg, currentUrl)];
-  const search = SEARCHES[keyword?.toLowerCase()];
+  // hasOwn: `constructor x` is a search like any other, not Object.prototype's constructor.
+  const name = keyword.toLowerCase();
+  const search = Object.hasOwn(SEARCHES, name) ? SEARCHES[name] : undefined;
   if (search && arg) return [{ label: arg, sub: `Open in ${search.name}`, url: search.url(arg) }];
 
   const jwt = decodeJwt(q);
