@@ -58,6 +58,16 @@ if [ ! -f "$feed" ] || ! grep -q 'sparkle:edSignature' "$feed"; then
   echo "error: $feed is missing or has no EdDSA signature" >&2
   exit 1
 fi
+
+# generate_appcast names a delta after its two builds alone, and both CPUs share a build
+# number and the one bucket, so an x64 delta would overwrite the arm64 one of the same name.
+if [ -n "$release_suffix" ]; then
+  for key in $(grep -o "url=\"${prefix}[^\"]*\.delta\"" "$feed" | sed -e "s|^url=\"$prefix||" -e 's|"$||'); do
+    renamed="${key%.delta}$release_suffix.delta"
+    mv -f "$folder/$key" "$folder/$renamed"
+    sed -i '' "s|$prefix$key|$prefix$renamed|" "$feed"
+  done
+fi
 echo "== $(basename "$dmg"): $("$sparkle/bin/sign_update" "$folder/$(basename "$dmg")")"
 cat <<EOF
 
