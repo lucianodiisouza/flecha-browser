@@ -2,7 +2,7 @@ import { devSuggestions } from './devCommands.js';
 import { ICONS, type IconName } from './icons.js';
 import { setupOnboarding } from './onboarding.js';
 import { SPACE_COLORS, SPACE_EMOJIS } from './spaceChoices.js';
-import type { DownloadInfo, DropTarget, FlechaApi, HistoryEntry, PaletteMode, PeekState, PinnedNode, Space, TabInfo, UiState } from '../../shared/types';
+import type { DownloadInfo, DropTarget, ExtensionsView, FlechaApi, HistoryEntry, PaletteMode, PeekState, PinnedNode, Space, TabInfo, UiState } from '../../shared/types';
 
 declare global {
   interface Window {
@@ -548,6 +548,77 @@ function renderSitePanel() {
     ($(id) as HTMLButtonElement).disabled = !origin;
   }
 }
+
+// ---- extensions ---------------------------------------------------------------
+
+const EXTENSION_DRAG = 'application/x-flecha-extension';
+const pageHasExtensions = 'frame' in document.documentElement.dataset && !('incognito' in document.documentElement.dataset);
+let extensions: ExtensionsView = { items: [], collapsed: false };
+
+/** Opens beside the sidebar, level with the button, as a toolbar button's popup hangs under it. */
+function openExtension(button: HTMLElement, id: string, name: string) {
+  const row = button.getBoundingClientRect();
+  const anchor = { x: Math.round($('sidebar').getBoundingClientRect().right) + 6, y: Math.round(row.top), width: 1, height: Math.round(row.height) };
+  toggleSitePanel(false);
+  api.openExtension(id, name, anchor);
+}
+
+function extensionButton(extension: ExtensionsView['items'][number]): HTMLElement {
+  const letter = () => h('span', { class: 'favicon letter', style: `--hue: ${hueFor(extension.name)}` }, extension.name[0]?.toUpperCase() ?? '•');
+  const image = extension.icon ? (h('img', { src: extension.icon, draggable: 'false', alt: '' }) as HTMLImageElement) : letter();
+  if (image instanceof HTMLImageElement) image.onerror = () => image.replaceWith(letter());
+  const button: HTMLElement = h(
+    'button',
+    {
+      class: 'extension',
+      title: extension.name,
+      draggable: 'true',
+      dataset: { extension: extension.id },
+      onclick: () => openExtension(button, extension.id, extension.name),
+      oncontextmenu: (e: Event) => {
+        e.preventDefault();
+        toggleSitePanel(false);
+        api.extensionMenu(extension.id);
+      },
+      ondragstart: (e: DragEvent) => e.dataTransfer?.setData(EXTENSION_DRAG, extension.id),
+      ondragover: (e: DragEvent) => {
+        if (e.dataTransfer?.types.includes(EXTENSION_DRAG)) e.preventDefault();
+      },
+      ondrop: (e: DragEvent) => {
+        const dragged = e.dataTransfer?.getData(EXTENSION_DRAG);
+        if (!dragged || dragged === extension.id) return;
+        e.preventDefault();
+        const box = button.getBoundingClientRect();
+        const after = e.clientX > box.left + box.width / 2;
+        const before = after ? (button.nextElementSibling as HTMLElement | null)?.dataset.extension : extension.id;
+        api.moveExtension(dragged, before);
+      },
+    },
+    image,
+  );
+  return button;
+}
+
+function renderExtensions() {
+  $('site-extensions').hidden = !pageHasExtensions;
+  $('site-extension-list').replaceChildren(
+    ...extensions.items.map(extensionButton),
+    h('button', { class: 'extension', title: 'Add extensions', onclick: () => (toggleSitePanel(false), api.newTab('https://chromewebstore.google.com/')) }, icon('plus')),
+  );
+  const pinned = extensions.items.filter((extension) => extension.pinned);
+  $('extensions').hidden = !pageHasExtensions || !pinned.length;
+  $('extensions').classList.toggle('collapsed', extensions.collapsed);
+  $('extension-pins').replaceChildren(...pinned.map(extensionButton));
+  $('extension-pins').hidden = extensions.collapsed;
+}
+
+api.onExtensions((view) => {
+  extensions = view;
+  renderExtensions();
+});
+renderExtensions();
+$('btn-extensions-toggle').onclick = () => api.setExtensionsCollapsed(!extensions.collapsed);
+$('btn-more-extensions').onclick = () => toggleSitePanel();
 
 $('btn-site').onclick = () => toggleSitePanel();
 $('btn-copy-link').onclick = () => {
@@ -1168,7 +1239,7 @@ $('space-header').oncontextmenu = (e) => {
 // background: they have their own menu, the native edit menu, or none.
 $('sidebar').addEventListener('contextmenu', (e) => {
   if (e.defaultPrevented || !state) return;
-  if ((e.target as Element).closest('button, a, input, textarea, select, label, [contenteditable], .row, .popover, browser-action-list, #urlbar-wrap, #agent-status')) return;
+  if ((e.target as Element).closest('button, a, input, textarea, select, label, [contenteditable], .row, .popover, #extensions, #urlbar-wrap, #agent-status')) return;
   e.preventDefault();
   api.spaceMenu(state.activeSpaceId);
 });
