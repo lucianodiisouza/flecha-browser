@@ -55,7 +55,9 @@ function decodeJwt(text: string): DevSuggestion | undefined {
   const parts = text.split('.');
   if (parts.length !== 3 || !/^eyJ/.test(parts[0])) return undefined;
   try {
-    const decode = (part: string) => JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/')));
+    // atob gives one character per byte; a JWT's JSON is UTF-8.
+    const decode = (part: string) =>
+      JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(part.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0))));
     const header = decode(parts[0]);
     const payload = decode(parts[1]);
     const facts = [header.alg && `alg ${header.alg}`, payload.sub && `sub ${payload.sub}`, expiry(payload.exp)].filter(Boolean);
