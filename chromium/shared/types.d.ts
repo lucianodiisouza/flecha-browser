@@ -468,7 +468,7 @@ export interface FlechaApi {
   showConsole(tabId: string): void;
   editBoost(kind: 'script' | 'styles'): void;
   openBoostsFolder(): void;
-  splitWith(tabId: string): void;
+  splitWith(tabId: string, side?: 'left' | 'right', withTabId?: string): void;
   /** While a tab is dragged, the sidebar UI covers the page so it can be dropped there. */
   setTabDragging(dragging: boolean): void;
   dropToSplit(tabId: string, side: 'left' | 'right'): void;

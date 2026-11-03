@@ -117,6 +117,12 @@ export class Store {
     const space = from.space ?? this.activeSpace;
     const targetSpace = this.activeSpace;
 
+    // Moving a tab out of its split ends the split
+    if (space.split?.includes(tabId)) {
+      delete space.split;
+      delete space.splitMode;
+    }
+
     this.detach(tabId, space);
     const insert = (list: string[]) => {
       const i = target.beforeTabId ? list.indexOf(target.beforeTabId) : -1;
@@ -184,13 +190,26 @@ export class Store {
     return removed;
   }
 
-  /** Puts `tabId` next to the active tab, on the right unless `side` says otherwise. */
-  splitWith(tabId: string, side: 'left' | 'right' = 'right') {
+  /** Puts `tabId` next to `withTabId` (or the active tab), on the right unless `side` says otherwise. */
+  splitWith(tabId: string, side: 'left' | 'right' = 'right', withTabId?: string) {
     const space = this.activeSpace;
-    const current = space.activeTabId;
-    if (!current || current === tabId || !this.allTabIds(space).includes(tabId)) return;
+    const current = withTabId ?? space.activeTabId;
+    if (!current || current === tabId || !this.allTabIds(space).includes(tabId) || !this.allTabIds(space).includes(current)) return;
     space.split = side === 'left' ? [tabId, current] : [current, tabId];
     delete space.splitMode;
+
+    // Keep split tabs adjacent in today if current is in today
+    if (space.today.includes(current)) {
+      if (!space.today.includes(tabId)) {
+        this.detach(tabId, space);
+        const idx = space.today.indexOf(current);
+        space.today.splice(side === 'left' ? idx : idx + 1, 0, tabId);
+      } else {
+        space.today = space.today.filter((id) => id !== tabId);
+        const idx = space.today.indexOf(current);
+        space.today.splice(side === 'left' ? idx : idx + 1, 0, tabId);
+      }
+    }
     space.activeTabId = tabId;
     this.state.tabs[tabId].lastActive = Date.now();
     this.changed();

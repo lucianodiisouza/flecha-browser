@@ -155,4 +155,33 @@ function setAgent(enabled: boolean) {
   return agentChange;
 }
 
+function ensureWidevine() {
+  try {
+    const appSupport = path.join(os.homedir(), 'Library/Application Support');
+    const targetDir = path.join(appSupport, 'Flecha Browser/WidevineCdm');
+    if (fs.existsSync(targetDir) && fs.readdirSync(targetDir).some((f) => !f.startsWith('.'))) {
+      return;
+    }
+    const candidates = [
+      path.join(__dirname, '../../Resources/WidevineCdm'),
+      path.join(__dirname, '../WidevineCdm'),
+      path.join(appSupport, 'Arc/User Data/WidevineCdm'),
+      path.join(appSupport, 'Google/Chrome/WidevineCdm'),
+      path.join(appSupport, 'BraveSoftware/Brave-Browser/WidevineCdm'),
+      path.join(appSupport, 'Microsoft Edge/WidevineCdm'),
+    ];
+    for (const src of candidates) {
+      if (fs.existsSync(src)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+        fs.cpSync(src, targetDir, { recursive: true });
+        log('installed WidevineCdm from', src);
+        break;
+      }
+    }
+  } catch (err) {
+    log('ensureWidevine error:', err);
+  }
+}
+ensureWidevine();
+
 log('ready', process.pid);

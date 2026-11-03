@@ -413,7 +413,14 @@ async function start() {
     frame.tabDragging = false;
     sendFrame();
     const space = store.activeSpace;
-    if (!space.activeTabId || space.activeTabId === tabId) return store.activate(tabId);
+    if (!space.activeTabId) return store.activate(tabId);
+    if (space.activeTabId === tabId) {
+      const otherId = store.allTabIds(space).find((id) => id !== tabId);
+      if (otherId) {
+        store.splitWith(otherId, side === 'left' ? 'right' : 'left', tabId);
+      }
+      return;
+    }
     // A responsive mirror only exists for its split; it goes away when something else takes its place.
     if (space.splitMode === 'responsive') exitSplit();
     store.splitWith(tabId, side);
@@ -516,8 +523,20 @@ async function start() {
     if (!tab || !zone) return undefined;
     const space = store.activeSpace;
     const split: MenuEntry<MenuRun>[] = [];
-    if (space.split?.includes(tabId)) split.push({ label: 'Exit Split View', run: does('exitSplit') });
-    else if (space.activeTabId && space.activeTabId !== tabId) split.push({ label: 'Open in Split View', run: does('splitWith', tabId) });
+    if (space.split?.includes(tabId)) {
+      split.push({ label: 'Exit Split View', run: does('exitSplit') });
+    } else {
+      if (space.activeTabId && space.activeTabId !== tabId) {
+        split.push({ label: 'Open in Split View', run: does('splitWith', tabId) });
+      } else {
+        const otherId = store.allTabIds(space).find((id) => id !== tabId);
+        if (otherId) {
+          split.push({ label: 'Open in Split View', run: does('splitWith', otherId, 'right', tabId) });
+        } else {
+          split.push({ label: 'Open in Split View', run: does('splitNew') });
+        }
+      }
+    }
     const name = tab.customTitle ?? tab.title;
     const otherSpaces = store.state.spaces.filter((s) => s.id !== store.locate(tabId)?.space?.id);
     return [
@@ -693,7 +712,8 @@ async function start() {
         return chrome.tabs.setZoom(chromeId, next).then(() => refreshNav().then(sendState));
       });
     },
-    splitWith: (id: string) => store.splitWith(id),
+    splitWith: (id: string, side?: string, withId?: string) =>
+      store.splitWith(String(id), side === 'left' ? 'left' : 'right', withId ? String(withId) : undefined),
     exitSplit,
     dropToSplit: (id: string, side: string) => dropToSplit(String(id), side === 'left' ? 'left' : 'right'),
     splitNew: (input: string) => store.splitWith(openTab(input, false).id),

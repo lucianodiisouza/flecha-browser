@@ -6,7 +6,7 @@
 # every build was a full two-hour rebuild.
 FLECHA_DISK="${FLECHA_DISK:-/Volumes/EXT_FLASH_1TB/projs/flecha}"
 FLECHA_VOLUME="${FLECHA_VOLUME:-/Volumes/FlechaBuild}"
-if [ ! -d "$FLECHA_VOLUME/chromium" ]; then
+if [ ! -d "$FLECHA_VOLUME/chromium" ] && [ -e "$FLECHA_DISK/FlechaBuild.sparsebundle" ]; then
   hdiutil attach -quiet "$FLECHA_DISK/FlechaBuild.sparsebundle"
 fi
 src="${CHROMIUM_SRC:-$FLECHA_VOLUME/chromium/src}"
