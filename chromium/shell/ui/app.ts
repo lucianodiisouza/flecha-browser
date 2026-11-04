@@ -791,7 +791,7 @@ function openPalette(mode: PaletteMode) {
   palette.hidden = false;
   const space = state?.spaces.find((s) => s.id === state!.activeSpaceId);
   const active = space?.activeTabId ? state?.tabs[space.activeTabId] : undefined;
-  paletteInput.value = mode === 'navigate' && active ? active.url : '';
+  paletteInput.value = mode === 'navigate' && active && active.url !== 'about:blank' ? active.url : '';
   paletteInput.focus();
   paletteInput.select();
   selected = 0;
@@ -1228,7 +1228,8 @@ $('urlbar').onclick = () => api.openPalette('navigate');
 $('btn-newtab').onclick = () => api.openPalette('new-tab');
 $('btn-clear').onclick = () => api.clearToday();
 $('btn-newspace').onclick = () => api.newSpace();
-$('empty-new-tab').onclick = () => api.openPalette('new-tab');
+// On a new tab page, what you search for opens in that blank tab rather than another one.
+$('empty-new-tab').onclick = () => api.openPalette(surface === 'newtab' ? 'navigate' : 'new-tab');
 $('space-header').ondblclick = () => state && openSpaceEditor(state.activeSpaceId);
 $('space-header').oncontextmenu = (e) => {
   e.preventDefault();
