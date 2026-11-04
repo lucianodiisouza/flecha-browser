@@ -577,7 +577,6 @@ function extensionButton(extension: ExtensionsView['items'][number]): HTMLElemen
       onclick: () => openExtension(button, extension.id, extension.name),
       oncontextmenu: (e: Event) => {
         e.preventDefault();
-        toggleSitePanel(false);
         api.extensionMenu(extension.id);
       },
       ondragstart: (e: DragEvent) => e.dataTransfer?.setData(EXTENSION_DRAG, extension.id),
@@ -651,7 +650,9 @@ $('zoom-in').onclick = () => api.zoom(1);
 $('zoom-out').onclick = () => api.zoom(-1);
 $('zoom-reset').onclick = () => api.zoom(0);
 document.addEventListener('mousedown', (e) => {
-  const target = e.target as Node;
+  const target = e.target as Element;
+  // An extension's context menu opens over the panel, which stays open behind it.
+  if (target.closest?.('.shell-menu-layer')) return;
   if (!sitePanel.hidden && !sitePanel.contains(target) && !$('btn-site').contains(target)) toggleSitePanel(false);
 });
 document.addEventListener('keydown', (e) => e.key === 'Escape' && !sitePanel.hidden && toggleSitePanel(false));
