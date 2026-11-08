@@ -3,11 +3,13 @@
 # Safe to run again: it first resets every file it touches.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=env.sh
 . "$here/scripts/env.sh"
 theme="$src/chrome/app/theme/chromium"
 cd "$src"
 
 # Undo a previous run, last patch first.
+# shellcheck disable=SC2045 # the patch names have no spaces; ls -r gives the reverse order
 for p in $(ls -r "$here"/patches/*.patch); do
   if git apply --reverse --check "$p" 2>/dev/null; then git apply --reverse "$p"; fi
 done

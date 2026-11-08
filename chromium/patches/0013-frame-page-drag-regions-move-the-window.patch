@@ -16,7 +16,7 @@
 +  // The window's hit test at `point` (in the browser view's coordinates):
 +  // HTCAPTION where the frame page marks -webkit-app-region: drag and in the
 +  // window background around the page area, HTCLIENT elsewhere in the frame
-+  // view, HTNOWHERE outside both (the page area) or while inactive.
++  // view and in the page area, HTNOWHERE elsewhere or while inactive.
 +  int NonClientHitTest(const gfx::Point& point) const;
 +
    // views::WebView:
@@ -55,7 +55,7 @@
  #include "ui/views/background.h"
  #include "ui/views/border.h"
  #include "ui/views/controls/webview/web_contents_set_background_color.h"
-@@ -182,6 +185,34 @@
+@@ -182,6 +185,39 @@
      content::WebContents* source,
      const input::NativeWebKeyboardEvent& event) {
    return browser_view_->HandleKeyboardEvent(event);
@@ -85,12 +85,17 @@
 +    if (background->bounds().Contains(point) && !page.Contains(point)) {
 +      return HTCAPTION;
 +    }
++    // The page area is the page's up to its top edge. Left to BrowserView, the
++    // band where the hidden tab strip would be counts as title bar.
++    if (page.Contains(point)) {
++      return HTCLIENT;
++    }
 +  }
 +  return HTNOWHERE;
  }
  
  void FlechaFrameView::OnExtensionReady(content::BrowserContext* browser_context,
-@@ -218,6 +249,9 @@
+@@ -218,6 +254,9 @@
    extensions::ChromeExtensionWebContentsObserver::CreateForWebContents(
        frame_contents_.get());
    frame_contents_->SetDelegate(this);

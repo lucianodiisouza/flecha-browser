@@ -247,22 +247,81 @@ body {
 
 /* ---- extensions & agent ------------------------------------------------- */
 
-#extensions {
+.extension-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px;
-  margin: -4px 0;
+  gap: 4px;
 }
 
-#extensions::part(action) {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm);
-  background-color: transparent;
+.extension-list[hidden] {
+  display: none;
 }
 
-#extensions::part(action):hover {
-  background-color: var(--fill-hover);
+.extension {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  transition: background var(--fast) var(--ease);
+}
+
+.extension:hover {
+  background: var(--fill-hover);
+}
+
+.extension img,
+.extension .favicon {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+}
+
+.extension svg {
+  width: 14px;
+  height: 14px;
+}
+
+.extensions-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: -4px;
+  font: inherit;
+  color: inherit;
+}
+
+.extensions-toggle svg {
+  width: 10px;
+  height: 10px;
+  transform: rotate(90deg);
+  transition: transform var(--fast) var(--ease);
+}
+
+#extensions.collapsed .extensions-toggle svg {
+  transform: none;
+}
+
+#extension-pins {
+  padding: 0 4px;
+}
+
+#site-extension-list {
+  padding: 0 var(--inset);
+}
+
+#site-extensions {
+  padding-bottom: 8px;
+  border-bottom: 0.5px solid var(--surface-line);
+}
+
+#site-extensions .extension {
+  width: 44px;
+  background: var(--surface-2);
+}
+
+#site-extensions .extension:hover {
+  background: var(--fill-hover);
 }
 
 #agent-status {

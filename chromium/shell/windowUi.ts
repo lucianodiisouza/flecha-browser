@@ -57,7 +57,7 @@ export function setupWindowUi(h: WindowUiHooks) {
 }
 
 /** Asks for the background's menu `name` about `id`, shows it at the pointer and runs the pick. */
-export async function showMenu(name: 'tabMenu' | 'spaceMenu', id: string) {
+export async function showMenu(name: 'tabMenu' | 'spaceMenu' | 'extensionMenu', id: string) {
   const items = await invoke<MenuEntry<MenuRun>[] | undefined>(name, id);
   if (!items?.length) return;
   const picked = await overWindow('menu', () => popupMenu(items));
@@ -74,6 +74,7 @@ async function runMenuItem(run: MenuRun) {
   }
   else if ('deleteSpace' in run) await confirmDeleteSpace(run.deleteSpace);
   else if ('clearSpaceData' in run) await confirmClearSpaceData(run.clearSpaceData);
+  else if ('uninstallExtension' in run) await chrome.management.uninstall(run.uninstallExtension, { showConfirmDialog: true }).catch(() => undefined);
 }
 
 /** Electron's "Sign out of everything in “Space”?" message box, in the page. */

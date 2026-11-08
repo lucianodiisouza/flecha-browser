@@ -20,4 +20,6 @@ export type MenuRun =
   /** Asks first, in the page, then deletes the Space. */
   | { deleteSpace: string }
   /** Asks first, in the page, then signs out of everything in the Space (separate cookies). */
-  | { clearSpaceData: string };
+  | { clearSpaceData: string }
+  /** chrome.management.uninstall wants the click's user gesture, which only the page has. */
+  | { uninstallExtension: string };

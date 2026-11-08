@@ -1,7 +1,7 @@
 {
   "name": "flecha",
   "productName": "Flecha",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "license": "MIT",
   "description": "An Arc-style browser built on a Chromium fork.",
@@ -11,7 +11,8 @@
     "shell:typecheck": "tsc -p chromium/shell",
     "host:build": "node chromium/native-host/build.mjs",
     "host:typecheck": "tsc -p chromium/native-host",
-    "typecheck": "tsc -p chromium/shell && tsc -p chromium/native-host"
+    "typecheck": "tsc -p chromium/shell && tsc -p chromium/native-host",
+    "test": "node --test chromium/shell/test/*.test.ts"
   },
   "devDependencies": {
     "@types/chrome": "^0.3.6",

@@ -22,6 +22,7 @@ import { registerFeatures, type Features } from './features';
 // Also loaded on the first turn, for the shortcut event that may have woken the background.
 import { defaultBrowserState, isFlechinha, isFlechinhaWindow, registerNative } from './native';
 import { registerDownloads } from './downloads';
+import { registerExtensions } from './extensions';
 import { registerSiteControls } from './siteControls';
 import { Favicons } from './favicons';
 import { followedPreferences, incognito, incognitoState, sessionKey } from './incognito';
@@ -734,6 +735,7 @@ async function start() {
   });
 
   registerSiteControls({ store, activeChromeId, mainWindow });
+  registerExtensions((url) => openTab(url));
 
   // ---- commands by id, for keyboard shortcuts (the Electron spike's buildMenu) ----
 
@@ -806,7 +808,7 @@ async function start() {
     actualSize: () => call('zoom', 0),
     // Owned by other shell modules, which handle a hub command of the same name.
     devTools: () => call('devTools'),
-    responsive: () => call('responsive'),
+    responsive: () => call('toggleResponsive'),
     nextEnvironment: () => call('nextEnvironment'),
     editBoost: () => call('editBoost'),
     closePeek: () => call('closePeek'),
@@ -844,6 +846,7 @@ async function start() {
       if (chromeId !== undefined) void chrome.tabs.update(chromeId, { url });
     },
     agentEndpoint: () => nativeHost?.agentEndpoint(),
+    hostError: () => nativeHost?.hostError(),
     defaultBrowser: () => defaultBrowser,
     makeDefaultBrowser: async () => {
       await call('makeDefaultBrowser');

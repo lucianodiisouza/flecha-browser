@@ -16,6 +16,7 @@
 # (Vercel) to the same files on dl.flecha.dev.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=env.sh
 . "$here/scripts/env.sh"
 
 if [ $# -lt 1 ] || [ $# -gt 2 ]; then
@@ -37,7 +38,7 @@ fi
 
 # The files a feed links to on dl.flecha.dev, one per line: the dmg and its deltas.
 listed() {
-  grep -o "url=\"$prefix[^\"]*\"" | sed -e "s|^url=\"$prefix||" -e 's|"$||' | sort -u
+  grep -o "url=\"${prefix}[^\"]*\"" | sed -e "s|^url=\"$prefix||" -e 's|"$||' | sort -u
 }
 new="$(listed <"$feed")"
 if ! grep -qx "$name" <<<"$new"; then

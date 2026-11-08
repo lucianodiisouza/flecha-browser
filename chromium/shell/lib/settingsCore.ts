@@ -17,6 +17,8 @@ export interface SettingsEnvironment {
   downloadsFolder: string;
   defaultBrowser: SettingsView['defaultBrowser'];
   agentEndpoint?: string;
+  /** Why Flecha's native host last failed to start or stopped. */
+  hostError?: string;
 }
 
 /** What a change does outside the Store; each browser does these its own way. */
@@ -44,6 +46,7 @@ export function settingsView(store: Store, env: SettingsEnvironment): SettingsVi
       endpoint: env.agentEndpoint,
       token: s.agent?.enabled ? s.agent.token : undefined,
     },
+    hostError: env.hostError,
     environments: (s.environments ?? []).map((e) => ({
       id: e.id,
       name: e.name,

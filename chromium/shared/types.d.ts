@@ -68,6 +68,8 @@ export interface DetectedBrowser {
   profiles: number;
   hasBookmarks: boolean;
   hasHistory: boolean;
+  /** Cookies to bring over, so sites stay signed in. */
+  hasCookies?: boolean;
 }
 
 /** What one import brought over. Problems that didn't stop it are listed in `warnings`. */
@@ -75,6 +77,10 @@ export interface ImportResult {
   spaces: number;
   bookmarks: number;
   history: number;
+  /** Cookies set, so sites stay signed in. */
+  cookies: number;
+  /** The keychain said no; `importBrowserCookies` asks again without repeating the rest. */
+  cookiesRefused?: boolean;
   warnings: string[];
 }
 
@@ -265,6 +271,8 @@ export interface SettingsView {
   /** Edited as text: one `label origin` per line. */
   environments: Array<{ id: string; name: string; targetsText: string }>;
   agent: { enabled: boolean; endpoint?: string; token?: string };
+  /** Why Flecha's native host (imports, the agent bridge) last failed; undefined while it works. */
+  hostError?: string;
   theme: 'system' | 'light' | 'dark';
   archiveAfterHours: number;
   peekPinnedLinks: boolean;
@@ -346,9 +354,19 @@ export interface SettingsApi {
   openBoosts(): Promise<void>;
   /** Plays the welcome tour again in the browser window. */
   showTour(): Promise<void>;
+  /** Other browsers on this Mac with bookmarks or history to bring over. */
+  detectBrowsers(): Promise<DetectedBrowser[]>;
+  /** Imports one of the browsers `detectBrowsers` found, by id. */
+  importBrowser(id: string): Promise<ImportResult>;
+  /** Tries a browser's cookies again after a refused keychain prompt, leaving the rest as it is. */
+  importBrowserCookies(id: string): Promise<ImportResult>;
+  /** Imports the bookmarks in a file exported from any browser as HTML, given its text. */
+  importBookmarksFile(html: string, fileName?: string): Promise<ImportResult>;
   onPane(cb: (pane: string) => void): void;
   /** ⌘F while Settings is in front: focus its search field. */
   onFind(cb: () => void): void;
+  /** Something the background shows here changed on its own (the agent bridge, the native host); `get` again. */
+  onChange(cb: () => void): void;
   /** While recording, every key goes to `onKey` instead of the page or the menus. */
   recordShortcut(recording: boolean): Promise<void>;
   onKey(cb: (key: RecordedKey) => void): void;
@@ -364,7 +382,28 @@ export interface SettingsApi {
   showEmojiPanel(): Promise<void>;
 }
 
+export interface InstalledExtension {
+  id: string;
+  name: string;
+  icon?: string;
+  optionsUrl?: string;
+  /** Shown in the sidebar, not only in the site panel. */
+  pinned: boolean;
+}
+
+/** In the user's order. */
+export interface ExtensionsView {
+  items: InstalledExtension[];
+  collapsed: boolean;
+}
+
 export interface FlechaApi {
+  onExtensions(cb: (view: ExtensionsView) => void): void;
+  /** Opens its popup beside `anchor`, in this page's coordinates. */
+  openExtension(id: string, name: string, anchor: { x: number; y: number; width: number; height: number }): void;
+  extensionMenu(id: string): void;
+  moveExtension(id: string, beforeId?: string): void;
+  setExtensionsCollapsed(collapsed: boolean): void;
   onState(cb: (state: UiState) => void): void;
   onPalette(cb: (mode: PaletteMode) => void): void;
   /** Main asks the sidebar to open the Space editor (new Space, menu, shortcut). */
@@ -386,6 +425,8 @@ export interface FlechaApi {
   detectBrowsers(): Promise<DetectedBrowser[]>;
   /** Imports one of the browsers `detectBrowsers` found, by id. */
   importBrowser(id: string): Promise<ImportResult>;
+  /** Tries a browser's cookies again after a refused keychain prompt, leaving the rest as it is. */
+  importBrowserCookies(id: string): Promise<ImportResult>;
   newTab(input: string): void;
   navigate(input: string): void;
   activate(tabId: string): void;
@@ -404,13 +445,14 @@ export interface FlechaApi {
   renameFolder(folderId: string, name: string): void;
   moveTab(tabId: string, target: DropTarget): void;
   clearToday(): void;
-  /** Pops up a menu of the other browsers to import from. */
+  /** Brings over the Spaces and tabs of Flecha's Electron version. */
   importMenu(): void;
   openPalette(mode: PaletteMode): void;
   closePalette(): void;
   toggleSidebar(): void;
   setSidebarPeek(peek: boolean): void;
-  copyText(text: string): void;
+  /** Copies text and says so in the address field: "Link copied" unless `message` says otherwise. */
+  copyText(text: string, message?: string): void;
   renameTab(tabId: string, title: string): void;
   toggleMute(tabId: string): void;
   /** Screenshot of the active page, to the clipboard. */
