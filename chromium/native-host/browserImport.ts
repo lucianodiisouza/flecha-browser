@@ -11,8 +11,9 @@ import type { BrowserImportData, ImportCookie } from '../shared/importApply';
 
 /**
  * Brings bookmarks, history and cookies (so sites stay signed in) over from the other browsers
- * on this Mac. Their files are only ever read: databases are copied to a temporary folder first,
- * since the browser may have them open and locked. Passwords are left where they are.
+ * on this computer (macOS or Linux). Their files are only ever read: databases are copied to a
+ * temporary folder first, since the browser may have them open and locked. Passwords are left
+ * where they are.
  *
  * Reading (`readBrowser`) is kept apart from adding to Flecha (`applyBrowserImport`), so the
  * Chromium build's native messaging host can read and its shell extension can add. Nothing
@@ -50,21 +51,54 @@ interface BrowserSource {
   sidebar?: { exists(): boolean; read(): ArcImport };
 }
 
-/** Electron's appData folder on macOS. */
-const appSupport = (...parts: string[]) => path.join(os.homedir(), 'Library', 'Application Support', ...parts);
+const IS_MAC = process.platform === 'darwin';
+
+const home = (...parts: string[]) => path.join(os.homedir(), ...parts);
+/** Electron's appData folder: ~/Library/Application Support on macOS, ~/.config on Linux. */
+export const appSupport = (...parts: string[]) =>
+  IS_MAC ? home('Library', 'Application Support', ...parts) : path.join(process.env.XDG_CONFIG_HOME || home('.config'), ...parts);
+/** A Flatpak app's own ~/.config. */
+const flatpak = (appId: string, ...parts: string[]) => home('.var', 'app', appId, 'config', ...parts);
 
 // ---- Chromium family -------------------------------------------------------
 
-/** The last field is the keychain item the browser keeps its cookie key in. */
-const CHROMIUM: Array<[id: string, name: string, dir: string, safeStorage: string]> = [
-  ['chrome', 'Chrome', 'Google/Chrome', 'Chrome Safe Storage'],
-  ['brave', 'Brave', 'BraveSoftware/Brave-Browser', 'Brave Safe Storage'],
-  ['edge', 'Edge', 'Microsoft Edge', 'Microsoft Edge Safe Storage'],
-  ['vivaldi', 'Vivaldi', 'Vivaldi', 'Vivaldi Safe Storage'],
-  ['opera', 'Opera', 'com.operasoftware.Opera', 'Opera Safe Storage'],
-  ['opera-gx', 'Opera GX', 'com.operasoftware.OperaGX', 'Opera Safe Storage'],
-  ['chromium', 'Chromium', 'Chromium', 'Chromium Safe Storage'],
-];
+/**
+ * Each browser's data folder, the first of its folders that exists, and the keychain item it
+ * keeps its cookie key in. On Linux a browser may come from the distro's package, a Flatpak or
+ * a Snap (Ubuntu's Chromium is a Snap).
+ * shortcut: a browser installed twice imports only the first, add the rest if anyone asks.
+ */
+const CHROMIUM: Array<[id: string, name: string, dirs: string[], safeStorage: string]> = IS_MAC
+  ? [
+      ['chrome', 'Chrome', [appSupport('Google/Chrome')], 'Chrome Safe Storage'],
+      ['brave', 'Brave', [appSupport('BraveSoftware/Brave-Browser')], 'Brave Safe Storage'],
+      ['edge', 'Edge', [appSupport('Microsoft Edge')], 'Microsoft Edge Safe Storage'],
+      ['vivaldi', 'Vivaldi', [appSupport('Vivaldi')], 'Vivaldi Safe Storage'],
+      ['opera', 'Opera', [appSupport('com.operasoftware.Opera')], 'Opera Safe Storage'],
+      ['opera-gx', 'Opera GX', [appSupport('com.operasoftware.OperaGX')], 'Opera Safe Storage'],
+      ['chromium', 'Chromium', [appSupport('Chromium')], 'Chromium Safe Storage'],
+    ]
+  : [
+      ['chrome', 'Chrome', [appSupport('google-chrome'), flatpak('com.google.Chrome', 'google-chrome')], 'Chrome Safe Storage'],
+      ['brave', 'Brave', [appSupport('BraveSoftware/Brave-Browser'), flatpak('com.brave.Browser', 'BraveSoftware/Brave-Browser'), home('snap/brave/current/.config/BraveSoftware/Brave-Browser')], 'Brave Safe Storage'],
+      ['edge', 'Edge', [appSupport('microsoft-edge'), flatpak('com.microsoft.Edge', 'microsoft-edge')], 'Microsoft Edge Safe Storage'],
+      ['vivaldi', 'Vivaldi', [appSupport('vivaldi'), flatpak('com.vivaldi.Vivaldi', 'vivaldi')], 'Vivaldi Safe Storage'],
+      ['opera', 'Opera', [appSupport('opera'), flatpak('com.opera.Opera', 'opera')], 'Opera Safe Storage'],
+      ['chromium', 'Chromium', [appSupport('chromium'), flatpak('org.chromium.Chromium', 'chromium'), home('snap/chromium/common/chromium')], 'Chromium Safe Storage'],
+    ];
+
+/** Firefox's profiles folder: the classic ~/.mozilla one first, then the XDG, Flatpak and Snap ones. */
+const FIREFOX = IS_MAC
+  ? [appSupport('Firefox', 'Profiles')]
+  : [
+      home('.mozilla/firefox'),
+      appSupport('mozilla/firefox'),
+      home('.var/app/org.mozilla.firefox/.mozilla/firefox'),
+      home('snap/firefox/common/.mozilla/firefox'),
+    ];
+
+/** The first folder that exists, else the first one (whose profiles are then simply none). */
+const firstDir = (dirs: string[]) => dirs.find((dir) => listDirs(dir).length > 0) ?? dirs[0];
 
 function chromiumSource(id: string, name: string, root: string, safeStorage = `${name} Safe Storage`): BrowserSource {
   return {
@@ -72,10 +106,14 @@ function chromiumSource(id: string, name: string, root: string, safeStorage = `$
     name,
     root,
     profiles: () => chromiumProfiles(root),
-    cookieReader: () => {
-      const key = once(() => chromiumKey(safeStorage, keychainDenied(name, safeStorage)));
-      return async (profile) => chromiumCookies(await querySqlite<ChromiumCookie>(profile.cookiesFile!, CHROMIUM_COOKIES), key);
-    },
+    // shortcut: on Linux the cookie key is in the Secret Service (libsecret, KWallet), not a
+    // keychain, so Chromium browsers' cookies only come over on a Mac for now.
+    cookieReader: IS_MAC
+      ? () => {
+          const key = once(() => chromiumKey(safeStorage, keychainDenied(name, safeStorage)));
+          return async (profile) => chromiumCookies(await querySqlite<ChromiumCookie>(profile.cookiesFile!, CHROMIUM_COOKIES), key);
+        }
+      : undefined,
     readBookmarks: async (profile) => chromiumBookmarks(profile.bookmarkFiles.map((f) => fs.readFileSync(f, 'utf8'))),
     readHistory: (profile) =>
       // Chromium counts in microseconds since 1601.
@@ -382,8 +420,7 @@ function realPath(dir: string) {
 // ---- Firefox ---------------------------------------------------------------
 
 /** Bookmarks and history both live in each profile's places.sqlite, cookies (unencrypted) in cookies.sqlite. */
-function firefoxSource(): BrowserSource {
-  const root = appSupport('Firefox', 'Profiles');
+function firefoxSource(root: string): BrowserSource {
   return {
     id: 'firefox',
     name: 'Firefox',
@@ -623,16 +660,17 @@ function decodeXml(s: string) {
 
 function sources(): BrowserSource[] {
   const listed = [
-    ...CHROMIUM.map(([id, name, dir, safeStorage]) => chromiumSource(id, name, appSupport(dir), safeStorage)),
-    arcSource(),
-    diaSource(),
-    firefoxSource(),
-    safariSource(),
+    ...CHROMIUM.map(([id, name, dirs, safeStorage]) => chromiumSource(id, name, firstDir(dirs), safeStorage)),
+    // Arc, Dia and Safari are Mac apps.
+    ...(IS_MAC ? [arcSource(), diaSource()] : []),
+    firefoxSource(firstDir(FIREFOX)),
+    ...(IS_MAC ? [safariSource()] : []),
   ];
-  return [...listed, ...otherChromiumSources(listed)];
+  // The search for unlisted browsers looks in Application Support and /Applications.
+  return IS_MAC ? [...listed, ...otherChromiumSources(listed)] : listed;
 }
 
-/** Browsers on this Mac that have bookmarks or history to bring over. Only checks which files exist. */
+/** Browsers on this computer that have bookmarks or history to bring over. Only checks which files exist. */
 export async function detectBrowsers(): Promise<DetectedBrowser[]> {
   return sources().flatMap((source) => {
     try {

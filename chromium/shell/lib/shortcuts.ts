@@ -45,10 +45,15 @@ export const SHORTCUTS = [
 
 export type ShortcutId = (typeof SHORTCUTS)[number]['id'];
 
+/** macOS shows keys as symbols (⌥⌘T); Linux spells them out (Ctrl+Alt+T). */
+export const IS_MAC = navigator.userAgent.includes('Mac');
+/** The modifier that picks a Space by number: Ctrl+1 on Linux is already the tab's. */
+export const SPACE_MODIFIER = IS_MAC ? 'Ctrl' : 'Alt';
+
 /** Shortcuts that are a family of keys (⌘1…⌘9) and can't be recorded as one. */
 const FIXED: ShortcutInfo[] = [
-  { id: 'tabN', group: 'Tabs', label: 'Go to tab · last tab', keys: '⌘1 … ⌘9', fixed: true },
-  { id: 'spaceN', group: 'Spaces', label: 'Go to Space', keys: '⌃1 … ⌃9', fixed: true },
+  { id: 'tabN', group: 'Tabs', label: 'Go to tab · last tab', keys: `${displayKeys('CmdOrCtrl+1')} … ${displayKeys('CmdOrCtrl+9')}`, fixed: true },
+  { id: 'spaceN', group: 'Spaces', label: 'Go to Space', keys: `${displayKeys(`${SPACE_MODIFIER}+1`)} … ${displayKeys(`${SPACE_MODIFIER}+9`)}`, fixed: true },
   { id: 'closePeek', group: 'Split & Peek', label: 'Close Peek', keys: 'Esc', fixed: true },
 ];
 
@@ -77,12 +82,19 @@ export function sameKeys(a: string, b: string) {
   return norm(a) === norm(b);
 }
 
-/** macOS notation: "Alt+CmdOrCtrl+Shift+T" → "⌥⇧⌘T". */
+/** "Alt+CmdOrCtrl+Shift+T" → "⌥⇧⌘T" on macOS, "Ctrl+Alt+Shift+T" on Linux. */
 export function displayKeys(keys: string | undefined) {
   if (!keys) return '';
   const parts = keys.split('+');
-  const mods = new Set(parts.slice(0, -1).map((m) => m.replace(/CmdOrCtrl|CommandOrControl|Command/, 'Cmd').replace('Option', 'Alt').replace('Control', 'Ctrl')));
+  const mods = new Set(
+    parts.slice(0, -1).map((m) => m.replace(/CmdOrCtrl|CommandOrControl/, IS_MAC ? 'Cmd' : 'Ctrl').replace('Command', 'Cmd').replace('Option', 'Alt').replace('Control', 'Ctrl')),
+  );
   const key = parts[parts.length - 1];
+  if (!IS_MAC) {
+    const named = ['Ctrl', 'Alt', 'Shift', 'Cmd'].filter((m) => mods.has(m)).map((m) => (m === 'Cmd' ? 'Super' : m));
+    const keyName = ({ Escape: 'Esc', CmdOrCtrl: 'Ctrl', CommandOrControl: 'Ctrl' } as Record<string, string>)[key] ?? (key.length === 1 ? key.toUpperCase() : key);
+    return [...named, keyName].join('+');
+  }
   const names: Record<string, string> = { Left: '←', Right: '→', Up: '↑', Down: '↓', Return: '↩', Enter: '↩', Tab: '⇥', Space: 'Space', Escape: 'Esc', Backspace: '⌫', Delete: '⌦', '-': '−' };
   return (
     (mods.has('Ctrl') ? '⌃' : '') + (mods.has('Alt') ? '⌥' : '') + (mods.has('Shift') ? '⇧' : '') + (mods.has('Cmd') ? '⌘' : '') + (names[key] ?? key.toUpperCase())
@@ -99,7 +111,13 @@ export function shortcutList(state: BrowserState): ShortcutInfo[] {
   return groups.flatMap((g) => [...editable.filter((s) => s.group === g), ...FIXED.filter((s) => s.group === g)]);
 }
 
-/** The sidebar's tooltips and hints, by command: { newTab: '⌘T', … }. */
+/** The sidebar's tooltips and hints, by command: { newTab: '⌘T', … }, plus the first Space's key. */
 export function shortcutHints(state: BrowserState): Record<string, string> {
-  return Object.fromEntries(SHORTCUTS.map((s) => [s.id, displayKeys(keysFor(state, s.id))]));
+  return { ...Object.fromEntries(SHORTCUTS.map((s) => [s.id, displayKeys(keysFor(state, s.id))])), selectSpace: displayKeys(`${SPACE_MODIFIER}+1`) };
+}
+
+/** Pages keep macOS key caps in their HTML; on Linux each `<kbd data-keys="Alt+CmdOrCtrl+B">` is rewritten. */
+export function showKeys() {
+  if (IS_MAC) return;
+  for (const el of document.querySelectorAll<HTMLElement>('[data-keys]')) el.textContent = displayKeys(el.dataset.keys);
 }

@@ -2,6 +2,7 @@ import type { DetectedBrowser, RecordedKey, SettingsApi, SettingsView } from '..
 import { browserDetail, importSummary } from './browserImport.js';
 import { ICONS, type IconName } from './icons.js';
 import { setupTabsPane } from './tabsPane.js';
+import { IS_MAC } from '../lib/shortcuts';
 
 declare global {
   interface Window {
@@ -418,7 +419,7 @@ api.onKey(async (key) => {
   if (key.code === 'Escape' && !key.shift && !key.control && !key.alt && !key.meta) return startRecording(undefined);
   const removing = (key.code === 'Backspace' || key.code === 'Delete') && !key.shift && !key.control && !key.alt && !key.meta;
   const keys = removing ? null : acceleratorFor(key);
-  if (keys === undefined) return showNotice('Use at least one of ⌘ ⌃ ⌥ with a key, or a function key.');
+  if (keys === undefined) return showNotice(`Use at least one of ${IS_MAC ? '⌘ ⌃ ⌥' : 'Ctrl, Alt or Super'} with a key, or a function key.`);
   await startRecording(undefined);
   applyShortcuts(await api.set({ shortcut: { id, keys } }));
 });

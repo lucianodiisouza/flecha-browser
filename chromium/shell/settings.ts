@@ -6,3 +6,6 @@
 import './noPageMenu';
 import './settingsApi';
 import './ui/settings';
+import { showKeys } from './lib/shortcuts';
+
+showKeys();
