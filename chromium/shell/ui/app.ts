@@ -2,6 +2,8 @@ import { devSuggestions } from './devCommands.js';
 import { ICONS, type IconName } from './icons.js';
 import { setupOnboarding } from './onboarding.js';
 import { SPACE_COLORS, SPACE_EMOJIS } from './spaceChoices.js';
+import { SpaceSwipe } from './spaceSwipe.js';
+import { webAddress } from '../lib/url';
 import type { DownloadInfo, DropTarget, ExtensionsView, FlechaApi, HistoryEntry, PaletteMode, PeekState, PinnedNode, Space, TabInfo, UiState } from '../../shared/types';
 
 declare global {
@@ -700,7 +702,6 @@ function extensionButton(extension: ExtensionsView['items'][number]): HTMLElemen
       onclick: () => openExtension(button, extension.id, extension.name),
       oncontextmenu: (e: Event) => {
         e.preventDefault();
-        toggleSitePanel(false);
         api.extensionMenu(extension.id);
       },
       ondragstart: (e: DragEvent) => e.dataTransfer?.setData(EXTENSION_DRAG, extension.id),
@@ -774,33 +775,25 @@ $('zoom-in').onclick = () => api.zoom(1);
 $('zoom-out').onclick = () => api.zoom(-1);
 $('zoom-reset').onclick = () => api.zoom(0);
 document.addEventListener('mousedown', (e) => {
-  const target = e.target as Node;
+  const target = e.target as Element;
+  // An extension's context menu opens over the panel, which stays open behind it.
+  if (target.closest?.('.shell-menu-layer')) return;
   if (!sitePanel.hidden && !sitePanel.contains(target) && !$('btn-site').contains(target)) toggleSitePanel(false);
 });
 document.addEventListener('keydown', (e) => e.key === 'Escape' && !sitePanel.hidden && toggleSitePanel(false));
 // Scrolling sideways over the sidebar (a trackpad swipe, a mouse's thumb wheel) changes
-// Space, one per gesture: the scroll adds up to a step, then waits for the gesture to end.
-const SPACE_SWIPE_STEP = 60;
-let swipe = 0;
-let swipeDone = false;
-let swipeEnd: number | undefined;
+// Space, one per swipe (spaceSwipe.ts says how a swipe ends).
+const spaceSwipe = new SpaceSwipe();
 $('sidebar').addEventListener(
   'wheel',
   (e) => {
     if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) || !state) return;
     e.preventDefault();
-    clearTimeout(swipeEnd);
-    swipeEnd = window.setTimeout(() => {
-      swipe = 0;
-      swipeDone = false;
-    }, 250);
-    if (swipeDone) return;
-    swipe += e.deltaX;
-    if (Math.abs(swipe) < SPACE_SWIPE_STEP) return;
-    swipeDone = true;
+    const step = spaceSwipe.feed(e.deltaX, e.timeStamp);
+    if (!step) return;
     const spaces = state.spaces;
     const i = spaces.findIndex((sp) => sp.id === state!.activeSpaceId);
-    const next = spaces[i + (swipe > 0 ? 1 : -1)];
+    const next = spaces[i + step];
     if (next) api.switchSpace(next.id);
   },
   { passive: false },
@@ -905,16 +898,12 @@ let paletteMode: PaletteMode = 'new-tab';
 let paletteItems: PaletteItem[] = [];
 let selected = 0;
 
-function looksLikeUrl(q: string) {
-  return /^[a-z][a-z0-9+.-]*:\/\//i.test(q) || (!/\s/.test(q) && /\.[a-z]{2,}(:\d+)?(\/|$)/i.test(q)) || /^localhost(:\d+)?/.test(q);
-}
-
 function openPalette(mode: PaletteMode) {
   paletteMode = mode;
   palette.hidden = false;
   const space = state?.spaces.find((s) => s.id === state!.activeSpaceId);
   const active = space?.activeTabId ? state?.tabs[space.activeTabId] : undefined;
-  paletteInput.value = mode === 'navigate' && active ? active.url : '';
+  paletteInput.value = mode === 'navigate' && active && active.url !== 'about:blank' ? active.url : '';
   paletteInput.focus();
   paletteInput.select();
   selected = 0;
@@ -985,7 +974,7 @@ function updatePalette() {
   $('palette-mode').textContent = { navigate: 'Current Tab', split: 'Split View', 'new-tab': '' }[paletteMode];
 
   if (q) {
-    const isUrl = looksLikeUrl(q);
+    const isUrl = webAddress(q) !== undefined;
     const searchItem: PaletteItem = {
       group: '',
       icon: isUrl ? 'globe' : 'search',
@@ -1368,12 +1357,15 @@ let tipTimer: number | undefined;
 let tipTarget: HTMLElement | undefined;
 
 function showTip(target: HTMLElement) {
+  // A button that shows only on hover (a tab's close button) has no box once the pointer has
+  // gone; placed by that empty box, the tooltip would sit in the window's top corner.
+  const r = target.getBoundingClientRect();
+  if (!target.isConnected || (!r.width && !r.height)) return hideTip();
   $('tooltip-text').textContent = target.dataset.tip ?? '';
   const kbd = $('tooltip-kbd');
   kbd.textContent = target.dataset.kbd ?? '';
   kbd.hidden = !target.dataset.kbd;
   tooltip.hidden = false;
-  const r = target.getBoundingClientRect();
   const t = tooltip.getBoundingClientRect();
   const below = r.bottom + 6 + t.height < window.innerHeight - 8;
   const left = Math.min(Math.max(r.left + r.width / 2 - t.width / 2, 6), window.innerWidth - t.width - 6);
@@ -1399,6 +1391,8 @@ document.addEventListener('pointerover', (e) => {
   // Once one tooltip is showing, moving to the next button shows its tooltip right away.
   tipTimer = window.setTimeout(() => showTip(target), Date.now() - tipHiddenAt < 400 ? 0 : 550);
 });
+// Leaving the page (to the traffic lights, or the web page beside the sidebar) fires no pointerover here.
+document.addEventListener('pointerout', (e) => !e.relatedTarget && hideTip());
 document.addEventListener('pointerdown', hideTip, true);
 document.addEventListener('scroll', hideTip, true);
 window.addEventListener('blur', hideTip);
@@ -1413,7 +1407,8 @@ $('urlbar').onclick = () => api.openPalette('navigate');
 $('btn-newtab').onclick = () => api.openPalette('new-tab');
 $('btn-clear').onclick = () => api.clearToday();
 $('btn-newspace').onclick = () => api.newSpace();
-$('empty-new-tab').onclick = () => api.openPalette('new-tab');
+// On a new tab page, what you search for opens in that blank tab rather than another one.
+$('empty-new-tab').onclick = () => api.openPalette(surface === 'newtab' ? 'navigate' : 'new-tab');
 $('space-header').ondblclick = () => state && openSpaceEditor(state.activeSpaceId);
 $('space-header').oncontextmenu = (e) => {
   e.preventDefault();

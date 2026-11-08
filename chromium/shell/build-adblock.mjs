@@ -209,11 +209,15 @@ export async function buildAdblock(out, { refresh = false } = {}) {
   }
 
   // Generic hiding, except selectors any site has an exception for: those need per-site rules.
-  // :is() takes a forgiving selector list, so one selector Chromium doesn't know can't void the rest.
+  // One rule per selector, so one Chromium doesn't know voids only itself. Not :is(), whose
+  // selectors Chromium can't index by id or class: every element was matched against all of
+  // them, which made style recalcs on news sites several times slower.
+  // The :not() matches everything and adds the weight of three ids, so a page's own
+  // `display: block !important` doesn't win back its ad (:is() lent each selector the weight
+  // of the heaviest in its group, which varied).
   const selectors = [...hide].filter((s) => !hideExceptions.has(s) && !s.includes('{') && !s.includes('}'));
-  const chunks = [];
-  for (let i = 0; i < selectors.length; i += 500) chunks.push(`:is(${selectors.slice(i, i + 500).join(',\n')}) { display: none !important; }`);
-  fs.writeFileSync(path.join(rulesDir, 'cosmetic.css'), `/* Generated from EasyList by build-adblock.mjs. */\n${chunks.join('\n')}\n`);
+  const rules = selectors.map((s) => `${s}:not(#_f#_f#_f) { display: none !important; }`);
+  fs.writeFileSync(path.join(rulesDir, 'cosmetic.css'), `/* Generated from EasyList by build-adblock.mjs. */\n${rules.join('\n')}\n`);
   const excludeMatches = [...exempt].sort().flatMap((d) => [`*://${d}/*`, `*://*.${d}/*`]);
   fs.writeFileSync(path.join(rulesDir, 'cosmetic-exclude.json'), JSON.stringify(excludeMatches));
 

@@ -12,6 +12,7 @@
     "host:build": "node chromium/native-host/build.mjs",
     "host:typecheck": "tsc -p chromium/native-host",
     "typecheck": "tsc -p chromium/shell && tsc -p chromium/native-host",
+    "test": "node --test chromium/shell/test/*.test.ts",
     "package": "FLECHA_APP_IN=\"/Applications/Flecha.app\" FLECHA_RELEASE_DIR=\"$(pwd)/dist\" bash chromium/scripts/package-release.sh --dmg",
     "package:app": "FLECHA_APP_IN=\"/Applications/Flecha.app\" FLECHA_RELEASE_DIR=\"$(pwd)/dist\" bash chromium/scripts/package-release.sh"
   },
