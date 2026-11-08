@@ -80,6 +80,7 @@ const api: FlechaApi = {
   appIcon: async () => undefined,
   detectBrowsers: () => invoke('detectBrowsers'),
   importBrowser: (id) => invoke('importBrowser', id),
+  importBrowserCookies: (id) => invoke('importBrowserCookies', id),
   // On the new tab page, what you type opens in this tab.
   newTab: surface === 'newtab' ? cmd('navigate') : cmd('newTab'),
   navigate: cmd('navigate'),
@@ -116,13 +117,14 @@ const api: FlechaApi = {
     };
     input.click();
   },
-  // The frame grows over the page first, as in Electron; the side panel just opens it.
-  openPalette: surface === 'window' ? cmd('openPalette') : (mode) => paletteListeners.forEach((cb) => cb(mode)),
+  // The frame grows over the page first, as in Electron; the side panel just opens it. A new
+  // tab page has no command bar of its own, so it asks the window's, as ⌘T does.
+  openPalette: surface === 'window' || surface === 'newtab' ? cmd('openPalette') : (mode) => paletteListeners.forEach((cb) => cb(mode)),
   closePalette: surface === 'window' ? cmd('closePalette') : () => undefined,
   toggleSidebar: cmd('toggleSidebar'),
   setSidebarPeek: cmd('setSidebarPeek'),
   // The page can write the clipboard itself; the background has no document to do it from.
-  copyText: (text) => void copy(String(text), 'Link copied'),
+  copyText: (text, message) => void copy(String(text), typeof message === 'string' ? message : 'Link copied'),
   renameTab: cmd('renameTab'),
   toggleMute: cmd('toggleMute'),
   capturePage: cmd('capturePage'),
@@ -155,6 +157,14 @@ const api: FlechaApi = {
   setPreferences: cmd('setPreferences'),
   makeDefaultBrowser: cmd('makeDefaultBrowser'),
   newFlechinha: cmd('newFlechinha'),
+  onExtensions: (cb) => on('extensions', cb),
+  openExtension: async (id, name, anchor) => {
+    if (!windowId) return;
+    await chrome.flechaPrivate.openExtensionAction(id, anchor, await windowId).catch(() => cmd('flash')(`${name} isn’t available on this page`));
+  },
+  extensionMenu: (id) => void showMenu('extensionMenu', id),
+  moveExtension: cmd('moveExtension'),
+  setExtensionsCollapsed: cmd('setExtensionsCollapsed'),
 };
 
 window.flecha = api;

@@ -33,6 +33,7 @@
 # uses the default profile folder, ~/Library/Application Support/Flecha Browser.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=env.sh
 . "$here/scripts/env.sh"
 root="$(cd "$here/.." && pwd)"
 out="$release_out"

@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Sourced by the other scripts: where Chromium lives, with the APFS build volume mounted.
 #
 # The checkout sits on an APFS volume (a disk image on the external disk) because the disk
@@ -16,6 +17,8 @@ export PATH="${DEPOT_TOOLS:-$FLECHA_DISK/depot_tools}:$PATH"
 # has its own output folder, dmg name and Sparkle feed, so an Intel Mac is never offered
 # the arm64 app and the other way round. arm64 keeps the names the first releases had.
 FLECHA_ARCH="${FLECHA_ARCH:-arm64}"
+# The scripts that source this use these; shellcheck can't see that from here.
+# shellcheck disable=SC2034
 case "$FLECHA_ARCH" in
   arm64) release_out="$src/out/Release"; release_suffix=""; release_feed="appcast.xml"; node_arch="arm64" ;;
   x64) release_out="$src/out/Release-x64"; release_suffix="-x64"; release_feed="appcast-x64.xml"; node_arch="x86_64" ;;

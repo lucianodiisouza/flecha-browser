@@ -21,6 +21,8 @@ export interface SettingsContext {
   load?(tabId: string, url: string): void;
   /** The agent bridge's address while it runs (nativeHost.ts). */
   agentEndpoint?(): string | undefined;
+  /** Why Flecha's native host last failed, for the Import and Coding Agents panes (nativeHost.ts). */
+  hostError?(): string | undefined;
   /** Whether Flecha is the default browser, and whether it can become it (patch 0027). */
   defaultBrowser?(): { isDefault: boolean; canSet: boolean };
   /** Asks macOS to make Flecha the default browser. */
@@ -78,6 +80,7 @@ export function registerSettings(ctx: SettingsContext) {
       downloadsFolder: store.state.downloadsFolder ?? '~/Downloads',
       defaultBrowser: ctx.defaultBrowser?.() ?? { isDefault: false, canSet: false },
       agentEndpoint: ctx.agentEndpoint?.(),
+      hostError: ctx.hostError?.(),
     });
 
   handle({
@@ -86,7 +89,7 @@ export function registerSettings(ctx: SettingsContext) {
       const notice = await applySettings(store, patch && typeof patch === 'object' ? patch : {}, {
         // TODO(chromium): Chromium's own light/dark mode isn't settable from an extension; Flecha's pages follow the system.
         theme: () => {},
-        // TODO(chromium): no agent bridge yet; the choice is kept for when there is one.
+        // nativeHost.ts follows state.agent itself, whoever sets it.
         agent: async () => {},
         // features/adblock.ts follows state.adBlock itself, whoever sets it.
         adBlock: async () => {},
@@ -106,8 +109,13 @@ export function registerSettings(ctx: SettingsContext) {
       return view();
     },
     // 'settings:open-boosts' opens the Boosts page; features.ts handles it.
-    // TODO(chromium): the welcome tour (ui/onboarding.ts) isn't in the shell's sidebar yet.
-    'settings:show-tour': () => notYet('The welcome tour'),
+    // The sidebar plays the tour (ui/onboarding.ts) while the Store isn't onboarded.
+    'settings:show-tour': async () => {
+      store.setOnboarded(false);
+      ctx.broadcastState();
+      const main = await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => undefined);
+      if (main?.id !== undefined) await chrome.windows.update(main.id, { focused: true });
+    },
     // TODO(chromium): there's no extension API for the macOS emoji picker; ⌃⌘Space opens it.
     'settings:emoji-panel': () => notYet('The emoji picker button (press ⌃⌘Space)'),
 

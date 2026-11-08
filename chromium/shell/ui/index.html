@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; font-src 'self'; img-src * data: crx: favicon:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      content="default-src 'self'; font-src 'self'; img-src * data: crx: favicon: chrome://extension-icon; style-src 'self' 'unsafe-inline'; script-src 'self'"
     />
     <title>Flecha</title>
     <link rel="stylesheet" href="tokens.css" />
@@ -32,8 +32,6 @@
         <button id="btn-copy-link" class="url-action" data-tip="Copy link" data-shortcut="copyLink"><i data-icon="link"></i></button>
         <button id="btn-site" class="url-action" data-tip="Site controls"><i data-icon="sliders"></i></button>
       </div>
-
-      <browser-action-list id="extensions"></browser-action-list>
 
       <div id="agent-status" hidden>
         <span class="agent-dot"></span>
@@ -76,6 +74,10 @@
           <button id="site-shot" class="site-action"><i data-icon="camera"></i><span>Screenshot</span></button>
           <button id="site-boost" class="site-action"><i data-icon="zap"></i><span>Boost</span></button>
           <button id="site-devtools" class="site-action"><i data-icon="wrench"></i><span>DevTools</span></button>
+        </div>
+        <div id="site-extensions">
+          <div class="field-label site-label">Extensions</div>
+          <div id="site-extension-list" class="extension-list"></div>
         </div>
         <div class="field-label site-label">Permissions</div>
         <div id="site-permissions"></div>
@@ -121,6 +123,14 @@
         </header>
         <ul id="downloads-list"></ul>
       </div>
+
+      <section id="extensions" class="group" hidden>
+        <header class="group-header">
+          <button id="btn-extensions-toggle" class="extensions-toggle"><i data-icon="chevron"></i><span>Extensions</span></button>
+          <button id="btn-more-extensions" class="icon-button" data-tip="More extensions"><i data-icon="more"></i></button>
+        </header>
+        <div id="extension-pins" class="extension-list"></div>
+      </section>
 
       <footer>
         <button id="btn-downloads" class="icon-button" data-tip="Downloads">

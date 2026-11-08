@@ -1,6 +1,7 @@
 // Builds the shell extension into chromium/shell/dist. `node build.mjs --watch` rebuilds on
 // save; reload the extension (or the sidebar) to see the change. No Chromium build involved.
 import { build, context } from 'esbuild';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { featureEntries, copyFeatureStatic } from './build-features.mjs';
@@ -11,9 +12,28 @@ const root = path.resolve(here, '../..');
 const out = path.join(here, 'dist');
 const ui = path.join(here, 'ui');
 
+/**
+ * Chromium keeps an extension's registered service worker, old script and all, while the
+ * manifest's version stays the same (ServiceWorkerTaskQueue::ActivateExtension), so an app
+ * update with a new background.js would go on running the old one. The version is Flecha's
+ * (package.json) plus the build counter build-release.sh gives the app, so every build differs.
+ */
+function shellVersion() {
+  const { version } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  let build = process.env.FLECHA_BUILD_NUMBER;
+  try {
+    build ??= execFileSync('git', ['-C', root, 'rev-list', '--count', 'HEAD'], { encoding: 'utf8' }).trim();
+  } catch {
+    return version;
+  }
+  return `${version}.${build}`;
+}
+
 function copyStatic() {
   fs.mkdirSync(path.join(out, 'fonts'), { recursive: true });
-  fs.copyFileSync(path.join(here, 'manifest.json'), path.join(out, 'manifest.json'));
+  const manifest = JSON.parse(fs.readFileSync(path.join(here, 'manifest.json'), 'utf8'));
+  manifest.version = shellVersion();
+  fs.writeFileSync(path.join(out, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   for (const f of fs.readdirSync(ui)) if (f.endsWith('.css')) fs.copyFileSync(path.join(ui, f), path.join(out, f));
   fs.copyFileSync(
     path.join(root, 'node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2'),

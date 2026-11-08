@@ -7,14 +7,16 @@
  * host opens on first use and stays open while the agent bridge is on (which also keeps the
  * background awake); otherwise it closes after a minute of quiet.
  *
- * Install the host with chromium/scripts/install-native-host.sh.
+ * A release app registers the host it carries on every launch (patch 0054); a dev build
+ * needs chromium/scripts/install-native-host.sh.
  */
 import type { DetectedBrowser, HistoryEntry, ImportResult, UiState } from '../shared/types';
 import type { Store } from '../shared/store';
 import type { AgentResult, AgentTab, AgentToolName } from '../shared/agentTools';
-import { applyBrowserImport } from '../shared/importApply';
+import { applyBrowserImport, type ImportCookie } from '../shared/importApply';
 import { HOST_NAME, type HostMethods, type ToHost, type ToShell } from '../native-host/protocol';
-import { handle } from './hub';
+import { broadcast, handle } from './hub';
+import { hold, release } from './features/debuggee';
 
 export interface NativeHostContext {
   store: Store;
@@ -31,8 +33,14 @@ export interface NativeHostContext {
 }
 
 const NOT_INSTALLED =
-  'Flecha’s helper isn’t installed, so other browsers can’t be read. Run chromium/scripts/install-native-host.sh, then try again.';
+  'Flecha’s helper isn’t registered, so it can’t import from other browsers or run the agent bridge. Quit and reopen Flecha to register it. Building Flecha yourself? Run chromium/scripts/install-native-host.sh.';
 const IDLE_CLOSE = 60_000;
+/** How long the agent bridge waits before starting the host again, doubling up to a minute. */
+const RETRY_FIRST = 2_000;
+const RETRY_MAX = 60_000;
+
+/** Chromium's reasons for not starting a host at all (native_message_process_host.cc), as opposed to one that stopped. */
+const isMissing = (reason: string) => /host not found|host is forbidden|invalid native messaging host/i.test(reason);
 
 export function registerNativeHost(ctx: NativeHostContext) {
   const { store } = ctx;
@@ -45,6 +53,22 @@ export function registerNativeHost(ctx: NativeHostContext) {
   const chunks = new Map<number, string[]>();
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let sentAgent = '';
+  /** Why the host last failed, for Settings; cleared once it answers. */
+  let hostError: string | undefined;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let retryDelay = RETRY_FIRST;
+
+  /** Tells the sidebar and an open Settings page that the host or bridge changed. */
+  function changed() {
+    ctx.broadcastState();
+    broadcast('settings:changed');
+  }
+
+  function setHostError(error: string | undefined) {
+    if (error === hostError) return;
+    hostError = error;
+    changed();
+  }
 
   function connect() {
     if (port) return port;
@@ -60,7 +84,17 @@ export function registerNativeHost(ctx: NativeHostContext) {
       calls.clear();
       chunks.clear();
       console.warn('Flecha shell: native host disconnected:', reason);
-      ctx.broadcastState();
+      hostError = isMissing(reason) ? NOT_INSTALLED : `Flecha’s helper stopped: ${reason}`;
+      changed();
+      // The bridge should stay up while it's on: start the host again, a little later each time.
+      if (store.state.agent?.enabled) {
+        clearTimeout(retryTimer);
+        retryTimer = setTimeout(() => {
+          sentAgent = '';
+          syncAgent();
+        }, retryDelay);
+        retryDelay = Math.min(retryDelay * 2, RETRY_MAX);
+      }
     });
     return p;
   }
@@ -96,6 +130,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
 
   function receive(message: ToShell) {
     touch();
+    retryDelay = RETRY_FIRST;
     if (message.type === 'chunk') {
       const parts = chunks.get(message.id) ?? [];
       parts[message.index] = message.data;
@@ -105,14 +140,16 @@ export function registerNativeHost(ctx: NativeHostContext) {
       return receive(JSON.parse(parts.join('')) as ToShell);
     }
     if (message.type === 'reply') {
+      setHostError(undefined);
       const pending = calls.get(message.id);
       calls.delete(message.id);
       if (message.error) pending?.reject(new Error(message.error));
       else pending?.resolve(message.value);
     } else if (message.type === 'agent') {
       endpoint = message.endpoint;
+      hostError = message.error ? `The agent bridge couldn’t start: ${message.error}` : undefined;
       if (message.error) console.error('Flecha shell: agent bridge failed:', message.error);
-      ctx.broadcastState();
+      changed();
     } else if (message.type === 'tool') {
       void runTool(message.name as AgentToolName, message.args ?? {}).then((result) => {
         try {
@@ -142,22 +179,74 @@ export function registerNativeHost(ctx: NativeHostContext) {
     },
   };
 
+  /**
+   * Into the default cookie jar, so the sites are signed in outside Spaces with separate
+   * cookies. A cookie Chromium won't take (a malformed one, say) is skipped.
+   */
+  const cookies = {
+    async set(list: ImportCookie[]) {
+      let set = 0;
+      for (let i = 0; i < list.length; i += 100) {
+        const results = await Promise.all(
+          list.slice(i, i + 100).map((c) =>
+            chrome.cookies
+              .set({
+                url: `${c.secure ? 'https' : 'http'}://${c.domain.replace(/^\./, '')}${c.path}`,
+                // A host-only cookie is set without a domain, or Chromium would share it with subdomains.
+                domain: c.domain.startsWith('.') ? c.domain : undefined,
+                name: c.name,
+                value: c.value,
+                path: c.path,
+                secure: c.secure,
+                httpOnly: c.httpOnly,
+                sameSite: c.sameSite,
+                expirationDate: c.expires,
+                partitionKey: c.partitionSite ? { topLevelSite: c.partitionSite } : undefined,
+              })
+              .then((cookie) => !!cookie, () => false),
+          ),
+        );
+        set += results.filter(Boolean).length;
+      }
+      return set;
+    },
+  };
+
   handle({
     detectBrowsers: async (): Promise<DetectedBrowser[]> => {
       try {
         return await call('detectBrowsers');
       } catch (err) {
+        // Settings › Import says why from hostError; the tour just shows none.
         console.warn('Flecha shell: no browsers to import from:', err);
         return [];
       }
     },
     importBrowser: async (id: string): Promise<ImportResult> => {
       try {
-        return await applyBrowserImport(await call('readBrowser', String(id)), store, history);
+        return await applyBrowserImport(await call('readBrowser', String(id)), store, history, cookies);
       } catch (err) {
         const message = String(err instanceof Error ? err.message : err);
-        const missing = /native messaging host|not found|forbidden/i.test(message);
-        return { spaces: 0, bookmarks: 0, history: 0, warnings: [missing ? NOT_INSTALLED : message] };
+        const missing = isMissing(message);
+        return { spaces: 0, bookmarks: 0, history: 0, cookies: 0, warnings: [missing ? NOT_INSTALLED : message] };
+      }
+    },
+    /** Only the cookies, so trying again after a refused keychain prompt doesn't add the bookmarks twice. */
+    importBrowserCookies: async (id: string): Promise<ImportResult> => {
+      try {
+        return await applyBrowserImport(await call('readBrowser', String(id), true), store, history, cookies);
+      } catch (err) {
+        const message = String(err instanceof Error ? err.message : err);
+        return { spaces: 0, bookmarks: 0, history: 0, cookies: 0, warnings: [isMissing(message) ? NOT_INSTALLED : message] };
+      }
+    },
+    /** A bookmarks file exported from any browser as HTML, by its text, into a Space of its own. */
+    importBookmarksFile: async (html: string, fileName?: string): Promise<ImportResult> => {
+      try {
+        return await applyBrowserImport(await call('readBookmarksHtml', String(html), fileName), store, history, cookies);
+      } catch (err) {
+        const message = String(err instanceof Error ? err.message : err);
+        return { spaces: 0, bookmarks: 0, history: 0, cookies: 0, warnings: [isMissing(message) ? NOT_INSTALLED : message] };
       }
     },
     /** The Electron spike's saved state as text, or undefined when there's none or no helper. */
@@ -181,10 +270,12 @@ export function registerNativeHost(ctx: NativeHostContext) {
       return;
     }
     sentAgent = wanted;
+    if (!agent?.enabled) clearTimeout(retryTimer);
     try {
       post({ type: 'agent', enabled: !!agent?.enabled, token: agent?.token ?? '' });
     } catch (err) {
       console.warn('Flecha shell: no agent bridge:', err);
+      setHostError(NOT_INSTALLED);
     }
   }
   store.onChange(syncAgent);
@@ -360,9 +451,12 @@ export function registerNativeHost(ctx: NativeHostContext) {
 
   // ---- chrome.debugger --------------------------------------------------------
   // Attached on first use and kept while the agent works, so console messages keep coming
-  // (Runtime.enable replays the ones logged before); let go after two quiet minutes.
+  // (Runtime.enable replays the ones logged before); let go after two quiet minutes. Held
+  // through debuggee.ts like the other features, so a responsive mirror stays a phone while
+  // the agent works on it, and letting go doesn't detach a tab another feature still holds.
 
   const DEBUG_IDLE = 120_000;
+  const HOLDER = 'agent';
   const attached = new Map<number, ReturnType<typeof setTimeout>>();
   const attaching = new Map<number, Promise<void>>();
   const consoleLogs = new Map<number, Array<{ level: string; message: string; source: string; time: number }>>();
@@ -371,7 +465,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     clearTimeout(attached.get(chromeId));
     attached.set(
       chromeId,
-      setTimeout(() => void chrome.debugger.detach({ tabId: chromeId }).catch(() => undefined).finally(() => forget(chromeId)), DEBUG_IDLE),
+      setTimeout(() => void release(chromeId, HOLDER).finally(() => forget(chromeId)), DEBUG_IDLE),
     );
   }
 
@@ -389,7 +483,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     let pending = attaching.get(chromeId);
     if (!pending) {
       pending = (async () => {
-        await chrome.debugger.attach({ tabId: chromeId }, '1.3');
+        if (!(await hold(chromeId, HOLDER))) throw new Error("Flecha can't attach the debugger to this tab");
         keepAttached(chromeId);
         consoleLogs.set(chromeId, []);
         await chrome.debugger.sendCommand({ tabId: chromeId }, 'Runtime.enable');
@@ -481,6 +575,8 @@ export function registerNativeHost(ctx: NativeHostContext) {
     },
     /** The bridge's address while it runs, for Settings. */
     agentEndpoint: () => endpoint,
+    /** Why the host last failed to start or stopped, for Settings; undefined once it works. */
+    hostError: () => hostError,
   };
 }
 

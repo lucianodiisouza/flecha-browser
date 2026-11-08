@@ -6,6 +6,7 @@
 # --flecha-show-top-chrome.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=env.sh
 . "$here/scripts/env.sh"
 profile="${FLECHA_PROFILE:-$FLECHA_DISK/profiles/dev}"
 shell_dist="$here/shell/dist"

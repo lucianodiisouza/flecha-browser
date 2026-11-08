@@ -11,12 +11,13 @@
 # The folder ($FLECHA_RELEASE_DIR/appcast by default, next to the dmg) keeps the dmgs of
 # earlier releases, for generate_appcast to make delta updates from. The feed lists only
 # the newest release: dl.flecha.dev holds only that one, and every release stays on GitHub. Release notes go next to a dmg, with its name and .html or
-# .md (Flecha-0.2.0.md). The dmgs are published at $FLECHA_DOWNLOAD_URL_PREFIX
+# .md (Flecha-0.2.0.md), embedded in the feed (flecha.dev serves no notes files). The dmgs are published at $FLECHA_DOWNLOAD_URL_PREFIX
 # (https://dl.flecha.dev/ by default, the flecha-releases R2 bucket), and the feed at
 # https://flecha.dev/appcast.xml, which the site rewrites to dl.flecha.dev. Nothing is
 # uploaded here: publish-release.sh does that.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=env.sh
 . "$here/scripts/env.sh"
 
 if [ $# -lt 1 ] || [ $# -gt 2 ]; then
@@ -47,6 +48,7 @@ echo "== generate_appcast $folder"
 "$sparkle/bin/generate_appcast" \
   --download-url-prefix "$prefix" \
   --maximum-versions 1 \
+  --embed-release-notes \
   -o "$folder/$release_feed" \
   --link "https://flecha.dev" \
   "$folder"
@@ -55,6 +57,16 @@ feed="$folder/$release_feed"
 if [ ! -f "$feed" ] || ! grep -q 'sparkle:edSignature' "$feed"; then
   echo "error: $feed is missing or has no EdDSA signature" >&2
   exit 1
+fi
+
+# generate_appcast names a delta after its two builds alone, and both CPUs share a build
+# number and the one bucket, so an x64 delta would overwrite the arm64 one of the same name.
+if [ -n "$release_suffix" ]; then
+  for key in $(grep -o "url=\"${prefix}[^\"]*\.delta\"" "$feed" | sed -e "s|^url=\"$prefix||" -e 's|"$||'); do
+    renamed="${key%.delta}$release_suffix.delta"
+    mv -f "$folder/$key" "$folder/$renamed"
+    sed -i '' "s|$prefix$key|$prefix$renamed|" "$feed"
+  done
 fi
 echo "== $(basename "$dmg"): $("$sparkle/bin/sign_update" "$folder/$(basename "$dmg")")"
 cat <<EOF

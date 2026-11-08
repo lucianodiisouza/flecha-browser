@@ -15,6 +15,7 @@
 # and the SHA-256 GitHub lists for that asset, below.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=env.sh
 . "$here/scripts/env.sh"
 
 sparkle_version="2.10.0"

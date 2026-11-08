@@ -45,9 +45,14 @@ export function describe(url: string, environments: Environment[] = []): ActiveE
 
 /** Production is red so it is never mistaken for a safe place to click around. */
 function tone(target: EnvironmentTarget): ActiveEnvironment['tone'] {
-  const text = `${target.label} ${target.origin}`.toLowerCase();
-  if (/localhost|127\.0\.0\.1|\blocal\b|\.test\b|\.local\b/.test(text)) return 'local';
-  if (/stag|preview|qa|test|dev|sandbox|uat/.test(text)) return 'staging';
+  const address = target.origin.replace(/^[a-z]+:\/\//i, '').toLowerCase();
+  // A target with no label of its own is labelled with its host, which says nothing more.
+  const label = target.label.toLowerCase() === address ? '' : target.label.toLowerCase();
+  if (/\bprod(uction)?\b/.test(label)) return 'production';
+  if (/localhost|127\.0\.0\.1|\blocal\b|\.test\b|\.local\b/.test(`${label} ${address}`)) return 'local';
+  // Whole words, without the top-level domain: flecha.dev and app.latest.com are not staging.
+  const host = address.replace(/:\d+$/, '').replace(/\.[^.]+$/, '');
+  if (/\b(stag(e|ing)|preview|qa|test(ing)?|dev(elop(ment)?)?|sandbox|uat)\b/.test(`${label} ${host}`)) return 'staging';
   return 'production';
 }
 
@@ -59,7 +64,9 @@ export function parseTargets(text: string): EnvironmentTarget[] {
     if (!parts.length) continue;
     const raw = parts[parts.length - 1];
     try {
-      const origin = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : `https://${raw}`).origin;
+      // Dev servers and devices on the network speak plain http, so these don't get https.
+      const scheme = /^(localhost|[a-z0-9.-]+\.localhost|(\d{1,3}\.){3}\d{1,3}|\[::1\])(:\d+)?(\/|$)/i.test(raw) ? 'http' : 'https';
+      const origin = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : `${scheme}://${raw}`).origin;
       const label = parts.length > 1 ? parts.slice(0, -1).join(' ') : new URL(origin).host;
       targets.push({ label, origin });
     } catch {

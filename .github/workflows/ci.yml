@@ -1,0 +1,46 @@
+# What can be checked without the Chromium build volume: the shell and the native host
+# compile and bundle. Building Chromium itself stays on the build Mac (chromium/scripts).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  shell-and-host:
+    name: Typecheck and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The whole history, so a pull request's change can be diffed against its base.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run shell:build
+      - run: npm run host:build
+      # Patches are left out: their context lines keep Chromium's own trailing spaces.
+      - name: No whitespace errors in the change
+        if: github.event_name == 'pull_request'
+        run: git diff --check "origin/${{ github.base_ref }}...HEAD" -- . ':!*.patch'
+
+  scripts:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # ubuntu-latest comes with shellcheck; .shellcheckrc lets it follow `. env.sh`.
+      - run: shellcheck -x -S warning chromium/scripts/*.sh chromium/branding/dmg/render.sh
+
+  patches:
+    name: Patches apply to Chromium
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: chromium/scripts/check-patches.sh

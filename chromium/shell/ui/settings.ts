@@ -1,4 +1,5 @@
-import type { RecordedKey, SettingsApi, SettingsView } from '../../shared/types';
+import type { DetectedBrowser, RecordedKey, SettingsApi, SettingsView } from '../../shared/types';
+import { browserDetail, importSummary } from './browserImport.js';
 import { ICONS, type IconName } from './icons.js';
 import { setupTabsPane } from './tabsPane.js';
 
@@ -215,6 +216,118 @@ document.getElementById('addEnvironment')!.addEventListener('click', () => {
   environmentList.querySelector<HTMLInputElement>('.env-card:last-child .env-name')?.focus();
 });
 
+// ---- import: the tour's import step, for any time after it -----------------------------
+
+const browserList = document.getElementById('browserList')!;
+let browsers: DetectedBrowser[] | undefined;
+/** What each finished import brought over, by browser id. */
+const imported = new Map<string, string>();
+const importing = new Set<string>();
+/** Imports that brought nothing over, with why; their row offers to try again. */
+const failed = new Map<string, string>();
+/** Imports that came over without their cookies, since the keychain said no; their row offers to ask again. */
+const refused = new Set<string>();
+/** Why the native host, which reads the other browsers, last failed (SettingsView.hostError). */
+let hostError: string | undefined;
+
+function textRow(text: string, error = false) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.append(Object.assign(document.createElement('div'), { className: `row-text${error ? ' host-error' : ''}`, textContent: text }));
+  return row;
+}
+
+function renderBrowsers() {
+  if (!browsers) return browserList.replaceChildren(textRow('Looking for your browsers…'));
+  if (!browsers.length && hostError) return browserList.replaceChildren(textRow(hostError, true));
+  if (!browsers.length) return browserList.replaceChildren(textRow('No other browsers with bookmarks or history were found on this Mac.'));
+  browserList.replaceChildren(
+    ...browsers.map((b) => {
+      const done = imported.get(b.id);
+      const busy = importing.has(b.id);
+      const row = document.createElement('div');
+      row.className = 'row';
+      const text = document.createElement('div');
+      text.className = 'row-text';
+      const why = failed.get(b.id);
+      text.append(
+        Object.assign(document.createElement('strong'), { textContent: b.name }),
+        Object.assign(document.createElement('small'), { className: why || refused.has(b.id) ? 'host-error' : '', textContent: done ?? why ?? browserDetail(b) }),
+      );
+      const info = document.createElement('div');
+      info.className = 'browser-info';
+      info.append(Object.assign(document.createElement('span'), { className: 'browser-badge', textContent: b.name[0] }), text);
+      if (done && !refused.has(b.id)) {
+        const mark = Object.assign(document.createElement('span'), { className: 'browser-done', textContent: 'Imported' });
+        mark.prepend(icon('check'));
+        row.append(info, mark);
+      } else {
+        const button = Object.assign(document.createElement('button'), { className: 'button', disabled: busy, textContent: busy ? 'Importing…' : why || refused.has(b.id) ? 'Try Again' : 'Import' });
+        button.addEventListener('click', () => runImport(b));
+        row.append(info, button);
+      }
+      return row;
+    }),
+  );
+}
+
+async function runImport(b: DetectedBrowser) {
+  importing.add(b.id);
+  renderBrowsers();
+  failed.delete(b.id);
+  try {
+    const retrying = refused.has(b.id);
+    const r = await (retrying ? api.importBrowserCookies(b.id) : api.importBrowser(b.id));
+    if (!retrying && !r.spaces && !r.bookmarks && !r.history && !r.cookies && r.warnings.length) failed.set(b.id, r.warnings[0]);
+    else {
+      imported.set(b.id, importSummary(r));
+      if (r.cookiesRefused) refused.add(b.id);
+      else refused.delete(b.id);
+    }
+  } catch {
+    failed.set(b.id, 'Couldn’t import this one');
+  }
+  importing.delete(b.id);
+  renderBrowsers();
+}
+
+function detectBrowsers() {
+  browsers = undefined;
+  renderBrowsers();
+  api.detectBrowsers().then(
+    (found) => ((browsers = found), renderBrowsers()),
+    () => ((browsers = []), renderBrowsers()),
+  );
+}
+detectBrowsers();
+
+// A bookmarks file exported from any browser, for the ones not found above.
+const bookmarksFile = document.getElementById('bookmarksFile') as HTMLInputElement;
+const chooseBookmarksFile = document.getElementById('chooseBookmarksFile') as HTMLButtonElement;
+const bookmarksFileStatus = document.getElementById('bookmarksFileStatus')!;
+
+chooseBookmarksFile.addEventListener('click', () => bookmarksFile.click());
+bookmarksFile.addEventListener('change', async () => {
+  const file = bookmarksFile.files?.[0];
+  bookmarksFile.value = '';
+  if (!file) return;
+  chooseBookmarksFile.disabled = true;
+  chooseBookmarksFile.textContent = 'Importing…';
+  let summary: string;
+  let ok = false;
+  try {
+    const r = await api.importBookmarksFile(await file.text(), file.name);
+    ok = r.bookmarks > 0;
+    summary = ok ? `${file.name}: ${importSummary(r)}` : (r.warnings[0] ?? `No bookmarks were found in ${file.name}.`);
+  } catch {
+    summary = `Couldn’t import ${file.name}`;
+  }
+  bookmarksFileStatus.textContent = summary;
+  bookmarksFileStatus.classList.toggle('host-error', !ok);
+  chooseBookmarksFile.disabled = false;
+  chooseBookmarksFile.textContent = ok ? 'Choose Another…' : 'Choose File…';
+});
+
 // ---- appearance & tabs -------------------------------------------------------------
 
 const archiveAfter = document.getElementById('archiveAfter') as HTMLSelectElement;
@@ -379,7 +492,16 @@ function render(view: SettingsView) {
   agent = view.agent;
   agentEnabled.checked = agent.enabled;
   for (const row of document.querySelectorAll<HTMLElement>('[data-agent-only]')) row.hidden = !agent.enabled;
-  document.getElementById('agentEndpoint')!.textContent = agent.endpoint ?? 'Starting…';
+  // Without the native host the bridge never starts; say why rather than "Starting…".
+  const endpoint = document.getElementById('agentEndpoint')!;
+  endpoint.textContent = agent.endpoint ?? (agent.enabled ? view.hostError : undefined) ?? 'Starting…';
+  endpoint.classList.toggle('host-error', !agent.endpoint && !!view.hostError);
+  for (const id of ['copyClaudeCommand', 'copyAgentJson']) (document.getElementById(id) as HTMLButtonElement).disabled = !agent.endpoint;
+  // Look for browsers again once the host works (Flecha was reopened, say).
+  const hostWorksNow = !!hostError && !view.hostError;
+  hostError = view.hostError;
+  if (hostWorksNow && browsers && !browsers.length) detectBrowsers();
+  else renderBrowsers();
   if (!environments.length) {
     environments = view.environments;
     renderEnvironments();
@@ -398,6 +520,8 @@ function render(view: SettingsView) {
 makeDefault.addEventListener('click', async () => render(await api.makeDefaultBrowser()));
 // macOS asks for confirmation in its own dialog, so check again when the window regains focus.
 window.addEventListener('focus', async () => render(await api.get()));
+// The agent bridge's address and the native host's errors come later than the change that asked for them.
+api.onChange(async () => render(await api.get()));
 
 document.getElementById('openBoosts')!.addEventListener('click', () => api.openBoosts());
 document.getElementById('showTour')!.addEventListener('click', () => api.showTour());

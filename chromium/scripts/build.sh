@@ -3,6 +3,7 @@
 # dev (component) app at out/Dev/Flecha.app. Extra arguments go to autoninja.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=env.sh
 . "$here/scripts/env.sh"
 
 "$here/scripts/apply.sh"

@@ -2,7 +2,9 @@ import { devSuggestions } from './devCommands.js';
 import { ICONS, type IconName } from './icons.js';
 import { setupOnboarding } from './onboarding.js';
 import { SPACE_COLORS, SPACE_EMOJIS } from './spaceChoices.js';
-import type { DownloadInfo, DropTarget, FlechaApi, HistoryEntry, PaletteMode, PeekState, PinnedNode, Space, TabInfo, UiState } from '../../shared/types';
+import { SpaceSwipe } from './spaceSwipe.js';
+import { webAddress } from '../lib/url';
+import type { DownloadInfo, DropTarget, ExtensionsView, FlechaApi, HistoryEntry, PaletteMode, PeekState, PinnedNode, Space, TabInfo, UiState } from '../../shared/types';
 
 declare global {
   interface Window {
@@ -369,7 +371,7 @@ function tabRow(tab: TabInfo, space: Space, target: DropTarget) {
         )
       : null,
     errorBadge(tab),
-    isBoosted(tab.url) ? h('span', { class: 'boost-mark', title: 'Boosted: a script or styles from ~/.flecha/boosts run here' }, icon('zap')) : null,
+    isBoosted(tab.url) ? h('span', { class: 'boost-mark', title: 'Boosted: your script or styles for this site run here' }, icon('zap')) : null,
     tab.device === 'mobile'
       ? h('span', { class: 'device-badge', title: 'Phone-sized mirror' }, icon('phone'))
       : h('span', { class: 'split-badge', title: 'In split view' }, icon('columns')),
@@ -549,6 +551,76 @@ function renderSitePanel() {
   }
 }
 
+// ---- extensions ---------------------------------------------------------------
+
+const EXTENSION_DRAG = 'application/x-flecha-extension';
+const pageHasExtensions = 'frame' in document.documentElement.dataset && !('incognito' in document.documentElement.dataset);
+let extensions: ExtensionsView = { items: [], collapsed: false };
+
+/** Opens beside the sidebar, level with the button, as a toolbar button's popup hangs under it. */
+function openExtension(button: HTMLElement, id: string, name: string) {
+  const row = button.getBoundingClientRect();
+  const anchor = { x: Math.round($('sidebar').getBoundingClientRect().right) + 6, y: Math.round(row.top), width: 1, height: Math.round(row.height) };
+  toggleSitePanel(false);
+  api.openExtension(id, name, anchor);
+}
+
+function extensionButton(extension: ExtensionsView['items'][number]): HTMLElement {
+  const letter = () => h('span', { class: 'favicon letter', style: `--hue: ${hueFor(extension.name)}` }, extension.name[0]?.toUpperCase() ?? '•');
+  const image = extension.icon ? (h('img', { src: extension.icon, draggable: 'false', alt: '' }) as HTMLImageElement) : letter();
+  if (image instanceof HTMLImageElement) image.onerror = () => image.replaceWith(letter());
+  const button: HTMLElement = h(
+    'button',
+    {
+      class: 'extension',
+      title: extension.name,
+      draggable: 'true',
+      dataset: { extension: extension.id },
+      onclick: () => openExtension(button, extension.id, extension.name),
+      oncontextmenu: (e: Event) => {
+        e.preventDefault();
+        api.extensionMenu(extension.id);
+      },
+      ondragstart: (e: DragEvent) => e.dataTransfer?.setData(EXTENSION_DRAG, extension.id),
+      ondragover: (e: DragEvent) => {
+        if (e.dataTransfer?.types.includes(EXTENSION_DRAG)) e.preventDefault();
+      },
+      ondrop: (e: DragEvent) => {
+        const dragged = e.dataTransfer?.getData(EXTENSION_DRAG);
+        if (!dragged || dragged === extension.id) return;
+        e.preventDefault();
+        const box = button.getBoundingClientRect();
+        const after = e.clientX > box.left + box.width / 2;
+        const before = after ? (button.nextElementSibling as HTMLElement | null)?.dataset.extension : extension.id;
+        api.moveExtension(dragged, before);
+      },
+    },
+    image,
+  );
+  return button;
+}
+
+function renderExtensions() {
+  $('site-extensions').hidden = !pageHasExtensions;
+  $('site-extension-list').replaceChildren(
+    ...extensions.items.map(extensionButton),
+    h('button', { class: 'extension', title: 'Add extensions', onclick: () => (toggleSitePanel(false), api.newTab('https://chromewebstore.google.com/')) }, icon('plus')),
+  );
+  const pinned = extensions.items.filter((extension) => extension.pinned);
+  $('extensions').hidden = !pageHasExtensions || !pinned.length;
+  $('extensions').classList.toggle('collapsed', extensions.collapsed);
+  $('extension-pins').replaceChildren(...pinned.map(extensionButton));
+  $('extension-pins').hidden = extensions.collapsed;
+}
+
+api.onExtensions((view) => {
+  extensions = view;
+  renderExtensions();
+});
+renderExtensions();
+$('btn-extensions-toggle').onclick = () => api.setExtensionsCollapsed(!extensions.collapsed);
+$('btn-more-extensions').onclick = () => toggleSitePanel();
+
 $('btn-site').onclick = () => toggleSitePanel();
 $('btn-copy-link').onclick = () => {
   const tab = activeTab();
@@ -580,33 +652,25 @@ $('zoom-in').onclick = () => api.zoom(1);
 $('zoom-out').onclick = () => api.zoom(-1);
 $('zoom-reset').onclick = () => api.zoom(0);
 document.addEventListener('mousedown', (e) => {
-  const target = e.target as Node;
+  const target = e.target as Element;
+  // An extension's context menu opens over the panel, which stays open behind it.
+  if (target.closest?.('.shell-menu-layer')) return;
   if (!sitePanel.hidden && !sitePanel.contains(target) && !$('btn-site').contains(target)) toggleSitePanel(false);
 });
 document.addEventListener('keydown', (e) => e.key === 'Escape' && !sitePanel.hidden && toggleSitePanel(false));
 // Scrolling sideways over the sidebar (a trackpad swipe, a mouse's thumb wheel) changes
-// Space, one per gesture: the scroll adds up to a step, then waits for the gesture to end.
-const SPACE_SWIPE_STEP = 60;
-let swipe = 0;
-let swipeDone = false;
-let swipeEnd: number | undefined;
+// Space, one per swipe (spaceSwipe.ts says how a swipe ends).
+const spaceSwipe = new SpaceSwipe();
 $('sidebar').addEventListener(
   'wheel',
   (e) => {
     if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) || !state) return;
     e.preventDefault();
-    clearTimeout(swipeEnd);
-    swipeEnd = window.setTimeout(() => {
-      swipe = 0;
-      swipeDone = false;
-    }, 250);
-    if (swipeDone) return;
-    swipe += e.deltaX;
-    if (Math.abs(swipe) < SPACE_SWIPE_STEP) return;
-    swipeDone = true;
+    const step = spaceSwipe.feed(e.deltaX, e.timeStamp);
+    if (!step) return;
     const spaces = state.spaces;
     const i = spaces.findIndex((sp) => sp.id === state!.activeSpaceId);
-    const next = spaces[i + (swipe > 0 ? 1 : -1)];
+    const next = spaces[i + step];
     if (next) api.switchSpace(next.id);
   },
   { passive: false },
@@ -711,16 +775,12 @@ let paletteMode: PaletteMode = 'new-tab';
 let paletteItems: PaletteItem[] = [];
 let selected = 0;
 
-function looksLikeUrl(q: string) {
-  return /^[a-z][a-z0-9+.-]*:\/\//i.test(q) || (!/\s/.test(q) && /\.[a-z]{2,}(:\d+)?(\/|$)/i.test(q)) || /^localhost(:\d+)?/.test(q);
-}
-
 function openPalette(mode: PaletteMode) {
   paletteMode = mode;
   palette.hidden = false;
   const space = state?.spaces.find((s) => s.id === state!.activeSpaceId);
   const active = space?.activeTabId ? state?.tabs[space.activeTabId] : undefined;
-  paletteInput.value = mode === 'navigate' && active ? active.url : '';
+  paletteInput.value = mode === 'navigate' && active && active.url !== 'about:blank' ? active.url : '';
   paletteInput.focus();
   paletteInput.select();
   selected = 0;
@@ -749,11 +809,17 @@ const ACTIONS: Array<{ label: string; keywords: string; icon: IconName; shortcut
   { label: 'Show Downloads', keywords: 'downloads files', icon: 'download', run: () => (downloadsPanel.hidden = false) },
   {
     label: 'Import from another browser',
-    keywords: 'import migrate bookmarks history arc chrome safari firefox brave edge vivaldi opera',
+    keywords: 'import migrate bookmarks history arc dia chrome safari firefox brave edge vivaldi opera',
+    icon: 'import',
+    run: () => api.openSettings('import'),
+  },
+  {
+    label: 'Import from Flecha (Electron)',
+    keywords: 'import migrate electron flecha spaces tabs',
     icon: 'import',
     run: () => api.importMenu(),
   },
-  { label: 'Open Boosts Folder', keywords: 'boosts folder scripts css', icon: 'zap', run: () => api.openBoostsFolder() },
+  { label: 'Open Boosts', keywords: 'boosts folder scripts css', icon: 'zap', run: () => api.openBoostsFolder() },
 ];
 
 function matchingActions(q: string) {
@@ -785,7 +851,7 @@ function updatePalette() {
   $('palette-mode').textContent = { navigate: 'Current Tab', split: 'Split View', 'new-tab': '' }[paletteMode];
 
   if (q) {
-    const isUrl = looksLikeUrl(q);
+    const isUrl = webAddress(q) !== undefined;
     const searchItem: PaletteItem = {
       group: '',
       icon: isUrl ? 'globe' : 'search',
@@ -813,7 +879,7 @@ function updatePalette() {
         label: dev.label,
         sub: dev.sub,
         detail: dev.copy,
-        run: () => (dev.url ? open(dev.url) : api.copyText(dev.copy ?? '')),
+        run: () => (dev.url ? open(dev.url) : api.copyText(dev.copy ?? '', 'Copied')),
       });
     }
     for (const action of matchingActions(q).slice(0, 4)) {
@@ -1106,12 +1172,15 @@ let tipTimer: number | undefined;
 let tipTarget: HTMLElement | undefined;
 
 function showTip(target: HTMLElement) {
+  // A button that shows only on hover (a tab's close button) has no box once the pointer has
+  // gone; placed by that empty box, the tooltip would sit in the window's top corner.
+  const r = target.getBoundingClientRect();
+  if (!target.isConnected || (!r.width && !r.height)) return hideTip();
   $('tooltip-text').textContent = target.dataset.tip ?? '';
   const kbd = $('tooltip-kbd');
   kbd.textContent = target.dataset.kbd ?? '';
   kbd.hidden = !target.dataset.kbd;
   tooltip.hidden = false;
-  const r = target.getBoundingClientRect();
   const t = tooltip.getBoundingClientRect();
   const below = r.bottom + 6 + t.height < window.innerHeight - 8;
   const left = Math.min(Math.max(r.left + r.width / 2 - t.width / 2, 6), window.innerWidth - t.width - 6);
@@ -1137,6 +1206,8 @@ document.addEventListener('pointerover', (e) => {
   // Once one tooltip is showing, moving to the next button shows its tooltip right away.
   tipTimer = window.setTimeout(() => showTip(target), Date.now() - tipHiddenAt < 400 ? 0 : 550);
 });
+// Leaving the page (to the traffic lights, or the web page beside the sidebar) fires no pointerover here.
+document.addEventListener('pointerout', (e) => !e.relatedTarget && hideTip());
 document.addEventListener('pointerdown', hideTip, true);
 document.addEventListener('scroll', hideTip, true);
 window.addEventListener('blur', hideTip);
@@ -1151,7 +1222,8 @@ $('urlbar').onclick = () => api.openPalette('navigate');
 $('btn-newtab').onclick = () => api.openPalette('new-tab');
 $('btn-clear').onclick = () => api.clearToday();
 $('btn-newspace').onclick = () => api.newSpace();
-$('empty-new-tab').onclick = () => api.openPalette('new-tab');
+// On a new tab page, what you search for opens in that blank tab rather than another one.
+$('empty-new-tab').onclick = () => api.openPalette(surface === 'newtab' ? 'navigate' : 'new-tab');
 $('space-header').ondblclick = () => state && openSpaceEditor(state.activeSpaceId);
 $('space-header').oncontextmenu = (e) => {
   e.preventDefault();
@@ -1162,7 +1234,7 @@ $('space-header').oncontextmenu = (e) => {
 // background: they have their own menu, the native edit menu, or none.
 $('sidebar').addEventListener('contextmenu', (e) => {
   if (e.defaultPrevented || !state) return;
-  if ((e.target as Element).closest('button, a, input, textarea, select, label, [contenteditable], .row, .popover, browser-action-list, #urlbar-wrap, #agent-status')) return;
+  if ((e.target as Element).closest('button, a, input, textarea, select, label, [contenteditable], .row, .popover, #extensions, #urlbar-wrap, #agent-status')) return;
   e.preventDefault();
   api.spaceMenu(state.activeSpaceId);
 });
