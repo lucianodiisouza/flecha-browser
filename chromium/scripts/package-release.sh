@@ -116,16 +116,6 @@ else
   echo "warning: found no LICENSE next to $node; add Node's licence to $host by hand" >&2
 fi
 
-echo "== widevine cdm"
-for cdm_src in "$HOME/Library/Application Support/Flecha Browser/WidevineCdm" "$HOME/Library/Application Support/Arc/User Data/WidevineCdm" "$HOME/Library/Application Support/Google/Chrome/WidevineCdm"; do
-  if [ -d "$cdm_src" ]; then
-    echo "bundling WidevineCdm from $cdm_src"
-    mkdir -p "$app/Contents/Resources/WidevineCdm"
-    rsync -a --delete "$cdm_src/" "$app/Contents/Resources/WidevineCdm/"
-    break
-  fi
-done
-
 echo "== sign ($identity)"
 full_options="restrict,library,kill,runtime"
 # Library validation is incompatible with the JIT entitlement (parts.py).
@@ -138,8 +128,8 @@ sign() { # sign <path> [<options> [<entitlements>]]
   if [ "$identity" != "-" ]; then
     args+=(--timestamp)
     if [ -n "${2:-}" ]; then args+=(--options "$2"); fi
+    if [ -n "${3:-}" ]; then args+=(--entitlements "$3"); fi
   fi
-  if [ -n "${3:-}" ] && [ -f "$3" ]; then args+=(--entitlements "$3"); fi
   codesign "${args[@]}" "$1"
 }
 
@@ -152,28 +142,12 @@ while IFS= read -r -d '' f; do
   if [ "$f" = "$fw_binary" ]; then continue; fi
   if file -b "$f" | grep -q 'Mach-O'; then sign "$f" "$full_options"; fi
 done < <(find -H "$fw/Versions/Current" -name '*.app' -prune -o -type f -print0)
-# The utility helper (Flecha Helper.app) hosts CdmServiceBroker, which dlopens the
-# component-updated Widevine CDM (libwidevinecdm.dylib, signed by Google LLC, not Flecha's
-# team); without disable-library-validation macOS refuses to map it into the process.
-helper_entitlements="$work/helper-entitlements.plist"
-cat >"$helper_entitlements" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>com.apple.security.cs.disable-library-validation</key>
-	<true/>
-</dict>
-</plist>
-EOF
 while IFS= read -r -d '' helper; do
   case "$(basename "$helper")" in
     *"(Renderer).app" | *"(Aperitif Renderer).app")
       sign "$helper" "$jit_options" "$entitlements/helper-renderer-entitlements.plist" ;;
     *"(GPU).app" | *"(Aperitif GPU).app")
       sign "$helper" "$jit_options" "$entitlements/helper-gpu-entitlements.plist" ;;
-    "$product Helper.app" | *"(Aperitif).app" | *"(Plugin).app")
-      sign "$helper" "$jit_options" "$helper_entitlements" ;;
     *) sign "$helper" "$full_options" ;;
   esac
 done < <(find -H "$fw/Versions/Current/Helpers" -maxdepth 1 -name '*.app' -print0)

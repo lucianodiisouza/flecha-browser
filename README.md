@@ -111,7 +111,7 @@ export FLECHA_NOTARY_PROFILE=flecha-notary   # made once with: xcrun notarytool 
 chromium/scripts/build-release.sh --dmg
 ```
 
-`build-release.sh` builds the shell, applies the patches, stages the shell into the checkout, writes `out/Release/args.gn` from `chromium/build/release.gn`, builds (3 to 6 hours, resumable) and calls `package-release.sh`. That copies the app, adds the native host with its Node, signs everything innermost first (hardened runtime, timestamp and Chromium's entitlements when `FLECHA_SIGN_IDENTITY` is set; ad hoc otherwise), makes the dmg with an installer window, and with `FLECHA_NOTARY_PROFILE` notarizes it and staples the ticket. Releases use `target_cpu = "arm64"` and include H.264, AAC and Widevine DRM (`proprietary_codecs`, `ffmpeg_branding = "Chrome"`, `enable_widevine`), since many sites only serve video in those formats or with DRM.
+`build-release.sh` builds the shell, applies the patches, stages the shell into the checkout, writes `out/Release/args.gn` from `chromium/build/release.gn`, builds (3 to 6 hours, resumable) and calls `package-release.sh`. That copies the app, adds the native host with its Node, signs everything innermost first (hardened runtime, timestamp and Chromium's entitlements when `FLECHA_SIGN_IDENTITY` is set; ad hoc otherwise), makes the dmg with an installer window, and with `FLECHA_NOTARY_PROFILE` notarizes it and staples the ticket. Releases use `target_cpu = "arm64"` and include H.264 and AAC (`proprietary_codecs`, `ffmpeg_branding = "Chrome"`), since many sites only serve video in those formats.
 
 ## Repo layout
 
