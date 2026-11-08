@@ -518,6 +518,76 @@ body {
   min-height: 4px;
 }
 
+/* ---- pinned header & collapsible section -------------------------------- */
+
+.pinned-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 24px;
+  margin-top: 2px;
+  margin-bottom: 2px;
+  padding: 0 4px 0 6px;
+  user-select: none;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.pinned-header:hover {
+  background: var(--fill-hover);
+}
+
+.pinned-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.pinned-header:hover .pinned-toggle {
+  color: var(--text);
+}
+
+.pinned-toggle .chevron {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
+  transform: rotate(90deg);
+  transition: transform var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.pinned-header.collapsed .pinned-toggle .chevron {
+  transform: rotate(0deg);
+}
+
+.pinned-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: var(--fill-hover);
+  color: var(--text-3);
+  opacity: 0.85;
+}
+
+#pinned.collapsed {
+  display: none !important;
+}
+
 #pinned:empty {
   min-height: 34px;
 }
@@ -747,6 +817,104 @@ body {
   height: 2px;
   border-radius: 1px;
   background: var(--blue);
+}
+
+.drop-after::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: -2px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--blue);
+}
+
+.row.drop-split-left,
+.row.drop-split-right {
+  position: relative;
+  border-radius: var(--radius-md) !important;
+  background: color-mix(in srgb, var(--surface-2) 90%, transparent) !important;
+  box-shadow: inset 0 0 0 1.5px var(--selection) !important;
+  transition: all var(--fast) var(--ease);
+}
+
+.row.drop-split-right .title {
+  max-width: calc(50% - 28px) !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.row.drop-split-left .title {
+  max-width: calc(50% - 28px) !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.row.drop-split-left .favicon {
+  margin-left: calc(50% + 4px) !important;
+}
+
+.row.drop-split-left .close,
+.row.drop-split-right .close,
+.row.drop-split-left .split-badge,
+.row.drop-split-right .split-badge,
+.row.drop-split-left .error-badge,
+.row.drop-split-right .error-badge,
+.row.drop-split-left .boost-mark,
+.row.drop-split-right .boost-mark,
+.row.drop-split-left .device-badge,
+.row.drop-split-right .device-badge,
+.row.drop-split-left .audio-mark,
+.row.drop-split-right .audio-mark {
+  display: none !important;
+}
+
+.row.drop-split-left::before,
+.row.drop-split-right::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 50%;
+  width: 1.5px;
+  background: var(--selection);
+  opacity: 0.7;
+  transform: translateX(-50%);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.row.drop-split-left::after,
+.row.drop-split-right::after {
+  content: '+ Split';
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: calc(50% - 3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: #fff;
+  border-radius: calc(var(--radius-md) - 2px);
+  background: var(--selection) !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25), 0 2px 4px rgba(0, 0, 0, 0.2);
+  z-index: 3;
+  pointer-events: none;
+}
+
+.row.drop-split-left::after {
+  left: 2px;
+}
+
+.row.drop-split-right::after {
+  right: 2px;
 }
 
 .drag-over {

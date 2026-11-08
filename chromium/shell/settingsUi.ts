@@ -27,6 +27,7 @@ let closeOpenMenu: (() => void) | undefined;
  */
 export function popupMenu<T>(items: MenuEntry<T>[]): Promise<Picked<T> | undefined> {
   closeOpenMenu?.();
+  window.dispatchEvent(new CustomEvent('shell-menu-open'));
   return new Promise((resolve) => {
     const layer = document.createElement('div');
     layer.className = 'shell-menu-layer';
@@ -40,6 +41,7 @@ export function popupMenu<T>(items: MenuEntry<T>[]): Promise<Picked<T> | undefin
       window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('blur', dismiss);
       closeOpenMenu = undefined;
+      window.dispatchEvent(new CustomEvent('shell-menu-close'));
       resolve(picked);
     };
     const dismiss = () => close();
@@ -175,6 +177,7 @@ export function popupMenu<T>(items: MenuEntry<T>[]): Promise<Picked<T> | undefin
 
 /** Asks with buttons, like Electron's message box; resolves with the index of the button chosen. */
 export function askDialog(options: AskOptions): Promise<number> {
+  window.dispatchEvent(new CustomEvent('shell-menu-open'));
   return new Promise((resolve) => {
     const dialog = document.createElement('dialog');
     dialog.className = 'shell-dialog';
@@ -196,6 +199,7 @@ export function askDialog(options: AskOptions): Promise<number> {
     // Esc cancels.
     dialog.addEventListener('close', () => {
       dialog.remove();
+      window.dispatchEvent(new CustomEvent('shell-menu-close'));
       resolve(answer);
     });
     dialog.append(message, detail, buttons);

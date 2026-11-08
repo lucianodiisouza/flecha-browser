@@ -139,6 +139,8 @@ function render(s: UiState) {
   title.dataset.spaceId = space.id;
   $('space-isolated').hidden = !space.isolated;
 
+  renderPinnedHeader(space);
+
   // Re-rendering would throw away a tab or folder name being typed in place.
   if (!document.querySelector('#scroll [contenteditable="true"]')) {
     $('pinned').replaceChildren(...space.pinned.map((node) => renderNode(node, space, undefined)));
@@ -273,6 +275,16 @@ function originOf(url: string) {
   } catch {
     return url;
   }
+}
+
+/** The Pinned header folds its section away, per Space, and shows how many it hides. */
+function renderPinnedHeader(space: Space) {
+  const collapsed = !!space.pinnedCollapsed;
+  $('pinned-header').classList.toggle('collapsed', collapsed);
+  $('pinned').classList.toggle('collapsed', collapsed);
+  const badge = $('pinned-badge');
+  badge.textContent = String(space.pinned.length);
+  badge.hidden = !collapsed || !space.pinned.length;
 }
 
 function renderNode(node: PinnedNode, space: Space, folderId: string | undefined): HTMLElement {
@@ -429,6 +441,8 @@ function renameTab(tabId: string) {
   editInline(row, tabTitle(tab), (title) => api.renameTab(tabId, title));
 }
 
+let activeDraggedTabId: string | undefined;
+
 function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget) {
   el.dataset.tabId = tab.id;
   el.draggable = true;
@@ -436,19 +450,105 @@ function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget) {
   el.addEventListener('auxclick', (e) => e.button === 1 && api.close(tab.id));
   el.addEventListener('contextmenu', (e) => {
     e.preventDefault();
+    keepPeek();
     api.tabMenu(tab.id);
   });
   el.addEventListener('dragstart', (e) => {
+    activeDraggedTabId = tab.id;
+    keepPeek();
     e.dataTransfer!.setData(DRAG_TYPE, tab.id);
     e.dataTransfer!.effectAllowed = 'move';
     $('favorites').classList.add('show-empty');
     showSplitDrop(tab.id);
   });
   el.addEventListener('dragend', () => {
+    activeDraggedTabId = undefined;
     $('favorites').classList.remove('show-empty');
     hideSplitDrop();
+    for (const item of document.querySelectorAll<HTMLElement>('.drop-before, .drop-after, .drop-split-left, .drop-split-right, .drag-over')) {
+      item.classList.remove('drop-before', 'drop-after', 'drop-split-left', 'drop-split-right', 'drag-over');
+    }
+    if (document.body.dataset.sidebar === 'floating') {
+      const hovering = peekSidebar.matches(':hover') || peekEdge.matches(':hover');
+      if (!hovering) leavePeek();
+    }
   });
-  acceptDrops(el, target, 'drop-before');
+  acceptTabDrops(el, tab, target);
+}
+
+function acceptTabDrops(el: HTMLElement, tab: TabInfo, target: DropTarget) {
+  const clearHover = () => el.classList.remove('drop-before', 'drop-after', 'drop-split-left', 'drop-split-right', 'drag-over');
+
+  el.addEventListener('dragover', (e) => {
+    if (!e.dataTransfer?.types.includes(DRAG_TYPE)) return;
+    if (activeDraggedTabId === tab.id) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const rect = el.getBoundingClientRect();
+    const offsetY = e.clientY - rect.top;
+    const relX = (e.clientX - rect.left) / rect.width;
+
+    // Top and bottom edge zones for vertical reordering
+    if (offsetY <= 7) {
+      clearHover();
+      el.classList.add('drop-before');
+      e.dataTransfer.dropEffect = 'move';
+    } else if (rect.height - offsetY <= 7) {
+      clearHover();
+      el.classList.add('drop-after');
+      e.dataTransfer.dropEffect = 'move';
+    } else if (relX >= 0.40) {
+      // Dragging to the right side of the tab row: split view on the right!
+      clearHover();
+      el.classList.add('drop-split-right');
+      e.dataTransfer.dropEffect = 'move';
+    } else if (relX < 0.25) {
+      // Dragging to the far left side of the tab row: split view on the left!
+      clearHover();
+      el.classList.add('drop-split-left');
+      e.dataTransfer.dropEffect = 'move';
+    } else {
+      // Middle-left area: reorder before/after based on upper/lower half
+      clearHover();
+      if (offsetY <= rect.height / 2) {
+        el.classList.add('drop-before');
+      } else {
+        el.classList.add('drop-after');
+      }
+      e.dataTransfer.dropEffect = 'move';
+    }
+  });
+
+  el.addEventListener('dragleave', (e) => {
+    if (e.relatedTarget && el.contains(e.relatedTarget as Node)) return;
+    clearHover();
+  });
+
+  el.addEventListener('drop', (e) => {
+    const id = e.dataTransfer?.getData(DRAG_TYPE);
+    if (!id || id === tab.id) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const isSplitLeft = el.classList.contains('drop-split-left');
+    const isSplitRight = el.classList.contains('drop-split-right');
+    const isAfter = el.classList.contains('drop-after');
+    clearHover();
+    hideSplitDrop();
+
+    if (isSplitLeft) {
+      api.splitWith(id, 'left', tab.id);
+    } else if (isSplitRight) {
+      api.splitWith(id, 'right', tab.id);
+    } else if (isAfter) {
+      const next = el.nextElementSibling as HTMLElement | null;
+      const nextId = next?.dataset.tabId;
+      api.moveTab(id, { ...target, beforeTabId: nextId });
+    } else {
+      api.moveTab(id, target);
+    }
+  });
 }
 
 function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-over') {
@@ -1139,17 +1239,34 @@ for (const half of splitDrop.querySelectorAll<HTMLElement>('.drop-half')) {
 let peekCloseTimer: number | undefined;
 const peekSidebar = $('sidebar');
 const peekEdge = $('edge');
-const inPeek = (el: EventTarget | null) => el instanceof Node && (peekSidebar.contains(el) || peekEdge.contains(el));
+const inPeek = (el: EventTarget | null) =>
+  el instanceof Node &&
+  (peekSidebar.contains(el) ||
+   peekEdge.contains(el) ||
+   Boolean((el as Element).closest?.('.shell-menu-layer, .shell-menu, .shell-dialog')));
+
+function isOverlayActive() {
+  return (
+    !palette.hidden ||
+    !spaceEditor.hidden ||
+    !downloadsPanel.hidden ||
+    !splitDrop.hidden ||
+    Boolean(activeDraggedTabId) ||
+    document.querySelector('.shell-menu-layer, .shell-dialog') !== null
+  );
+}
+
 function keepPeek() {
   clearTimeout(peekCloseTimer);
   peekSidebar.classList.remove('peek-leaving');
 }
-function leavePeek(e: MouseEvent) {
-  if (document.body.dataset.sidebar !== 'floating' || inPeek(e.relatedTarget)) return;
+function leavePeek(e?: MouseEvent) {
+  if (document.body.dataset.sidebar !== 'floating') return;
+  if (e && inPeek(e.relatedTarget)) return;
   clearTimeout(peekCloseTimer);
   peekCloseTimer = window.setTimeout(() => {
-    // Stay open while something inside it is being used.
-    if (!palette.hidden || !spaceEditor.hidden || !downloadsPanel.hidden) return;
+    // Stay open while something inside it is being used or menus are up.
+    if (isOverlayActive()) return;
     peekSidebar.classList.add('peek-leaving');
   }, 300);
 }
@@ -1160,6 +1277,15 @@ peekEdge.addEventListener('mouseenter', () => {
 peekSidebar.addEventListener('mouseenter', keepPeek);
 peekEdge.addEventListener('mouseleave', leavePeek);
 peekSidebar.addEventListener('mouseleave', leavePeek);
+
+window.addEventListener('shell-menu-open', keepPeek);
+window.addEventListener('shell-menu-close', () => {
+  if (document.body.dataset.sidebar === 'floating') {
+    const hovering = peekSidebar.matches(':hover') || peekEdge.matches(':hover');
+    if (!hovering) leavePeek();
+  }
+});
+
 // Hidden once it has slid out.
 peekSidebar.addEventListener('animationend', (e) => {
   if (e.target === peekSidebar && peekSidebar.classList.contains('peek-leaving')) api.setSidebarPeek(false);
@@ -1243,6 +1369,18 @@ acceptDrops($('favorites'), { zone: 'favorites' });
 acceptDrops($('pinned'), { zone: 'pinned' });
 acceptDrops($('today'), { zone: 'today' });
 acceptDrops($('btn-newtab'), { zone: 'today' });
+
+const activeSpace = () => state?.spaces.find((s) => s.id === state!.activeSpaceId);
+$('pinned-header').addEventListener('click', () => {
+  const space = activeSpace();
+  if (space) api.setPinnedCollapsed(space.id, !space.pinnedCollapsed);
+});
+// A tab dropped on the header is pinned, and the section opens to show it.
+acceptDrops($('pinned-header'), { zone: 'pinned' });
+$('pinned-header').addEventListener('drop', () => {
+  const space = activeSpace();
+  if (space?.pinnedCollapsed) api.setPinnedCollapsed(space.id, false);
+});
 
 const renderOnboarding = setupOnboarding(api, h, icon);
 api.onState((s) => {

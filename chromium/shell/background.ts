@@ -640,6 +640,7 @@ async function start() {
     },
     closeTabs: (id: string, which: string) => void unload(store.closeTodayTabs(id, which === 'others' ? 'others' : 'below')),
     updateSpace: (id: string, patch: { name?: string; emoji?: string; color?: string }) => store.updateSpace(id, patch ?? {}),
+    setPinnedCollapsed: (id: string, collapsed: boolean) => store.setPinnedCollapsed(String(id), !!collapsed),
     // Its open tabs reopen in the other partition (sync() finds them in the wrong one).
     setSpaceIsolated: spacesOnly((id: string, isolated: boolean) => {
       if (!canIsolate) return broadcast('flash', 'Separate cookies aren’t in this build yet');
@@ -693,7 +694,8 @@ async function start() {
         return chrome.tabs.setZoom(chromeId, next).then(() => refreshNav().then(sendState));
       });
     },
-    splitWith: (id: string) => store.splitWith(id),
+    splitWith: (id: string, side?: string, withId?: string) =>
+      store.splitWith(String(id), side === 'left' ? 'left' : 'right', withId ? String(withId) : undefined),
     exitSplit,
     dropToSplit: (id: string, side: string) => dropToSplit(String(id), side === 'left' ? 'left' : 'right'),
     splitNew: (input: string) => store.splitWith(openTab(input, false).id),
