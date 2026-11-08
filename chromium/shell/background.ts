@@ -413,14 +413,7 @@ async function start() {
     frame.tabDragging = false;
     sendFrame();
     const space = store.activeSpace;
-    if (!space.activeTabId) return store.activate(tabId);
-    if (space.activeTabId === tabId) {
-      const otherId = store.allTabIds(space).find((id) => id !== tabId);
-      if (otherId) {
-        store.splitWith(otherId, side === 'left' ? 'right' : 'left', tabId);
-      }
-      return;
-    }
+    if (!space.activeTabId || space.activeTabId === tabId) return store.activate(tabId);
     // A responsive mirror only exists for its split; it goes away when something else takes its place.
     if (space.splitMode === 'responsive') exitSplit();
     store.splitWith(tabId, side);
@@ -523,20 +516,8 @@ async function start() {
     if (!tab || !zone) return undefined;
     const space = store.activeSpace;
     const split: MenuEntry<MenuRun>[] = [];
-    if (space.split?.includes(tabId)) {
-      split.push({ label: 'Exit Split View', run: does('exitSplit') });
-    } else {
-      if (space.activeTabId && space.activeTabId !== tabId) {
-        split.push({ label: 'Open in Split View', run: does('splitWith', tabId) });
-      } else {
-        const otherId = store.allTabIds(space).find((id) => id !== tabId);
-        if (otherId) {
-          split.push({ label: 'Open in Split View', run: does('splitWith', otherId, 'right', tabId) });
-        } else {
-          split.push({ label: 'Open in Split View', run: does('splitNew') });
-        }
-      }
-    }
+    if (space.split?.includes(tabId)) split.push({ label: 'Exit Split View', run: does('exitSplit') });
+    else if (space.activeTabId && space.activeTabId !== tabId) split.push({ label: 'Open in Split View', run: does('splitWith', tabId) });
     const name = tab.customTitle ?? tab.title;
     const otherSpaces = store.state.spaces.filter((s) => s.id !== store.locate(tabId)?.space?.id);
     return [

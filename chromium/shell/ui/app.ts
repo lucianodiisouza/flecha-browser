@@ -459,6 +459,7 @@ function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget) {
     e.dataTransfer!.setData(DRAG_TYPE, tab.id);
     e.dataTransfer!.effectAllowed = 'move';
     $('favorites').classList.add('show-empty');
+    showSplitDrop(tab.id);
   });
   el.addEventListener('dragend', () => {
     activeDraggedTabId = undefined;
@@ -1193,20 +1194,13 @@ document.addEventListener('mousedown', (e) => {
 
 const splitDrop = $('split-drop');
 
-function updateSplitDropPosition() {
-  const left = document.body.dataset.sidebar === 'docked' ? $('sidebar').offsetWidth : 8;
-  Object.assign(splitDrop.style, { left: `${left}px`, top: '8px', right: '8px', bottom: '8px' });
-}
-
-window.addEventListener('resize', () => {
-  if (!splitDrop.hidden) updateSplitDropPosition();
-});
-
-/** Drop zones over the page while a tab is dragged. */
+/** Drop zones over the page while a tab is dragged, unless it's the tab already on screen. */
 function showSplitDrop(tabId: string) {
   const space = state?.spaces.find((s) => s.id === state!.activeSpaceId);
-  if (!space?.activeTabId) return;
-  updateSplitDropPosition();
+  if (!space?.activeTabId || space.activeTabId === tabId || (space.split?.includes(tabId) && space.split.includes(space.activeTabId))) return;
+  // Where the page is: right of the docked sidebar, else the whole window inside the gap.
+  const left = document.body.dataset.sidebar === 'docked' ? $('sidebar').offsetWidth : 8;
+  Object.assign(splitDrop.style, { left: `${left}px`, top: '8px', right: '8px', bottom: '8px' });
   splitDrop.hidden = false;
   api.setTabDragging(true);
 }
@@ -1218,50 +1212,21 @@ function hideSplitDrop() {
   api.setTabDragging(false);
 }
 
-splitDrop.addEventListener('dragover', (e) => {
-  if (!e.dataTransfer?.types.includes(DRAG_TYPE)) return;
-  e.preventDefault();
-  e.dataTransfer.dropEffect = 'move';
-  const rect = splitDrop.getBoundingClientRect();
-  const side = e.clientX < rect.left + rect.width / 2 ? 'left' : 'right';
-  for (const half of splitDrop.querySelectorAll<HTMLElement>('.drop-half')) {
-    half.classList.toggle('over', half.dataset.side === side);
-  }
-});
-
-splitDrop.addEventListener('dragleave', (e) => {
-  if (e.relatedTarget && splitDrop.contains(e.relatedTarget as Node)) return;
-  for (const half of splitDrop.children) half.classList.remove('over');
-});
-
-splitDrop.addEventListener('drop', (e) => {
-  const id = e.dataTransfer?.getData(DRAG_TYPE);
-  e.preventDefault();
-  const rect = splitDrop.getBoundingClientRect();
-  const side = e.clientX < rect.left + rect.width / 2 ? 'left' : 'right';
-  hideSplitDrop();
-  if (id) api.dropToSplit(id, side);
-});
-
 for (const half of splitDrop.querySelectorAll<HTMLElement>('.drop-half')) {
   half.addEventListener('dragover', (e) => {
     if (!e.dataTransfer?.types.includes(DRAG_TYPE)) return;
     e.preventDefault();
-    e.stopPropagation();
     e.dataTransfer.dropEffect = 'move';
-    for (const h of splitDrop.children) h.classList.remove('over');
     half.classList.add('over');
   });
-  half.addEventListener('dragleave', (e) => {
-    if (e.relatedTarget && half.contains(e.relatedTarget as Node)) return;
-    half.classList.remove('over');
-  });
+  half.addEventListener('dragleave', () => half.classList.remove('over'));
   half.addEventListener('drop', (e) => {
     const id = e.dataTransfer?.getData(DRAG_TYPE);
     e.preventDefault();
-    e.stopPropagation();
-    hideSplitDrop();
+    splitDrop.hidden = true;
+    for (const h of splitDrop.children) h.classList.remove('over');
     if (id) api.dropToSplit(id, half.dataset.side as 'left' | 'right');
+    else api.setTabDragging(false);
   });
 }
 

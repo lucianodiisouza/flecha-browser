@@ -2120,8 +2120,6 @@ body[data-sidebar='floating'] #sidebar.peek-leaving {
   display: flex;
   gap: 8px;
   animation: fade var(--fast) var(--ease);
-  z-index: 100;
-  pointer-events: auto;
 }
 
 #split-drop[hidden] {
