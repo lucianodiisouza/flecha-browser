@@ -1183,12 +1183,15 @@ let tipTimer: number | undefined;
 let tipTarget: HTMLElement | undefined;
 
 function showTip(target: HTMLElement) {
+  // A button that shows only on hover (a tab's close button) has no box once the pointer has
+  // gone; placed by that empty box, the tooltip would sit in the window's top corner.
+  const r = target.getBoundingClientRect();
+  if (!target.isConnected || (!r.width && !r.height)) return hideTip();
   $('tooltip-text').textContent = target.dataset.tip ?? '';
   const kbd = $('tooltip-kbd');
   kbd.textContent = target.dataset.kbd ?? '';
   kbd.hidden = !target.dataset.kbd;
   tooltip.hidden = false;
-  const r = target.getBoundingClientRect();
   const t = tooltip.getBoundingClientRect();
   const below = r.bottom + 6 + t.height < window.innerHeight - 8;
   const left = Math.min(Math.max(r.left + r.width / 2 - t.width / 2, 6), window.innerWidth - t.width - 6);
@@ -1214,6 +1217,8 @@ document.addEventListener('pointerover', (e) => {
   // Once one tooltip is showing, moving to the next button shows its tooltip right away.
   tipTimer = window.setTimeout(() => showTip(target), Date.now() - tipHiddenAt < 400 ? 0 : 550);
 });
+// Leaving the page (to the traffic lights, or the web page beside the sidebar) fires no pointerover here.
+document.addEventListener('pointerout', (e) => !e.relatedTarget && hideTip());
 document.addEventListener('pointerdown', hideTip, true);
 document.addEventListener('scroll', hideTip, true);
 window.addEventListener('blur', hideTip);
