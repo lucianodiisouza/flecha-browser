@@ -4,6 +4,8 @@
 # On a Mac the checkout sits on an APFS volume (a disk image on the external disk) because
 # the disk itself is HFS+, whose one-second file times make siso think every output is
 # stale, so every build was a full two-hour rebuild. Linux file systems need no such volume.
+# flecha_os is for the scripts that source this (run.sh); shellcheck can't see that from here.
+# shellcheck disable=SC2034
 case "$(uname -s)" in
   Darwin)
     flecha_os=mac
