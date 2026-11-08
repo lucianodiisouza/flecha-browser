@@ -2,6 +2,7 @@ import { devSuggestions } from './devCommands.js';
 import { ICONS, type IconName } from './icons.js';
 import { setupOnboarding } from './onboarding.js';
 import { SPACE_COLORS, SPACE_EMOJIS } from './spaceChoices.js';
+import { SpaceSwipe } from './spaceSwipe.js';
 import type { DownloadInfo, DropTarget, ExtensionsView, FlechaApi, HistoryEntry, PaletteMode, PeekState, PinnedNode, Space, TabInfo, UiState } from '../../shared/types';
 
 declare global {
@@ -657,28 +658,18 @@ document.addEventListener('mousedown', (e) => {
 });
 document.addEventListener('keydown', (e) => e.key === 'Escape' && !sitePanel.hidden && toggleSitePanel(false));
 // Scrolling sideways over the sidebar (a trackpad swipe, a mouse's thumb wheel) changes
-// Space, one per gesture: the scroll adds up to a step, then waits for the gesture to end.
-const SPACE_SWIPE_STEP = 60;
-let swipe = 0;
-let swipeDone = false;
-let swipeEnd: number | undefined;
+// Space, one per swipe (spaceSwipe.ts says how a swipe ends).
+const spaceSwipe = new SpaceSwipe();
 $('sidebar').addEventListener(
   'wheel',
   (e) => {
     if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) || !state) return;
     e.preventDefault();
-    clearTimeout(swipeEnd);
-    swipeEnd = window.setTimeout(() => {
-      swipe = 0;
-      swipeDone = false;
-    }, 250);
-    if (swipeDone) return;
-    swipe += e.deltaX;
-    if (Math.abs(swipe) < SPACE_SWIPE_STEP) return;
-    swipeDone = true;
+    const step = spaceSwipe.feed(e.deltaX, e.timeStamp);
+    if (!step) return;
     const spaces = state.spaces;
     const i = spaces.findIndex((sp) => sp.id === state!.activeSpaceId);
-    const next = spaces[i + (swipe > 0 ? 1 : -1)];
+    const next = spaces[i + step];
     if (next) api.switchSpace(next.id);
   },
   { passive: false },
