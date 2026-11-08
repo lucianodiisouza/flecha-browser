@@ -46,6 +46,8 @@ export interface Space {
   splitMode?: 'responsive';
   /** Share of the width the left pane takes, 0.2–0.8. Half and half when unset. */
   splitRatio?: number;
+  /** The Pinned section is folded away in the sidebar. */
+  pinnedCollapsed?: boolean;
 }
 
 export interface ArchivedTab {
@@ -437,6 +439,7 @@ export interface FlechaApi {
   switchSpace(spaceId: string): void;
   newSpace(): void;
   updateSpace(spaceId: string, patch: { name?: string; emoji?: string; color?: string }): void;
+  setPinnedCollapsed(spaceId: string, collapsed: boolean): void;
   setSpaceIsolated(spaceId: string, isolated: boolean): void;
   deleteSpace(spaceId: string): void;
   tabMenu(tabId: string): void;

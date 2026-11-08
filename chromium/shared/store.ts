@@ -386,6 +386,14 @@ export class Store {
     this.changed();
   }
 
+  setPinnedCollapsed(spaceId: string, collapsed: boolean) {
+    const space = this.state.spaces.find((s) => s.id === spaceId);
+    if (!space || !!space.pinnedCollapsed === collapsed) return;
+    if (collapsed) space.pinnedCollapsed = true;
+    else delete space.pinnedCollapsed;
+    this.changed();
+  }
+
   /** Returns the ids of tabs that were dropped, so their views can be destroyed. */
   deleteSpace(spaceId: string): string[] {
     if (this.state.spaces.length < 2) return [];

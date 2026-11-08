@@ -92,6 +92,7 @@ const api: FlechaApi = {
   switchSpace: cmd('switchSpace'),
   newSpace: cmd('newSpace'),
   updateSpace: cmd('updateSpace'),
+  setPinnedCollapsed: cmd('setPinnedCollapsed'),
   setSpaceIsolated: cmd('setSpaceIsolated'),
   // Electron asks first, in a message box; the page asks in its own dialog.
   deleteSpace: (id) => void confirmDeleteSpace(id),

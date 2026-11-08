@@ -139,7 +139,7 @@ function render(s: UiState) {
   title.dataset.spaceId = space.id;
   $('space-isolated').hidden = !space.isolated;
 
-  updatePinnedVisibility(space.id);
+  renderPinnedHeader(space);
 
   // Re-rendering would throw away a tab or folder name being typed in place.
   if (!document.querySelector('#scroll [contenteditable="true"]')) {
@@ -277,38 +277,14 @@ function originOf(url: string) {
   }
 }
 
-function isPinnedCollapsed(spaceId: string): boolean {
-  try {
-    return localStorage.getItem(`flecha:pinned-collapsed:${spaceId}`) === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function setPinnedCollapsed(spaceId: string, collapsed: boolean) {
-  try {
-    localStorage.setItem(`flecha:pinned-collapsed:${spaceId}`, collapsed ? 'true' : 'false');
-  } catch {
-    // Local storage might be blocked.
-  }
-  updatePinnedVisibility(spaceId);
-}
-
-function updatePinnedVisibility(spaceId: string) {
-  const collapsed = isPinnedCollapsed(spaceId);
-  const header = $('pinned-header');
-  const pinnedEl = $('pinned');
+/** The Pinned header folds its section away, per Space, and shows how many it hides. */
+function renderPinnedHeader(space: Space) {
+  const collapsed = !!space.pinnedCollapsed;
+  $('pinned-header').classList.toggle('collapsed', collapsed);
+  $('pinned').classList.toggle('collapsed', collapsed);
   const badge = $('pinned-badge');
-  header.classList.toggle('collapsed', collapsed);
-  pinnedEl.classList.toggle('collapsed', collapsed);
-  const space = state?.spaces.find((s) => s.id === spaceId);
-  const count = space?.pinned.length ?? 0;
-  if (collapsed && count > 0) {
-    badge.textContent = String(count);
-    badge.hidden = false;
-  } else {
-    badge.hidden = true;
-  }
+  badge.textContent = String(space.pinned.length);
+  badge.hidden = !collapsed || !space.pinned.length;
 }
 
 function renderNode(node: PinnedNode, space: Space, folderId: string | undefined): HTMLElement {
@@ -1429,15 +1405,16 @@ acceptDrops($('pinned'), { zone: 'pinned' });
 acceptDrops($('today'), { zone: 'today' });
 acceptDrops($('btn-newtab'), { zone: 'today' });
 
+const activeSpace = () => state?.spaces.find((s) => s.id === state!.activeSpaceId);
 $('pinned-header').addEventListener('click', () => {
-  const space = state?.spaces.find((s) => s.id === state!.activeSpaceId);
-  if (!space) return;
-  setPinnedCollapsed(space.id, !isPinnedCollapsed(space.id));
+  const space = activeSpace();
+  if (space) api.setPinnedCollapsed(space.id, !space.pinnedCollapsed);
 });
+// A tab dropped on the header is pinned, and the section opens to show it.
 acceptDrops($('pinned-header'), { zone: 'pinned' });
 $('pinned-header').addEventListener('drop', () => {
-  const space = state?.spaces.find((s) => s.id === state!.activeSpaceId);
-  if (space) setPinnedCollapsed(space.id, false);
+  const space = activeSpace();
+  if (space?.pinnedCollapsed) api.setPinnedCollapsed(space.id, false);
 });
 
 const renderOnboarding = setupOnboarding(api, h, icon);
