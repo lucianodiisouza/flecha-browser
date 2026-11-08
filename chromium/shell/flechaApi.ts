@@ -117,8 +117,9 @@ const api: FlechaApi = {
     };
     input.click();
   },
-  // The frame grows over the page first, as in Electron; the side panel just opens it.
-  openPalette: surface === 'window' ? cmd('openPalette') : (mode) => paletteListeners.forEach((cb) => cb(mode)),
+  // The frame grows over the page first, as in Electron; the side panel just opens it. A new
+  // tab page has no command bar of its own, so it asks the window's, as ⌘T does.
+  openPalette: surface === 'window' || surface === 'newtab' ? cmd('openPalette') : (mode) => paletteListeners.forEach((cb) => cb(mode)),
   closePalette: surface === 'window' ? cmd('closePalette') : () => undefined,
   toggleSidebar: cmd('toggleSidebar'),
   setSidebarPeek: cmd('setSidebarPeek'),
