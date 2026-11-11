@@ -689,7 +689,10 @@ async function start() {
     zoom: (step: number) => {
       const chromeId = activeChromeId();
       if (chromeId === undefined) return;
-      void chrome.tabs.getZoom(chromeId).then((zoom) => {
+      void chrome.tabs.get(chromeId).then(async (tab) => {
+        // The new tab page is the shell's, as is the sidebar: zooming one zoomed both.
+        if (isStartPage(tab) || isShellPage(tab)) return;
+        const zoom = await chrome.tabs.getZoom(chromeId);
         const next = step === 0 ? 1 : Math.min(5, Math.max(0.25, zoom + (step > 0 ? 0.1 : -0.1)));
         return chrome.tabs.setZoom(chromeId, next).then(() => refreshNav().then(sendState));
       });
