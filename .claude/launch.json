@@ -1,0 +1,20 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "start",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "start"
+      ],
+      "port": 3000
+    },
+    {
+      "name": "landing",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd /private/tmp/claude-501/-Users-lucianodiisouza-Documents-projects-flecha/c80134b3-7c93-4df4-875f-3f5315bfbc81/scratchpad/landing-dist && exec python3 -m http.server 4321"],
+      "port": 4321
+    }
+  ]
+}
