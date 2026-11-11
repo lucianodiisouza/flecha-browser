@@ -13,6 +13,7 @@ import { describe as describeEnvironment } from '../../src/main/environments';
 import type { BrowserState, DropTarget, SearchEngineId, UiState } from '../../src/shared/types';
 import { broadcast, handle, listen, onConnect } from './hub';
 import { openSettings, registerSettings } from './settingsHandlers';
+import { registerFeatures, type Features } from './features';
 
 const STATE_KEY = 'state';
 /** Flecha tab id ↔ Chromium tab id, for the tabs that are open. Kept across background restarts. */
@@ -34,6 +35,7 @@ async function start() {
     save: (json) => void chrome.storage.local.set({ [STATE_KEY]: json }),
   };
   const store = new Store(persistence);
+  let features: Features | undefined;
   const restored = (await chrome.storage.session.get(LIVE_KEY))[LIVE_KEY] as Record<string, number> | undefined;
   const existing = new Set((await chrome.tabs.query({})).map((t) => t.id));
   for (const [id, chromeId] of Object.entries(restored ?? {})) if (existing.has(chromeId) && store.state.tabs[id]) live.set(id, chromeId);
@@ -76,9 +78,9 @@ async function start() {
       tint: store.activeSpace.color,
       sidebarMode: store.state.sidebarVisible ? 'docked' : frame.sidebarPeek ? 'floating' : 'hidden',
       environment: store.activeTab ? describeEnvironment(store.activeTab.url, store.state.environments) : undefined,
-      localServers: [],
-      consoleErrors: {},
-      boostedHosts: [],
+      localServers: features?.localServers() ?? [],
+      consoleErrors: features?.consoleErrors() ?? {},
+      boostedHosts: features?.boostedHosts() ?? [],
       faviconHosts: [],
       shortcuts: shortcutHints(store.state),
       defaultBrowser: { isDefault: false, canSet: false },
@@ -359,6 +361,8 @@ async function start() {
       if (chromeId !== undefined) void chrome.tabs.update(chromeId, { url });
     },
   });
+
+  features = registerFeatures({ store, broadcastState: sendState, liveTabId: (id) => live.get(id), activeChromeTabId: activeChromeId });
 
   onConnect(() => sendState());
   sync();
