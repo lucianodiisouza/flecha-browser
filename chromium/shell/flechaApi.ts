@@ -86,6 +86,7 @@ const api: FlechaApi = {
   navigate: cmd('navigate'),
   activate: cmd('activate'),
   close: cmd('close'),
+  goHome: cmd('goHome'),
   back: cmd('back'),
   forward: cmd('forward'),
   reload: cmd('reload'),

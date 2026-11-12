@@ -433,6 +433,7 @@ export interface FlechaApi {
   navigate(input: string): void;
   activate(tabId: string): void;
   close(tabId: string): void;
+  goHome(tabId: string): void;
   back(): void;
   forward(): void;
   reload(): void;

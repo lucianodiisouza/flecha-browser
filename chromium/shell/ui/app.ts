@@ -125,6 +125,7 @@ function render(s: UiState) {
       .map((tab) => {
         const el = h('button', { class: `fav${tab.id === space.activeTabId ? ' active' : ''}`, title: tabTitle(tab) }, favicon(tab));
         wireTab(el, tab, { zone: 'favorites', beforeTabId: tab.id });
+        el.addEventListener('dblclick', () => api.goHome(tab.id));
         return el;
       }),
   );
