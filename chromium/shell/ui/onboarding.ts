@@ -324,16 +324,25 @@ export function setupOnboarding(api: FlechaApi, h: H, icon: (name: IconName) => 
 
   function doneStep() {
     const d = state?.defaultBrowser;
+    // Links from other apps open in a Flechinha (Flecha's Little Arc) unless Settings says otherwise.
+    const flechinha = state?.openLinksInFlechinha !== false;
+    const where = flechinha
+      ? 'open in a Flechinha: a small window of their own that stays out of your Spaces. Keep one with Open in Flecha.'
+      : 'open in Flecha.';
     return h(
       'div',
       { class: 'tour-step' },
-      heading('Last thing', d?.isDefault ? 'You’re all set' : 'Make it the default?', d?.isDefault ? 'Links from Slack, Mail and your terminal open in Flecha.' : 'So links from Slack, Mail and your terminal open here instead of somewhere else.'),
+      heading(
+        'Last thing',
+        d?.isDefault ? 'You’re all set' : 'Make it the default?',
+        d?.isDefault ? `Links from Slack, Mail and your terminal ${where}` : `Links from Slack, Mail and your terminal then ${where}`,
+      ),
       d?.isDefault
         ? h('div', { class: 'tour-note ok' }, h('span', { class: 'tour-done' }, icon('check')), 'Flecha is your default browser')
         : d?.canSet
           ? h('button', { class: 'tour-ghost big', onclick: () => api.makeDefaultBrowser() }, icon('link'), 'Make Flecha the default browser')
           : null,
-      h('div', { class: 'tour-tips' }, h('span', {}, h('kbd', {}, keys('newTab')), ' Command bar'), h('span', {}, h('kbd', {}, keys('shortcuts')), ' All shortcuts'), h('span', {}, h('kbd', {}, keys('settings')), ' Settings')),
+      h('div', { class: 'tour-tips' }, h('span', {}, h('kbd', {}, keys('newTab')), ' Command bar'), h('span', {}, h('kbd', {}, keys('newFlechinha')), ' Flechinha'), h('span', {}, h('kbd', {}, keys('shortcuts')), ' All shortcuts'), h('span', {}, h('kbd', {}, keys('settings')), ' Settings')),
     );
   }
 
