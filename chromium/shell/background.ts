@@ -632,9 +632,11 @@ async function start() {
       if (chromeId !== undefined) void chrome.tabs.reload(chromeId);
     },
     goHome: (id: string) => {
-      const home = store.state.tabs[id]?.homeUrl;
+      const tab = store.state.tabs[id];
+      const home = tab?.homeUrl;
       const chromeId = live.get(id);
-      if (!home) return;
+      // Already home: navigating to the same URL would reload the page (a double-click is easy to make by accident).
+      if (!home || home === tab.url) return;
       if (chromeId !== undefined) void chrome.tabs.update(chromeId, { url: home });
       else store.updateTab(id, { url: home });
     },
