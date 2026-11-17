@@ -15,7 +15,7 @@ import type { AgentResult, AgentTab, AgentToolName } from '../shared/agentTools'
 import { applyBrowserImport, importOptions, previewBrowserImport, type BrowserImportData } from '../shared/importApply';
 import { HOST_NAME, type HostMethods, type ToHost, type ToShell } from '../native-host/protocol';
 import { broadcast, handle } from './hub';
-import { acquire, release } from './features/debuggee';
+import { acquire, release, send } from './features/debuggee';
 
 export interface NativeHostContext {
   store: Store;
@@ -435,10 +435,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     clearTimeout(attached.get(chromeId));
     attached.set(
       chromeId,
-      setTimeout(() => {
-        forget(chromeId);
-        void release(chromeId, DEBUG_HOLDER);
-      }, DEBUG_IDLE),
+      setTimeout(() => void releaseAgent(chromeId), DEBUG_IDLE),
     );
   }
 
@@ -447,6 +444,14 @@ export function registerNativeHost(ctx: NativeHostContext) {
     const was = attached.delete(chromeId);
     consoleLogs.delete(chromeId);
     if (was) void ctx.agentTabsChanged();
+  }
+
+  function releaseAgent(chromeId: number) {
+    // A responsive view can keep the session open. Send the reset before a new agent call can re-enable focus.
+    void send(chromeId, 'Emulation.setFocusEmulationEnabled', { enabled: false });
+    const released = release(chromeId, DEBUG_HOLDER);
+    forget(chromeId);
+    return released;
   }
 
   /**
@@ -522,8 +527,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
       } catch (error) {
         // A tab left half set up would skip the setup on later calls; let go so the next call
         // starts over. onDetach doesn't fire for our own detach, so forget it here.
-        forget(chromeId);
-        await release(chromeId, DEBUG_HOLDER);
+        await releaseAgent(chromeId);
         throw error;
       }
     })()
