@@ -250,7 +250,10 @@ function renderAgent(s: UiState) {
 
 /** Dev servers on this machine; clicking one goes to its tab, or opens one. */
 function renderLocalServers(s: UiState) {
-  $('local-servers').hidden = !s.localServers.length;
+  const collapsed = !!s.localServersCollapsed;
+  $('local-servers').hidden = !s.localServers.length || s.showLocalServers === false;
+  $('local-servers-header').classList.toggle('collapsed', collapsed);
+  $('local-server-list').hidden = collapsed;
   $('local-server-list').replaceChildren(
     ...s.localServers.map((server) => {
       const open = Object.values(s.tabs).find((t) => originOf(t.url) === originOf(server.url));
@@ -264,6 +267,19 @@ function renderLocalServers(s: UiState) {
         h('span', { class: 'live-dot' }),
         h('span', { class: 'title' }, server.name),
         h('span', { class: 'port' }, `:${server.port}`),
+        h(
+          'span',
+          {
+            class: 'local-server-hide',
+            role: 'button',
+            title: `Hide :${server.port} (Settings › Tabs can show it again)`,
+            onclick: (e: MouseEvent) => {
+              e.stopPropagation();
+              api.ignoreLocalPort(server.port);
+            },
+          },
+          icon('close'),
+        ),
       );
     }),
   );
@@ -1372,6 +1388,7 @@ acceptDrops($('today'), { zone: 'today' });
 acceptDrops($('btn-newtab'), { zone: 'today' });
 
 const activeSpace = () => state?.spaces.find((s) => s.id === state!.activeSpaceId);
+$('local-servers-header').addEventListener('click', () => api.setLocalServersCollapsed(!state?.localServersCollapsed));
 $('pinned-header').addEventListener('click', () => {
   const space = activeSpace();
   if (space) api.setPinnedCollapsed(space.id, !space.pinnedCollapsed);

@@ -140,6 +140,11 @@ export interface BrowserState {
   peekPinnedLinks?: boolean;
   /** Links arriving from other apps open in a Flechinha instead of a tab. Default on. */
   openLinksInFlechinha?: boolean;
+  /** The sidebar's "Running locally" section. Default on. */
+  showLocalServers?: boolean;
+  localServersCollapsed?: boolean;
+  /** Dev server ports left out of the sidebar, the new tab page and the tour. */
+  ignoredLocalPorts?: number[];
   /** Today tabs untouched this long are archived; 0 keeps them forever. Default 12. */
   archiveAfterHours?: number;
   /** Remembered answers to site permission prompts, by origin then permission. */
@@ -282,6 +287,8 @@ export interface SettingsView {
   /** Set after recording a shortcut another command had, which lost it. */
   notice?: string;
   openLinksInFlechinha: boolean;
+  showLocalServers: boolean;
+  ignoredLocalPorts: number[];
 }
 
 /** The downloads folder is only changed through the folder picker, never set directly. */
@@ -441,6 +448,9 @@ export interface FlechaApi {
   newSpace(): void;
   updateSpace(spaceId: string, patch: { name?: string; emoji?: string; color?: string }): void;
   setPinnedCollapsed(spaceId: string, collapsed: boolean): void;
+  setLocalServersCollapsed(collapsed: boolean): void;
+  /** Leaves this dev server port out until Settings shows it again. */
+  ignoreLocalPort(port: number): void;
   setSpaceIsolated(spaceId: string, isolated: boolean): void;
   deleteSpace(spaceId: string): void;
   tabMenu(tabId: string): void;

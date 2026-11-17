@@ -140,7 +140,7 @@ async function start() {
       tint: store.activeSpace.color,
       sidebarMode: store.state.sidebarVisible ? 'docked' : frame.sidebarPeek ? 'floating' : 'hidden',
       environment: store.activeTab ? describeEnvironment(store.activeTab.url, store.state.environments) : undefined,
-      localServers: features?.localServers() ?? [],
+      localServers: (features?.localServers() ?? []).filter((s) => !store.state.ignoredLocalPorts?.includes(s.port)),
       consoleErrors: features?.consoleErrors() ?? {},
       boostedHosts: features?.boostedHosts() ?? [],
       faviconHosts: favicons.list(),
@@ -643,6 +643,8 @@ async function start() {
     closeTabs: (id: string, which: string) => void unload(store.closeTodayTabs(id, which === 'others' ? 'others' : 'below')),
     updateSpace: (id: string, patch: { name?: string; emoji?: string; color?: string }) => store.updateSpace(id, patch ?? {}),
     setPinnedCollapsed: (id: string, collapsed: boolean) => store.setPinnedCollapsed(String(id), !!collapsed),
+    setLocalServersCollapsed: (collapsed: boolean) => store.setLocalServers({ collapsed: !!collapsed }),
+    ignoreLocalPort: (port: number) => store.setLocalServers({ ignoredPorts: [...(store.state.ignoredLocalPorts ?? []), Number(port)] }),
     // Its open tabs reopen in the other partition (sync() finds them in the wrong one).
     setSpaceIsolated: spacesOnly((id: string, isolated: boolean) => {
       if (!canIsolate) return broadcast('flash', 'Separate cookies aren’t in this build yet');

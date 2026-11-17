@@ -515,6 +515,17 @@ export class Store {
     this.changed();
   }
 
+  /** The sidebar's "Running locally" section: shown, collapsed, and the ports it leaves out. */
+  setLocalServers(prefs: { show?: boolean; collapsed?: boolean; ignoredPorts?: number[] }) {
+    if (typeof prefs.show === 'boolean') this.state.showLocalServers = prefs.show;
+    if (typeof prefs.collapsed === 'boolean') this.state.localServersCollapsed = prefs.collapsed;
+    if (Array.isArray(prefs.ignoredPorts)) {
+      const ports = [...new Set(prefs.ignoredPorts.map(Number).filter((p) => Number.isInteger(p) && p > 0 && p < 65536))];
+      this.state.ignoredLocalPorts = ports.sort((a, b) => a - b);
+    }
+    this.changed();
+  }
+
   setArchiveAfter(hours: number) {
     this.state.archiveAfterHours = Math.max(0, hours);
     this.changed();

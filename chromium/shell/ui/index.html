@@ -41,7 +41,12 @@
       <div id="favorites"></div>
 
       <section id="local-servers" class="group" hidden>
-        <header class="group-header"><span>Running locally</span></header>
+        <header id="local-servers-header" class="group-header pinned-header" title="Toggle Running locally">
+          <button class="pinned-toggle" type="button" aria-label="Toggle Running locally">
+            <span class="chevron"><i data-icon="chevron"></i></span>
+            <span>Running locally</span>
+          </button>
+        </header>
         <div id="local-server-list"></div>
       </section>
 

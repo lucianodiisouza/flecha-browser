@@ -341,6 +341,9 @@ for (const card of document.querySelectorAll<HTMLElement>('.theme-card')) {
 archiveAfter.addEventListener('change', async () => render(await api.set({ archiveAfterHours: Number(archiveAfter.value) })));
 peekPinnedLinks.addEventListener('change', async () => render(await api.set({ peekPinnedLinks: peekPinnedLinks.checked })));
 openLinksInFlechinha.addEventListener('change', async () => render(await api.set({ openLinksInFlechinha: openLinksInFlechinha.checked })));
+const showLocalServers = document.getElementById('showLocalServers') as HTMLInputElement;
+showLocalServers.addEventListener('change', async () => render(await api.set({ showLocalServers: showLocalServers.checked })));
+document.getElementById('showIgnoredPorts')!.addEventListener('click', async () => render(await api.set({ ignoredLocalPorts: [] })));
 
 // ---- keyboard shortcuts: click a key cap, press the new keys --------------------------
 
@@ -490,6 +493,9 @@ function render(view: SettingsView) {
     renderShortcuts();
   }
   openLinksInFlechinha.checked = view.openLinksInFlechinha;
+  showLocalServers.checked = view.showLocalServers;
+  document.getElementById('ignoredPortsRow')!.hidden = !view.ignoredLocalPorts.length;
+  document.getElementById('ignoredPorts')!.textContent = view.ignoredLocalPorts.map((p) => `:${p}`).join(', ');
   agent = view.agent;
   agentEnabled.checked = agent.enabled;
   for (const row of document.querySelectorAll<HTMLElement>('[data-agent-only]')) row.hidden = !agent.enabled;
