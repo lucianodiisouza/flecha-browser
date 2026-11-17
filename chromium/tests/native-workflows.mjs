@@ -283,8 +283,15 @@ try {
   assert.equal(await evaluate(settingsImport, "document.querySelector('[data-pane=import].pane').hidden"), false);
   await evaluate(settingsImport, "const importButton = document.querySelector('#import-browser'); importButton.focus(); importButton.click()");
   waitingFor = 'the Settings import chooser to open';
+  // Use the same DOM element wait budget as the native host's wait_for tool.
+  const chooserDeadline = performance.now() + 10_000;
   let importChoices;
-  await until(async () => (importChoices = await evaluate(settingsImport, `[...document.querySelectorAll('.shell-dialog[open] button')].map(button => button.textContent)`)).length > 0);
+  await until(async () => {
+    importChoices = await evaluate(settingsImport, `[...document.querySelectorAll('.shell-dialog[open] button')].map(button => button.textContent)`);
+    if (importChoices.length) return true;
+    if (performance.now() >= chooserDeadline) throw new Error('The Settings import chooser did not open');
+    return false;
+  });
   assert.deepEqual(importChoices, ['Chrome', 'Helium', 'Bookmarks File…', 'Cancel']);
   if (artifacts) await fs.writeFile(path.join(artifacts, 'settings-import.png'), Buffer.from((await send('Page.captureScreenshot', { format: 'png' }, settingsImport)).data, 'base64'));
   await evaluate(settingsImport, "document.querySelector('.shell-dialog[open] button:last-child').click()");
