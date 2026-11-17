@@ -2,6 +2,7 @@
  * window.flecha for the Chromium build: the same API the Electron preload gives the sidebar,
  * over the shell's port. Imported before the sidebar code so it is there when that runs.
  */
+import { SIDEBAR_SLIDE_MS } from './lib/sidebarSlide';
 import type { FlechaApi, PaletteMode, UiState } from '../shared/types';
 import { spaceTint } from './lib/spaceTint';
 import { cmd, invoke, on } from './client';
@@ -41,8 +42,18 @@ on('site-icons', (icons: Record<string, string>) => {
 // The frame page lays its window out: the background says how, this page adds the colour.
 let frameState: { sidebar: chrome.flechaPrivate.SidebarMode; overlay: boolean } | undefined;
 const windowId = surface === 'window' && framed ? chrome.flechaPrivate.getWindowId() : undefined;
+let appliedSidebar: chrome.flechaPrivate.SidebarMode | undefined;
+let frameDelay: ReturnType<typeof setTimeout> | undefined;
 function applyFrame() {
   if (!windowId || !frameState || !lastState) return;
+  // Hiding the docked sidebar: the page area keeps its place while the sidebar slides out (app.ts).
+  const sliding = appliedSidebar === 'docked' && frameState.sidebar === 'hidden' && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  clearTimeout(frameDelay);
+  if (sliding) {
+    frameDelay = setTimeout(() => ((appliedSidebar = 'hidden'), applyFrame()), SIDEBAR_SLIDE_MS);
+    return;
+  }
+  appliedSidebar = frameState.sidebar;
   const background = spaceTint(lastState.tint, systemDark.matches);
   void windowId.then((id) => chrome.flechaPrivate.setFrame({ ...frameState!, background }, id));
 }

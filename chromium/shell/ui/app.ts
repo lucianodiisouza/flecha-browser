@@ -4,6 +4,7 @@ import { setupOnboarding } from './onboarding.js';
 import { SPACE_COLORS, SPACE_EMOJIS } from './spaceChoices.js';
 import { SpaceSwipe } from './spaceSwipe.js';
 import { webAddress } from '../lib/url';
+import { SIDEBAR_SLIDE_MS } from '../lib/sidebarSlide';
 import type { DownloadInfo, DropTarget, ExtensionsView, FlechaApi, HistoryEntry, PaletteMode, PeekState, PinnedNode, Space, TabInfo, UiState } from '../../shared/types';
 
 declare global {
@@ -90,6 +91,35 @@ function favicon(tab: TabInfo) {
 
 // ---- rendering ----------------------------------------------------------------
 
+/**
+ * Hiding the docked sidebar (⌘S) slides it out before the page area takes its room, and
+ * showing it slides it back in; flechaApi.ts holds the page area for the same time.
+ */
+let shownSidebarMode: UiState['sidebarMode'] | undefined;
+let sidebarSlide: ReturnType<typeof setTimeout> | undefined;
+function showSidebarMode(mode: UiState['sidebarMode']) {
+  if (mode === shownSidebarMode) return;
+  const from = shownSidebarMode;
+  shownSidebarMode = mode;
+  const sidebar = $('sidebar');
+  clearTimeout(sidebarSlide);
+  sidebar.classList.remove('zen-leaving', 'zen-entering');
+  const animate = from !== undefined && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (animate && from === 'docked' && mode === 'hidden') {
+    sidebar.classList.add('zen-leaving');
+    sidebarSlide = setTimeout(() => {
+      sidebar.classList.remove('zen-leaving');
+      document.body.dataset.sidebar = shownSidebarMode;
+    }, SIDEBAR_SLIDE_MS);
+    return;
+  }
+  document.body.dataset.sidebar = mode;
+  if (animate && from === 'hidden' && mode === 'docked') {
+    sidebar.classList.add('zen-entering');
+    sidebarSlide = setTimeout(() => sidebar.classList.remove('zen-entering'), SIDEBAR_SLIDE_MS);
+  }
+}
+
 function render(s: UiState) {
   state = s;
   const space = s.spaces.find((sp) => sp.id === s.activeSpaceId) ?? s.spaces[0];
@@ -99,7 +129,7 @@ function render(s: UiState) {
   ($('btn-back') as HTMLButtonElement).disabled = !s.nav.canGoBack;
   ($('btn-forward') as HTMLButtonElement).disabled = !s.nav.canGoForward;
 
-  document.body.dataset.sidebar = s.sidebarMode;
+  showSidebarMode(s.sidebarMode);
   if (s.sidebarMode !== 'floating') $('sidebar').classList.remove('peek-leaving');
   // Shortcuts can be changed in Settings; key caps and tooltips show the current ones.
   for (const el of document.querySelectorAll<HTMLElement>('[data-shortcut]')) {
