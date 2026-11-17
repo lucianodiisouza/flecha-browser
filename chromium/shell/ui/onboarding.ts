@@ -271,6 +271,10 @@ export function setupOnboarding(api: FlechaApi, h: H, icon: (name: IconName) => 
       { class: 'tour-step' },
       heading('Move in', 'Bring your stuff over', 'Bookmarks become pinned tabs in a Space of their own; history makes the command bar smart from day one. Passwords stay put.'),
       list,
+      // macOS guards each browser's cookie key: say so before its Keychain prompt shows up.
+      browsers?.length
+        ? h('div', { class: 'tour-note' }, 'To bring logins over, macOS asks once for that browser’s Keychain item. Choose “Allow”; if you’d rather not, everything but logins still comes over.')
+        : null,
     );
   }
 
