@@ -328,9 +328,7 @@ body {
 }
 
 #extension-pins {
-  display: flex;
-  flex-wrap: wrap;
-  gap: inherit;
+  display: contents;
 }
 
 #extensions[hidden], #extension-pins[hidden], #extensions button[hidden], #pinned-header[hidden] {
@@ -864,12 +862,12 @@ body {
   border-radius: var(--radius-md);
 }
 
-.drop-split-left {
-  background-image: linear-gradient(to right, var(--fill-hover) 50%, transparent 50%);
+.row[data-tab-id].drop-split-left {
+  background-image: linear-gradient(to right, color-mix(in srgb, var(--blue) 25%, transparent) 50%, transparent 50%);
 }
 
-.drop-split-right {
-  background-image: linear-gradient(to left, var(--fill-hover) 50%, transparent 50%);
+.row[data-tab-id].drop-split-right {
+  background-image: linear-gradient(to left, color-mix(in srgb, var(--blue) 25%, transparent) 50%, transparent 50%);
 }
 
 /* ---- local servers ------------------------------------------------------ */

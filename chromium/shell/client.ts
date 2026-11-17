@@ -9,29 +9,31 @@ type Connection = { port: chrome.runtime.Port; replies: Map<number, Reply>; open
 const listeners = new Map<string, Array<(...args: any[]) => void>>();
 let nextId = 1;
 let current: Connection | undefined;
-let retry: ReturnType<typeof setTimeout> | undefined;
 let retryDelay = 0;
 // Use upstream's backoff when the service worker repeatedly drops the connection.
 const STABLE_MS = 10_000;
 const RETRY_MAX_MS = 5_000;
+
+function scheduleRetry(wasStable = false) {
+  retryDelay = wasStable ? 0 : Math.min(Math.max(retryDelay * 2, 100), RETRY_MAX_MS);
+  setTimeout(connect, retryDelay);
+}
 
 function disconnected(connection: Connection) {
   if (current !== connection) return;
   current = undefined;
   for (const reply of connection.replies.values()) reply.reject(new Error('Flecha’s background restarted'));
   connection.replies.clear();
-  retryDelay = Date.now() - connection.openedAt >= STABLE_MS ? 0 : Math.min(Math.max(retryDelay * 2, 100), RETRY_MAX_MS);
-  retry = setTimeout(connect, retryDelay);
+  scheduleRetry(Date.now() - connection.openedAt >= STABLE_MS);
 }
 
-function connect(): Connection | undefined {
-  if (current) return current;
-  clearTimeout(retry);
+function connect() {
   let port: chrome.runtime.Port;
   try {
     port = chrome.runtime.connect({ name: 'flecha' });
   } catch {
-    return undefined;
+    scheduleRetry();
+    return;
   }
   const connection: Connection = { port, replies: new Map(), openedAt: Date.now() };
   current = connection;
@@ -50,11 +52,10 @@ function connect(): Connection | undefined {
       for (const fn of listeners.get(message.name) ?? []) fn(...message.args);
     }
   });
-  return connection;
 }
 
 function post(message: Message, reply?: Reply) {
-  const connection = connect();
+  const connection = current;
   if (!connection) {
     reply?.reject(new Error('Flecha’s background can’t be reached'));
     return;
@@ -62,8 +63,20 @@ function post(message: Message, reply?: Reply) {
   if (message.type === 'invoke' && reply) connection.replies.set(message.id, reply);
   try {
     connection.port.postMessage(message);
-  } catch {
-    disconnected(connection);
+  } catch (error) {
+    const reason = error instanceof Error ? error : new Error(String(error));
+    // GinPort also throws for serialization failures, which leave the port usable.
+    if (reason.message === 'Attempting to use a disconnected port object' || reason.message === 'Extension context invalidated.') {
+      disconnected(connection);
+      try {
+        connection.port.disconnect();
+      } catch {
+        // The extension context may already be gone.
+      }
+    } else {
+      if (message.type === 'invoke') connection.replies.delete(message.id);
+      reply?.reject(reason);
+    }
   }
 }
 

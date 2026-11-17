@@ -276,55 +276,75 @@ function registerFlechinha(ctx: NativeContext) {
 
 // ---- split ratio (patch 0019) ------------------------------------------------------------
 
+let reapplyResponsiveRatio: ((windowId: string) => void) | undefined;
+
 if (has('setSplitRatio')) {
-  // Dragging the gap between the panes: the Store keeps the ratio (store.setSplitRatio clamps it).
+  // Keep a user-selected ratio in a regular split and restore the phone width in a responsive split.
   chrome.flechaPrivate.onSplitRatioChanged.addListener(
     when((ctx, tabId: number, ratio: number) => {
       const id = ctx.flechaTabId?.(tabId);
       const windowId = id && ctx.store.windowShowing(id);
       if (!windowId) return;
       const space = ctx.store.activeSpaceIn(windowId);
-      if (space.splitMode !== 'responsive' && space.split?.[0] === id) ctx.store.setSplitRatio(ratio, windowId);
+      if (space.split?.[0] !== id) return;
+      if (space.splitMode === 'responsive') reapplyResponsiveRatio?.(windowId);
+      else ctx.store.setSplitRatio(ratio, windowId);
     }),
   );
 }
 
 /** Each window's active Space's splitRatio on Chromium's split (patch 0019 also draws it flat, 8px apart). */
 function registerSplitRatio(ctx: NativeContext) {
-  if (!has('setSplitRatio') || !ctx.chromeTabId) return;
-  /** The ratio last applied, by the split's left tab. */
-  const sent = new Map<number, number>();
-  const apply = () => {
-    for (const win of ctx.store.state.windows) void (async () => {
-      const space = ctx.store.activeSpaceIn(win.id);
-      const left = space.split && ctx.chromeTabId!(space.split[0]);
-      if (left === undefined || !space.split) return;
-      let ratio = space.splitRatio ?? 0.5;
-      if (space.splitMode === 'responsive') {
-        const right = ctx.chromeTabId!(space.split[1]);
-        if (right === undefined) return;
-        const [desktop, phone] = await Promise.all([chrome.tabs.get(left), chrome.tabs.get(right)]).catch(() => []);
-        if (!desktop?.width || !phone?.width || !ctx.store.hasWindow(win.id) || ctx.store.activeSpaceIn(win.id).split !== space.split) return;
-        ratio = phoneSplitRatio(desktop.width + phone.width);
-      }
-      if (sent.get(left) === ratio) return;
-      // Fails until Chromium has made the split; tabs.onUpdated (splitViewId) tries again.
-      void chrome.flechaPrivate.setSplitRatio(left, ratio).then(
-        () => sent.set(left, ratio),
-        () => undefined,
-      );
-    })();
-  };
-  apply();
-  ctx.store.onChange(apply);
-  chrome.tabs.onUpdated.addListener((id, info) => {
-    if ('splitViewId' in info) {
-      sent.delete(id);
-      apply();
+  const { store, chromeTabId } = ctx;
+  if (!has('setSplitRatio') || !chromeTabId) return;
+  const measurements = new Map<string, { applied?: { splitId: number; ratio: number } }>();
+
+  const applyWindow = async (windowId: string, reset = false) => {
+    const space = store.activeSpaceIn(windowId);
+    const split = space.split;
+    const left = split && chromeTabId(split[0]);
+    const right = split && chromeTabId(split[1]);
+    if (left === undefined || right === undefined) {
+      measurements.delete(windowId);
+      return;
     }
+    const measurement = { applied: reset ? undefined : measurements.get(windowId)?.applied };
+    measurements.set(windowId, measurement);
+    const [desktop, other] = await Promise.all([chrome.tabs.get(left), chrome.tabs.get(right)]).catch(() => []);
+    if (measurements.get(windowId) !== measurement || !store.hasWindow(windowId) ||
+        store.activeSpaceIn(windowId).split !== split) return;
+    const splitId = desktop?.splitViewId;
+    if (splitId === undefined || splitId < 0 || other?.splitViewId !== splitId) return;
+    let ratio = space.splitRatio ?? 0.5;
+    if (space.splitMode === 'responsive') {
+      if (!desktop.width || !other.width) return;
+      ratio = phoneSplitRatio(desktop.width + other.width);
+    }
+    const previous = measurement.applied;
+    if (previous?.splitId === splitId && previous.ratio === ratio) return;
+    try {
+      await chrome.flechaPrivate.setSplitRatio(left, ratio);
+      measurement.applied = { splitId, ratio };
+    } catch {
+      // The split may have changed since tabs.get(). The next split update tries again.
+    }
+  };
+
+  const apply = () => {
+    for (const id of measurements.keys()) {
+      if (!store.hasWindow(id)) measurements.delete(id);
+    }
+    for (const win of store.state.windows) void applyWindow(win.id);
+  };
+  reapplyResponsiveRatio = (windowId) => void applyWindow(windowId, true);
+  apply();
+  store.onChange((change) => {
+    if (change === 'structure') apply();
+  });
+  chrome.tabs.onUpdated.addListener((_id, info) => {
+    if ('splitViewId' in info) apply();
   });
   chrome.windows.onBoundsChanged.addListener(apply);
-  chrome.tabs.onRemoved.addListener((id) => sent.delete(id));
 }
 
 // ---- theme (patch 0018) ------------------------------------------------------------------

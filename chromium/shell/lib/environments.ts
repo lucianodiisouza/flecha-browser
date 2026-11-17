@@ -49,9 +49,10 @@ function tone(target: EnvironmentTarget): ActiveEnvironment['tone'] {
   const address = target.origin.replace(/^[a-z]+:\/\//i, '').toLowerCase();
   const label = target.label.toLowerCase() === address ? '' : target.label.toLowerCase();
   if (/\bprod(uction)?\b/.test(label)) return 'production';
-  if (/localhost|127\.0\.0\.1|\blocal\b|\.test\b|\.local\b/.test(`${label} ${address}`)) return 'local';
-  const host = address.replace(/:\d+$/, '').replace(/\.[^.]+$/, '');
-  if (/\b(stag(e|ing)|preview|qa|test(ing)?|dev(elop(ment)?)?|sandbox|uat)\b/.test(`${label} ${host}`)) return 'staging';
+  const hostname = address.replace(/:\d+$/, '');
+  if (hostname === '[::1]' || hostname === '0.0.0.0' || /localhost|127\.0\.0\.1|\blocal\b|\.test\b|\.local\b/.test(`${label} ${address}`)) return 'local';
+  const host = hostname.replace(/\.[^.]+$/, '');
+  if (/\b(stag(e|ing)|preview|qa|test(ing)?|dev(elop(ment)?)?|sandbox|uat)\d*\b/.test(`${label} ${host}`)) return 'staging';
   return 'production';
 }
 

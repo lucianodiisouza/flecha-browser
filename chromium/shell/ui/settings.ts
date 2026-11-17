@@ -422,12 +422,16 @@ api.onChange(async () => renderAgent(await api.get()));
 document.getElementById('openBoosts')!.addEventListener('click', () => api.openBoosts());
 document.getElementById('showTour')!.addEventListener('click', () => api.showTour());
 const importButton = document.querySelector<HTMLButtonElement>('#import-browser')!;
+let importing = false;
 importButton.addEventListener('click', async () => {
-  importButton.disabled = true;
+  if (importing) return;
+  importing = true;
+  importButton.setAttribute('aria-disabled', 'true');
   try {
     await importFromBrowser();
   } finally {
-    importButton.disabled = false;
+    importing = false;
+    importButton.removeAttribute('aria-disabled');
   }
 });
 document.getElementById('chooseFolder')!.addEventListener('click', async () => render(await api.chooseDownloadsFolder()));

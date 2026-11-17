@@ -13,6 +13,7 @@
 import { Store, type StatePersistence } from '../shared/store';
 import { decodeState, loadSavedState, setAsideBeforeImport, stateBeforeImport, STATE_KEY } from '../shared/savedState';
 import { pinnableAddress, resolveInput, sameAddress, searchEngine } from './lib/url';
+import { canDropToSplit, pageSplitTarget } from './lib/splitDrop';
 import { shortcutHints, type ShortcutId } from './lib/shortcuts';
 import { describe as describeEnvironment } from './lib/environments';
 import type { BrowserState, DropTarget, SearchEngineId, UiState } from '../shared/types';
@@ -734,9 +735,9 @@ async function start() {
     frameOf(chromeWindowId).tabDragging = false;
     sendFrame(chromeWindowId);
     const space = store.activeSpaceIn(windowId);
-    const target = withTabId ?? space.activeTabId;
-    if (!withTabId && (!target || target === tabId)) return store.activate(tabId, { windowId });
-    if (!target || target === tabId || store.state.tabs[target]?.device === 'mobile' || store.state.tabs[tabId]?.device === 'mobile') return;
+    const target = withTabId ?? pageSplitTarget(space);
+    if (!withTabId && space.split?.includes(tabId)) return;
+    if (!canDropToSplit(store.state.tabs, tabId, target)) return;
     const ids = store.allTabIds(space, windowId);
     if (!ids.includes(tabId) || !ids.includes(target)) return;
     // A responsive mirror only exists for its split; it goes away when something else takes its place.

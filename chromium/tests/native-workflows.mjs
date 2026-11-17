@@ -226,6 +226,12 @@ try {
   await instrument(session);
   const rpc = (name, ...args) => evaluate(session, `testInvoke(${JSON.stringify(name)}, ...${JSON.stringify(args)})`);
   const stateWhere = (predicate) => evaluate(session, `testWait(${predicate})`);
+  const until = async (ready) => {
+    while (!(await ready())) {
+      if (browser.exitCode !== null) throw new Error('The browser exited');
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+  };
   const domWhere = (predicate) => evaluate(session, `new Promise(resolve => { const check = () => { if ((${predicate})()) { observer.disconnect(); document.removeEventListener('focusin',check); resolve(true); } }; const observer = new MutationObserver(check); observer.observe(document.body, {subtree:true,childList:true,attributes:true}); document.addEventListener('focusin',check); check(); })`);
   const textWhere = (predicate) => evaluate(session, `new Promise(resolve => { const check = () => { if ((${predicate})(document.body.innerText)) { observer.disconnect(); resolve(document.body.innerText); } }; const observer = new MutationObserver(check); observer.observe(document.body, {subtree:true,childList:true,characterData:true}); check(); })`);
   await stateWhere('s => s.spaces.length > 0');
@@ -275,18 +281,16 @@ try {
   const settingsImport = await attach((await findTarget(t => t.url.includes('/settings.html#import'))).targetId);
   await loaded(settingsImport, 'chrome-extension://');
   assert.equal(await evaluate(settingsImport, "document.querySelector('[data-pane=import].pane').hidden"), false);
-  await evaluate(settingsImport, "document.querySelector('#import-browser').click()");
-  const importChoices = await evaluate(settingsImport, `new Promise(resolve => {
-    const check = () => {
-      const dialog = document.querySelector('.shell-dialog[open]');
-      if (dialog) { observer.disconnect(); resolve([...dialog.querySelectorAll('button')].map(button => button.textContent)); }
-    };
-    const observer = new MutationObserver(check);
-    observer.observe(document.body, { subtree: true, childList: true, attributes: true });
-    check();
-  })`);
+  await evaluate(settingsImport, "const importButton = document.querySelector('#import-browser'); importButton.focus(); importButton.click()");
+  waitingFor = 'the Settings import chooser to open';
+  let importChoices;
+  await until(async () => (importChoices = await evaluate(settingsImport, `[...document.querySelectorAll('.shell-dialog[open] button')].map(button => button.textContent)`)).length > 0);
   assert.deepEqual(importChoices, ['Chrome', 'Helium', 'Bookmarks File…', 'Cancel']);
   if (artifacts) await fs.writeFile(path.join(artifacts, 'settings-import.png'), Buffer.from((await send('Page.captureScreenshot', { format: 'png' }, settingsImport)).data, 'base64'));
+  await evaluate(settingsImport, "document.querySelector('.shell-dialog[open] button:last-child').click()");
+  waitingFor = 'focus to return to the Settings import button after cancel';
+  await until(() => evaluate(settingsImport, "document.activeElement === importButton && !importButton.hasAttribute('aria-disabled')"));
+  waitingFor = undefined;
   const importWindowId = await evaluate(settingsImport, 'chrome.windows.getCurrent().then(window => window.id)');
   await evaluate(session, `chrome.windows.remove(${importWindowId})`);
   console.log('PASS Settings Import opens the browser and bookmarks-file chooser');
@@ -591,7 +595,9 @@ try {
   const unrelatedUrl = base + '/unrelated-split';
   await rpc('newTab', unrelatedUrl);
   const unrelated = Object.values((await stateWhere(`s => Object.values(s.tabs).some(t => t.url === ${JSON.stringify(unrelatedUrl)})`)).tabs).find(t => t.url === unrelatedUrl).id;
-  await active(unrelated);
+  await rpc('activate', a);
+  await active(a);
+  await domWhere(`() => document.querySelector('.row.active[data-tab-id="' + CSS.escape(${JSON.stringify(a)}) + '"]')`);
   const splitHighlight = await evaluate(session, `(() => {
     const rowFor = id => document.querySelector('.row[data-tab-id="' + CSS.escape(id) + '"]');
     const source = rowFor(${JSON.stringify(b)});
@@ -601,20 +607,70 @@ try {
     const rect = target.getBoundingClientRect();
     const event = { dataTransfer, bubbles: true, cancelable: true, clientX: rect.right - 1, clientY: rect.top + rect.height / 2 };
     target.dispatchEvent(new DragEvent('dragover', event));
-    const highlighted = target.classList.contains('drop-split-right');
+    globalThis.testTabDrag = { source, target, event };
+    return getComputedStyle(target).backgroundImage;
+  })()`);
+  assert.match(splitHighlight, /linear-gradient\(to left/);
+  if (artifacts) {
+    for (const theme of ['light', 'dark']) {
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] }, session);
+      await fs.writeFile(path.join(artifacts, `split-drop-${theme}.png`), Buffer.from((await send('Page.captureScreenshot', { format: 'png' }, session)).data, 'base64'));
+    }
+    await send('Emulation.setEmulatedMedia', { features: [] }, session);
+  }
+  await rpc('activate', unrelated);
+  await stateWhere(`s => s.spaces.find(sp => sp.id === s.activeSpaceId).activeTabId === ${JSON.stringify(unrelated)}`);
+  assert.equal(await evaluate(session, `(() => {
+    const { source, target, event } = testTabDrag;
+    if (!source.isConnected || !target.isConnected) return false;
     target.dispatchEvent(new DragEvent('drop', event));
     source.dispatchEvent(new DragEvent('dragend', event));
-    return { highlighted, height: rect.height, width: rect.width };
-  })()`);
-  assert.equal(splitHighlight.highlighted, true, JSON.stringify(splitHighlight));
+    delete globalThis.testTabDrag;
+    return true;
+  })()`), true, 'the drag source and target survive a state update');
   const sidebarSplit = await stateWhere('s => !!s.spaces.find(sp => sp.id === s.activeSpaceId).split');
   assert.deepEqual(sidebarSplit.spaces.find(sp => sp.id === sidebarSplit.activeSpaceId).split, [a, b]);
-  const splitTabs = await evaluate(session, 'chrome.tabs.query({}).then(tabs => tabs.filter(t => t.splitViewId !== undefined && t.splitViewId !== -1).map(t => t.id))');
-  assert.equal(splitTabs.length, 2);
+  waitingFor = 'the two dropped tabs to share a native split';
+  const splitWindowId = await evaluate(session, 'chrome.flechaPrivate.getWindowId()');
+  await until(() => evaluate(session, `chrome.tabs.query({ windowId: ${splitWindowId} }).then(tabs => {
+    const left = tabs.find(t => t.url === ${JSON.stringify(sidebarSplit.tabs[a].url)});
+    const right = tabs.find(t => t.url === ${JSON.stringify(sidebarSplit.tabs[b].url)});
+    return left && right && left.id !== right.id && left.splitViewId >= 0 && left.splitViewId === right.splitViewId;
+  })`));
+  waitingFor = undefined;
   await preserved('entering split view');
   await rpc('exitSplit');
   await stateWhere('s => !s.spaces.find(sp => sp.id === s.activeSpaceId).split');
   await preserved('leaving split view');
+  await rpc('activate', a);
+  await active(a);
+  await rpc('toggleResponsive');
+  const responsive = await stateWhere("s => s.spaces.find(sp => sp.id === s.activeSpaceId).splitMode === 'responsive'");
+  const mirror = responsive.spaces.find(sp => sp.id === responsive.activeSpaceId).split[1];
+  await rpc('activate', mirror);
+  await active(mirror);
+  const overlay = await evaluate(session, `(() => {
+    const drag = id => {
+      const row = document.querySelector('.row[data-tab-id="' + CSS.escape(id) + '"]');
+      const dataTransfer = new DataTransfer();
+      row.dispatchEvent(new DragEvent('dragstart', { dataTransfer, bubbles: true, cancelable: true }));
+      return { row, dataTransfer };
+    };
+    const splitDrop = document.querySelector('#split-drop');
+    const phone = drag(${JSON.stringify(mirror)});
+    const phoneCanSplit = !splitDrop.hidden;
+    phone.row.dispatchEvent(new DragEvent('dragend', { dataTransfer: phone.dataTransfer, bubbles: true }));
+    const source = drag(${JSON.stringify(unrelated)});
+    const desktopCanSplit = !splitDrop.hidden;
+    splitDrop.querySelector('.drop-half[data-side=right]').dispatchEvent(new DragEvent('drop', { dataTransfer: source.dataTransfer, bubbles: true }));
+    source.row.dispatchEvent(new DragEvent('dragend', { dataTransfer: source.dataTransfer, bubbles: true }));
+    return { phoneCanSplit, desktopCanSplit };
+  })()`);
+  assert.deepEqual(overlay, { phoneCanSplit: false, desktopCanSplit: true });
+  const replaced = await stateWhere(`s => !s.tabs[${JSON.stringify(mirror)}] && !!s.spaces.find(sp => sp.id === s.activeSpaceId).split`);
+  assert.deepEqual(replaced.spaces.find(sp => sp.id === replaced.activeSpaceId).split, [a, unrelated]);
+  await rpc('exitSplit');
+  await preserved('replacing the responsive split with a desktop tab');
   await rpc('close', unrelated);
   await stateWhere(`s => !s.tabs[${JSON.stringify(unrelated)}]`);
   await rpc('openPeek', base + '/peek');
@@ -721,6 +777,20 @@ try {
   assert.equal(await evaluate(session, "document.querySelector('#extension-pins').hidden && !document.querySelector('#btn-extensions').hidden"), true);
   await evaluate(session, "document.querySelector('#btn-toggle-extension-pins').click()");
   console.log('PASS only pinned extensions have sidebar buttons, and collapsing keeps the Extensions menu available');
+  const toolbarRows = await evaluate(session, `(() => {
+    const toolbar = document.querySelector('#extensions').cloneNode(true);
+    const pins = toolbar.querySelector('#extension-pins');
+    const action = pins.firstElementChild;
+    pins.replaceChildren(...Array.from({ length: 8 }, () => action.cloneNode(true)));
+    toolbar.style.width = '240px';
+    document.body.append(toolbar);
+    try {
+      return new Set([...toolbar.querySelectorAll('button')].map(button => button.getBoundingClientRect().top)).size;
+    } finally {
+      toolbar.remove();
+    }
+  })()`);
+  assert.equal(toolbarRows, 2, 'pinned buttons wrap alongside the toggle and Extensions menu');
   const button = await evaluate(session, `${actionButton}.getBoundingClientRect().toJSON()`);
   const frameWindow = await evaluate(session, '({ x: screenX, y: screenY, width: outerWidth })');
   const clickButton = () => execFileSync(inputTool, [env.DISPLAY, String(browser.pid), 'click', String(Math.round(button.x + button.width / 2)), String(Math.round(button.y + button.height / 2))], { env });
@@ -777,12 +847,6 @@ try {
   const shot = path.join(profile, 'bubble.png');
   const pixel = (x, y) => { execFileSync('import', ['-display', env.DISPLAY, '-window', 'root', shot]); return execFileSync('magick', [shot, '-format', `%[pixel:p{${x},${y}}]`, 'info:'], { encoding: 'utf8' }); };
   const pageWhite = (x, y) => /^(srgb\(255,255,255\)|white)$/.test(pixel(frameWindow.x + x, frameWindow.y + y));
-  const until = async (ready) => {
-    while (!(await ready())) {
-      if (browser.exitCode !== null) throw new Error('The browser exited');
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
-  };
   // An extension without an action shows Chromium's puzzle icon, disabled: its button shows the
   // extension's menu, dropping from the button (patch 0071; it went to the hidden toolbar's spot).
   const quietButton = "document.querySelector('#extensions .ext-action[aria-label=\"Quiet Extension\"]')";
@@ -1399,6 +1463,25 @@ try {
   const secondTab = todayOf(secondState).find(id => secondState.tabs[id].url === base + '/second-window');
   assert.equal(todayOf(await stateWhere('s => true')).includes(secondTab), false);
   console.log('PASS a new window shows the same Space with Today tabs of its own');
+  await rpc('updateSpace', firstState.activeSpaceId, { pinnedCollapsed: true });
+  await domWhere("() => document.querySelector('#pinned').hidden");
+  const droppedOnHeader = await evaluate(session, `(() => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData('application/x-flecha-tab', ${JSON.stringify(secondTab)});
+    const header = document.querySelector('#pinned-header');
+    const event = { dataTransfer, bubbles: true, cancelable: true };
+    if (header.dispatchEvent(new DragEvent('dragover', event))) return false;
+    header.dispatchEvent(new DragEvent('drop', event));
+    return true;
+  })()`);
+  assert.equal(droppedOnHeader, true);
+  await stateWhere(`s => s.spaces.find(sp => sp.id === s.activeSpaceId).pinned.some(item => item.tabId === ${JSON.stringify(secondTab)})`);
+  assert.equal(await evaluate(session, "document.querySelector('#pinned').hidden"), true);
+  await otherWindow.rpc('moveTab', secondTab, { zone: 'today' });
+  await otherWindow.rpc('activate', secondTab);
+  await rpc('updateSpace', firstState.activeSpaceId, { pinnedCollapsed: false });
+  await domWhere("() => !document.querySelector('#pinned').hidden");
+  console.log('PASS a tab from another window drops on the folded Pinned header');
   const otherSpace = secondState.spaces.find(sp => sp.id !== secondState.activeSpaceId).id;
   await otherWindow.rpc('switchSpace', otherSpace);
   await otherWindow.state(`s => s.activeSpaceId === ${JSON.stringify(otherSpace)} && !s.spaces.find(sp => sp.id === s.activeSpaceId).activeTabId`);

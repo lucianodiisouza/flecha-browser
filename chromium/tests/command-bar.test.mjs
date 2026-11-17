@@ -14,11 +14,14 @@ test('typed development addresses open directly and environment badges follow ex
     assert.equal(resolveInput(address), `http://${address}`);
   }
   assert.equal(webAddress('mailto:dev@example.com'), 'mailto:dev@example.com');
-  assert.equal(webAddress('300.10.0.1'), undefined);
-  const targets = parseTargets('prod https://staging.example.com\napp.localhost:3030\nflecha.dev\nlatest.example.com');
+  assert.equal(resolveInput('localhost:3000/my notes'), 'http://localhost:3000/my%20notes');
+  for (const broken of ['300.10.0.1', '192.168.1.010:3000', 'localhost: 3000', 'localhost:65536', 'localhost:3000@example.com']) {
+    assert.equal(webAddress(broken), undefined, broken);
+  }
+  const targets = parseTargets('prod https://staging.example.com\napp.localhost:3030\nflecha.dev\nlatest.example.com\n[::1]:8080\n0.0.0.0:8000\nstaging2.example.com\nqa01.example.com');
   const envs = [{ id: 'project', name: 'Project', targets }];
-  assert.deepEqual(targets.map(({ origin }) => origin), ['https://staging.example.com', 'http://app.localhost:3030', 'https://flecha.dev', 'https://latest.example.com']);
-  assert.deepEqual(targets.map(({ origin }) => describe(origin, envs).tone), ['production', 'local', 'production', 'production']);
+  assert.deepEqual(targets.map(({ origin }) => origin), ['https://staging.example.com', 'http://app.localhost:3030', 'https://flecha.dev', 'https://latest.example.com', 'http://[::1]:8080', 'http://0.0.0.0:8000', 'https://staging2.example.com', 'https://qa01.example.com']);
+  assert.deepEqual(targets.map(({ origin }) => describe(origin, envs).tone), ['production', 'local', 'production', 'production', 'local', 'local', 'staging', 'staging']);
 });
 
 test('developer command lookup ignores inherited properties and decodes UTF-8 JWTs', () => {
@@ -29,6 +32,8 @@ test('developer command lookup ignores inherited properties and decodes UTF-8 JW
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
   const [suggestion] = devSuggestions(`${encode(header)}.${encode(payload)}.`);
   assert.deepEqual(JSON.parse(suggestion.copy), { header, payload });
+  const malformed = Buffer.from('{"sub":"\xff"}', 'latin1').toString('base64url');
+  assert.deepEqual(devSuggestions(`${encode(header)}.${malformed}.`), []);
 });
 
 const result = (label, kind, match, extra = {}) => ({ label, score: score(kind, match), ...extra });

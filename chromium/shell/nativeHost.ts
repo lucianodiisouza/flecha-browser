@@ -429,6 +429,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
   const DEBUG_HOLDER = 'agent';
   const attached = new Map<number, ReturnType<typeof setTimeout>>();
   const attaching = new Map<number, Promise<void>>();
+  const releasing = new Map<number, Promise<void>>();
   const consoleLogs = new Map<number, Array<{ level: string; message: string; source: string; time: number }>>();
 
   function keepAttached(chromeId: number) {
@@ -447,9 +448,15 @@ export function registerNativeHost(ctx: NativeHostContext) {
   }
 
   function releaseAgent(chromeId: number) {
-    // A responsive view can keep the session open. Send the reset before a new agent call can re-enable focus.
-    void send(chromeId, 'Emulation.setFocusEmulationEnabled', { enabled: false });
-    const released = release(chromeId, DEBUG_HOLDER);
+    // A responsive view can keep the session open. The next agent call must set up after these resets.
+    const released = Promise.all([
+      send(chromeId, 'Emulation.setFocusEmulationEnabled', { enabled: false }),
+      send(chromeId, 'Runtime.disable'),
+      send(chromeId, 'Log.disable'),
+    ])
+      .then(() => release(chromeId, DEBUG_HOLDER))
+      .finally(() => releasing.delete(chromeId));
+    releasing.set(chromeId, released);
     forget(chromeId);
     return released;
   }
@@ -503,6 +510,8 @@ export function registerNativeHost(ctx: NativeHostContext) {
   }
 
   function attach(chromeId: number): Promise<void> {
+    const cleanup = releasing.get(chromeId);
+    if (cleanup) return cleanup.then(() => attach(chromeId));
     // Attached counts from the debugger's attach, but commands wait until the tab is awake and set
     // up: a call during that time waits for it too.
     let pending = attaching.get(chromeId);

@@ -27,8 +27,8 @@ const SPACE_EMOJIS = ['🏠', '💼', '🎨', '📚', '🧪', '🎮'];
 const INITIAL_SPACE = { name: 'Personal', emoji: SPACE_EMOJIS[0], color: SPACE_COLORS[0] };
 
 /**
- * A fresh install's Space while still untouched (its first name, emoji and colour, nothing in it
- * and no favorites), which imported Spaces replace instead of joining.
+ * A fresh install's Space while it has its default appearance, no tabs and no favorites.
+ * Imported Spaces replace it.
  */
 export function pristineSpace(s: Pick<BrowserState, 'spaces' | 'favorites' | 'windows' | 'closedWindows'>): SavedSpace | undefined {
   const only = s.spaces.length === 1 ? s.spaces[0] : undefined;
@@ -38,6 +38,7 @@ export function pristineSpace(s: Pick<BrowserState, 'spaces' | 'favorites' | 'wi
     only.emoji === INITIAL_SPACE.emoji &&
     only.color === INITIAL_SPACE.color &&
     !only.isolated &&
+    !only.pinnedCollapsed &&
     !only.pinned.length &&
     !s.favorites.length &&
     [...s.windows, ...s.closedWindows].every((w) => !w.spaces[only.id]?.today.length);
@@ -1170,6 +1171,12 @@ export class Store {
       for (const ws of Object.values(other.spaces)) {
         if (ws.activeTabId === tabId) ws.activeTabId = undefined;
         if (ws.split?.includes(tabId)) {
+          const mirror = ws.split[1];
+          if (ws.splitMode === 'responsive' && ws.today.includes(mirror) && this.state.tabs[mirror]?.device === 'mobile') {
+            ws.today = ws.today.filter((id) => id !== mirror);
+            if (ws.activeTabId === mirror) delete ws.activeTabId;
+            delete this.state.tabs[mirror];
+          }
           delete ws.split;
           delete ws.splitMode;
         }

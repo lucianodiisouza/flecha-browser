@@ -8,6 +8,7 @@ import { isMac } from '../lib/platform';
 import { isEnter } from '../lib/keys';
 import { isUndoKey } from '../lib/undo';
 import { spaceDropBefore } from '../lib/spaceOrder';
+import { canDropToSplit, pageSplitTarget } from '../lib/splitDrop';
 import { EMPTY_ACTIONS, EMPTY_TABS, type Match, type ResultKind, displayUrl, historyQuery, inlineCompletion, matchQuality, rank, score } from '../lib/commandBar';
 import { suggestable, suggestionRequests } from '../lib/suggest';
 import { searchUrl, webAddress } from '../lib/url';
@@ -137,7 +138,7 @@ function render(s: UiState) {
   // never draws the empty state, the new tab page always does.
   renderEmptyState(s, space, surface === 'newtab' || (!active && surface !== 'panel'));
 
-  $('favorites').replaceChildren(
+  if (!draggedTab) $('favorites').replaceChildren(
     ...s.favorites
       .map((id) => s.tabs[id])
       .filter(Boolean)
@@ -158,8 +159,8 @@ function render(s: UiState) {
   title.dataset.spaceId = space.id;
   $('space-isolated').hidden = !space.isolated;
 
-  // Re-rendering would throw away a tab or folder name being typed in place.
-  if (!document.querySelector('#scroll [contenteditable="true"]')) {
+  // Keep the native drag source and any name being typed in place.
+  if (!draggedTab && !document.querySelector('#scroll [contenteditable="true"]')) {
     $('pinned').replaceChildren(...space.pinned.map((node) => renderNode(node, space, undefined)));
     $('today').replaceChildren(...todayRows(s, space));
     renderAgentFolder(s, space);
@@ -169,6 +170,7 @@ function render(s: UiState) {
   $('btn-toggle-pinned').setAttribute('aria-expanded', String(!space.pinnedCollapsed));
   $('pinned-count').hidden = !space.pinnedCollapsed || !space.pinned.length;
   $('pinned-count').textContent = String(space.pinned.length);
+  if (draggedTab) showSplitDrop(draggedTab);
 
   $('spaces').replaceChildren(
     ...s.spaces.map((sp) =>
@@ -620,7 +622,7 @@ function spaceDrag(s: UiState, spaceId: string): Props {
 
 function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget | undefined) {
   el.dataset.tabId = tab.id;
-  el.draggable = true;
+  el.draggable = tab.device !== 'mobile';
   el.addEventListener('click', () => api.activate(tab.id));
   el.addEventListener('auxclick', (e) => e.button === 1 && api.close(tab.id));
   el.addEventListener('contextmenu', (e) => {
@@ -628,6 +630,7 @@ function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget | undefined) 
     api.tabMenu(tab.id);
   });
   el.addEventListener('dragstart', (e) => {
+    if (tab.device === 'mobile') return e.preventDefault();
     draggedTab = tab.id;
     e.dataTransfer!.setData(DRAG_TYPE, tab.id);
     e.dataTransfer!.effectAllowed = 'move';
@@ -636,10 +639,11 @@ function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget | undefined) 
     showSplitDrop(tab.id);
   });
   el.addEventListener('dragend', () => {
+    if (draggedTab !== tab.id) return;
     draggedTab = undefined;
     $('favorites').classList.remove('show-empty');
-    $('pinned').hidden = !!state?.spaces.find((space) => space.id === state?.activeSpaceId)?.pinnedCollapsed;
     hideSplitDrop();
+    if (state) render(state);
   });
   if (target) acceptDrops(el, target, 'drop-before', el.classList.contains('row') && tab.device !== 'mobile' ? tab.id : undefined);
 }
@@ -647,7 +651,7 @@ function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget | undefined) 
 function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-over', splitTarget?: string) {
   const clear = () => el.classList.remove(hoverClass, 'drop-split-left', 'drop-split-right');
   const splitSide = (e: DragEvent): 'left' | 'right' | undefined => {
-    if (!splitTarget || !draggedTab || splitTarget === draggedTab || state?.tabs[draggedTab]?.device === 'mobile') return;
+    if (!draggedTab || !state || !canDropToSplit(state.tabs, draggedTab, splitTarget)) return;
     const rect = el.getBoundingClientRect();
     // The split zones follow upstream #13. Top and bottom remain available for moving tabs.
     if (e.clientY - rect.top <= 7 || rect.bottom - e.clientY <= 7) return;
@@ -1524,7 +1528,8 @@ const splitDrop = $('split-drop');
 /** Drop zones over the page while a tab is dragged, unless it's the tab already on screen. */
 function showSplitDrop(tabId: string) {
   const space = state?.spaces.find((s) => s.id === state!.activeSpaceId);
-  if (!space?.activeTabId || space.activeTabId === tabId || (space.split?.includes(tabId) && space.split.includes(space.activeTabId))) return;
+  if (!state || !space || !canDropToSplit(state.tabs, tabId, pageSplitTarget(space)) || space.split?.includes(tabId)) return hideSplitDrop();
+  if (!splitDrop.hidden) return;
   // Where the page is: right of the docked sidebar, else the whole window inside the gap.
   const left = document.body.dataset.sidebar === 'docked' ? $('sidebar').offsetWidth : 8;
   Object.assign(splitDrop.style, { left: `${left}px`, top: '8px', right: '8px', bottom: '8px' });
@@ -1762,6 +1767,7 @@ $('sidebar').addEventListener('contextmenu', (e) => {
 
 acceptDrops($('favorites'), { zone: 'favorites' });
 acceptDrops($('pinned'), { zone: 'pinned' });
+acceptDrops($('pinned-header'), { zone: 'pinned' });
 $('btn-toggle-pinned').onclick = () => {
   const space = state?.spaces.find((item) => item.id === state?.activeSpaceId);
   if (space) api.updateSpace(space.id, { pinnedCollapsed: !space.pinnedCollapsed });

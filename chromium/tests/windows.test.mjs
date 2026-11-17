@@ -18,11 +18,11 @@ test('a targeted split uses the chosen row even when another tab is active', () 
   const { store, first, second } = twoWindows();
   const left = store.addTab('https://example.com/left', { windowId: first });
   const right = store.addTab('https://example.com/right', { windowId: first });
-  store.addTab('https://example.com/active', { windowId: first });
+  const unrelated = store.addTab('https://example.com/active', { windowId: first });
   const elsewhere = store.addTab('https://example.com/elsewhere', { windowId: second });
   store.splitWith(left.id, 'left', first, right.id);
   assert.deepEqual(store.activeSpaceIn(first).split, [left.id, right.id]);
-  store.splitWith(left.id, 'right', first, elsewhere.id);
+  store.splitWith(unrelated.id, 'right', first, elsewhere.id);
   assert.deepEqual(store.activeSpaceIn(first).split, [left.id, right.id]);
   assert.equal(store.activeSpaceIn(second).split, undefined);
 });
@@ -245,6 +245,26 @@ test('a split with a pinned tab shown in another window takes it from there', ()
   assert.equal(store.windowShowing(pinned.id), first);
   assert.equal(store.activeSpaceIn(second).split, undefined);
   assert.notEqual(store.activeSpaceIn(second).activeTabId, pinned.id);
+});
+
+test('taking a pinned target from a responsive split disposes of its phone mirror', () => {
+  const { store, first, second } = twoWindows();
+  const pinned = store.addTab('https://example.com/pin', { windowId: second });
+  store.togglePin(pinned.id, second);
+  const mirror = store.openResponsive(second);
+  store.activate(mirror, { windowId: second });
+  const source = store.addTab('https://example.com/source', { windowId: first });
+
+  store.splitWith(source.id, 'right', first, pinned.id);
+
+  assert.deepEqual(store.activeSpaceIn(first).split, [pinned.id, source.id]);
+  const displaced = store.activeSpaceIn(second);
+  assert.equal(displaced.split, undefined);
+  assert.equal(displaced.splitMode, undefined);
+  assert.equal(displaced.activeTabId, undefined);
+  assert.deepEqual(displaced.today, []);
+  assert.equal(store.state.tabs[mirror], undefined);
+  assert.deepEqual(store.state.archive, []);
 });
 
 test('each window hides or shows its own sidebar; new windows start as the last choice', () => {

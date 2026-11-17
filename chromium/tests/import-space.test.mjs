@@ -32,6 +32,15 @@ test('a Space is kept when a closed window holds its only tabs, so reopening tha
   assert.equal(store.activeTabIn(reopened.id)?.id, opened.id);
 });
 
+test('import keeps an empty Personal Space with Pinned folded', () => {
+  const store = newStore();
+  const [original] = store.state.spaces;
+  store.updateSpace(original.id, { pinnedCollapsed: true });
+  store.importSpaces([bookmarkSpace()], { mode: 'merge' });
+  assert.deepEqual(store.state.spaces.map((s) => s.id), [original.id, spaceNamed(store, 'Imported').id]);
+  assert.equal(store.state.spaces[0].pinnedCollapsed, true);
+});
+
 test('a Space is kept when favorites are its only tabs', () => {
   const store = newStore();
   const [original] = store.state.spaces;

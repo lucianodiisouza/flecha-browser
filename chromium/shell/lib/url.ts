@@ -36,15 +36,18 @@ export function resolveInput(raw: string, engine?: SearchEngineId): string {
 export function webAddress(raw: string): string | undefined {
   const input = raw.trim();
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input) || /^(about|data|file|mailto):/i.test(input)) return input;
-  if (/^(localhost|[a-z0-9.-]+\.localhost|(?:\d{1,3}\.){3}\d{1,3}|\[::1\])(?=[:/?#]|$)/i.test(input)) {
-    if (/\s/.test(input)) return undefined;
+  const local = /^(localhost|[a-z0-9.-]+\.localhost|(?:\d{1,3}\.){3}\d{1,3}|\[::1\])(?=[:/?#]|$)/i.exec(input);
+  if (local) {
+    const [authority] = input.split(/[/?#]/, 1);
+    if (!/^(?::\d+)?$/.test(authority.slice(local[0].length))) return undefined;
+    // WHATWG URL interprets a zero-padded IPv4 octet as octal.
+    if (/(?:^|\.)0\d/.test(local[0]) && /^\d+\.[\d.]+$/.test(local[0])) return undefined;
     try {
       const url = new URL(`http://${input}`);
-      if (!url.username && !url.password) return `http://${input}`;
+      return /\s/.test(input) ? url.href : `http://${input}`;
     } catch {
       return undefined;
     }
-    return undefined;
   }
   if (!/\s/.test(input) && /^[^/]+\.[a-z]{2,}(:\d+)?(\/.*)?$/i.test(input)) return `https://${input}`;
   return undefined;

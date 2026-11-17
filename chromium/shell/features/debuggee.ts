@@ -24,27 +24,35 @@ export function onDebuggerDetach(fn: (tabId: number, reason: string) => void) {
 
 /** Shares the attachment and preserves Chromium's error for callers that explain refusals. */
 export async function acquire(tabId: number, holder: string): Promise<void> {
-  const detach = detaching.get(tabId);
-  if (detach) await detach;
-  const set = holders.get(tabId);
-  if (set) {
-    set.add(holder);
-    return attaching.get(tabId);
+  let owners = holders.get(tabId);
+  if (!owners) {
+    const queued = new Set<string>();
+    holders.set(tabId, queued);
+    owners = queued;
+    const attach = (detaching.get(tabId) ?? Promise.resolve())
+      .then(() => {
+        if (holders.get(tabId) !== queued) return;
+        if (!queued.size) {
+          holders.delete(tabId);
+          return;
+        }
+        return chrome.debugger.attach({ tabId }, PROTOCOL).catch((err: Error) => {
+          // Attached already by a previous background that went to sleep.
+          if (!/already attached/i.test(String(err?.message ?? err))) throw err;
+        });
+      })
+      .catch((err: unknown) => {
+        if (holders.get(tabId) === queued) holders.delete(tabId);
+        throw err;
+      })
+      .finally(() => {
+        if (attaching.get(tabId) === attach) attaching.delete(tabId);
+      });
+    attaching.set(tabId, attach);
   }
-  const owners = new Set([holder]);
-  holders.set(tabId, owners);
-  const attach = chrome.debugger
-    .attach({ tabId }, PROTOCOL)
-    .catch((err: Error) => {
-      // Attached already (by a previous background that went to sleep): keep using it.
-      if (/already attached/i.test(String(err?.message ?? err))) return;
-      if (holders.get(tabId) === owners) holders.delete(tabId);
-      throw err;
-    }).finally(() => {
-      if (attaching.get(tabId) === attach) attaching.delete(tabId);
-    });
-  attaching.set(tabId, attach);
-  return attach;
+  owners.add(holder);
+  await attaching.get(tabId);
+  if (holders.get(tabId) !== owners || !owners.has(holder)) throw new Error('Debugger attachment was released');
 }
 
 /** Resolves false when Chromium refuses to attach. */
