@@ -286,6 +286,12 @@ export function shortcutMap(state: Store['state']): Record<string, string> {
   }
   // ⌘O in a Flechinha: Open in Flecha, as in the Electron spike (the toolbar's button says so).
   map['CmdOrCtrl+O'] = 'openInFlecha';
+  // Chromium's other zoom keys, ⌘⇧= (⌘+) and ⌘⇧−, are a slip away from split's ⌃⇧= and ⌃⇧−,
+  // which the welcome tour asks for. Left to Chromium, they zoomed the new tab page, and with
+  // it the sidebar, which shares its origin. Flecha's own zoom takes them, and leaves the new
+  // tab page alone; your shortcuts, set after, still win.
+  map['CmdOrCtrl+Shift+='] = 'zoomIn';
+  map['CmdOrCtrl+Shift+-'] = 'zoomOut';
   for (const { id } of SHORTCUTS) {
     const keys = keysFor(state, id);
     if (keys) map[keys] = id;
