@@ -449,6 +449,8 @@ export interface FlechaApi {
   updateSpace(spaceId: string, patch: { name?: string; emoji?: string; color?: string }): void;
   setPinnedCollapsed(spaceId: string, collapsed: boolean): void;
   setLocalServersCollapsed(collapsed: boolean): void;
+  /** Tabs ⌘- or ⇧-clicked in the sidebar, in sidebar order; ⌘⇧C and ⌥⌘C copy all of them. */
+  setTabSelection(tabIds: string[]): void;
   /** A folder at the end of the active Space's pinned tabs. */
   newFolder(): void;
   /** A new folder in the tab's Space, with the tab (pinned first, if it wasn't) inside. */

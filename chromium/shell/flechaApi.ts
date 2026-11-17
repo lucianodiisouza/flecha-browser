@@ -106,6 +106,7 @@ const api: FlechaApi = {
   updateSpace: cmd('updateSpace'),
   setPinnedCollapsed: cmd('setPinnedCollapsed'),
   setLocalServersCollapsed: cmd('setLocalServersCollapsed'),
+  setTabSelection: cmd('setTabSelection'),
   newFolder: cmd('newFolder'),
   moveToNewFolder: cmd('moveToNewFolder'),
   ignoreLocalPort: cmd('ignoreLocalPort'),

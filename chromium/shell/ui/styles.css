@@ -677,6 +677,12 @@ body {
   background: var(--fill-hover);
 }
 
+.row.selected,
+.fav.selected {
+  background: color-mix(in srgb, var(--blue) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 45%, transparent);
+}
+
 .row.active {
   background: var(--fill-active);
   box-shadow: var(--shadow-row);

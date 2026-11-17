@@ -506,7 +506,14 @@ let activeDraggedTabId: string | undefined;
 function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget) {
   el.dataset.tabId = tab.id;
   el.draggable = true;
-  el.addEventListener('click', () => api.activate(tab.id));
+  el.classList.toggle('selected', selectedTabIds.has(tab.id));
+  el.addEventListener('click', (e) => {
+    // ⌘-click picks tabs one by one, ⇧-click a run of them; ⌘⇧C then copies all their links.
+    if (e.metaKey || e.ctrlKey) return toggleTabSelection(tab.id);
+    if (e.shiftKey) return selectTabRange(tab.id);
+    clearTabSelection();
+    api.activate(tab.id);
+  });
   el.addEventListener('auxclick', (e) => e.button === 1 && api.close(tab.id));
   el.addEventListener('contextmenu', (e) => {
     e.preventDefault();
@@ -535,6 +542,50 @@ function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget) {
   });
   acceptTabDrops(el, tab, target);
 }
+
+// ---- selecting several tabs -------------------------------------------------------
+
+const selectedTabIds = new Set<string>();
+let selectionAnchor: string | undefined;
+
+/** The sidebar's tabs, top to bottom (favorites, pinned, today). */
+function sidebarTabIds() {
+  return [...document.querySelectorAll<HTMLElement>('#sidebar [data-tab-id]')].map((el) => el.dataset.tabId!);
+}
+
+function syncTabSelection() {
+  for (const el of document.querySelectorAll<HTMLElement>('#sidebar [data-tab-id]')) el.classList.toggle('selected', selectedTabIds.has(el.dataset.tabId!));
+  api.setTabSelection(sidebarTabIds().filter((id) => selectedTabIds.has(id)));
+}
+
+function toggleTabSelection(id: string) {
+  // The tab you're on counts as picked, so ⌘-clicking a second one selects two.
+  const active = activeSpace()?.activeTabId;
+  if (!selectedTabIds.size && active && active !== id) selectedTabIds.add(active);
+  if (selectedTabIds.has(id)) selectedTabIds.delete(id);
+  else selectedTabIds.add(id);
+  selectionAnchor = id;
+  syncTabSelection();
+}
+
+function selectTabRange(id: string) {
+  const ids = sidebarTabIds();
+  const from = ids.indexOf(selectionAnchor ?? activeSpace()?.activeTabId ?? id);
+  const to = ids.indexOf(id);
+  if (from < 0 || to < 0) return toggleTabSelection(id);
+  selectedTabIds.clear();
+  for (const tabId of ids.slice(Math.min(from, to), Math.max(from, to) + 1)) selectedTabIds.add(tabId);
+  syncTabSelection();
+}
+
+function clearTabSelection() {
+  selectionAnchor = undefined;
+  if (!selectedTabIds.size) return;
+  selectedTabIds.clear();
+  syncTabSelection();
+}
+
+document.addEventListener('keydown', (e) => e.key === 'Escape' && clearTabSelection());
 
 function acceptTabDrops(el: HTMLElement, tab: TabInfo, target: DropTarget) {
   const clearHover = () => el.classList.remove('drop-before', 'drop-after', 'drop-split-left', 'drop-split-right', 'drag-over');

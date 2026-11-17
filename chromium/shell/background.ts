@@ -10,7 +10,7 @@ import { Store, type StatePersistence } from '../shared/store';
 import { resolveInput, searchEngine } from './lib/url';
 import { shortcutHints, type ShortcutId } from './lib/shortcuts';
 import { describe as describeEnvironment } from './lib/environments';
-import type { BrowserState, DropTarget, SearchEngineId, UiState } from '../shared/types';
+import type { BrowserState, DropTarget, SearchEngineId, TabInfo, UiState } from '../shared/types';
 import { broadcast, call, handle, listen, onConnect } from './hub';
 import type { MenuRun } from './protocol';
 import type { MenuEntry } from './settingsUi';
@@ -648,6 +648,9 @@ async function start() {
     closeTabs: (id: string, which: string) => void unload(store.closeTodayTabs(id, which === 'others' ? 'others' : 'below')),
     updateSpace: (id: string, patch: { name?: string; emoji?: string; color?: string }) => store.updateSpace(id, patch ?? {}),
     setPinnedCollapsed: (id: string, collapsed: boolean) => store.setPinnedCollapsed(String(id), !!collapsed),
+    setTabSelection: (ids: string[]) => {
+      selectedTabIds = Array.isArray(ids) ? ids.map(String).filter((id) => store.state.tabs[id]) : [];
+    },
     setLocalServersCollapsed: (collapsed: boolean) => store.setLocalServers({ collapsed: !!collapsed }),
     ignoreLocalPort: (port: number) => store.setLocalServers({ ignoredPorts: [...(store.state.ignoredLocalPorts ?? []), Number(port)] }),
     // Its open tabs reopen in the other partition (sync() finds them in the wrong one).
@@ -785,6 +788,18 @@ async function start() {
     if (tab) return fn(tab);
   };
 
+  /** Tabs selected in the sidebar (⌘- or ⇧-click), in sidebar order. Not saved. */
+  let selectedTabIds: string[] = [];
+  const selectedTabs = () => selectedTabIds.map((id) => store.state.tabs[id]).filter((t): t is NonNullable<typeof t> => !!t);
+  /** ⌘⇧C and ⌥⌘C: every selected tab when more than one is, else the active tab. */
+  const copyTabs = (one: (tab: TabInfo) => string, many: (tabs: TabInfo[]) => string, noun: string) => () => {
+    const tabs = selectedTabs();
+    if (tabs.length > 1) return copyToClipboard(many(tabs), `${tabs.length} ${noun}s copied`);
+    const tab = store.activeTab;
+    if (tab) return copyToClipboard(one(tab), `${noun[0].toUpperCase()}${noun.slice(1)} copied`);
+  };
+  const markdownLink = (tab: TabInfo) => `[${tab.customTitle ?? tab.title}](${tab.url})`;
+
   const commands: Record<ShortcutId | 'closePeek', () => unknown> = {
     newTab: () => openPalette('new-tab'),
     openLocation: () => openPalette('navigate'),
@@ -809,8 +824,8 @@ async function start() {
     duplicateTab: withTab((tab) => openTab(tab.url)),
     muteTab: withTab((tab) => toggleMute(tab.id)),
     clearToday: () => call('clearToday'),
-    copyLink: withTab((tab) => copyToClipboard(tab.url, 'Link copied')),
-    copyMarkdown: withTab((tab) => copyToClipboard(`[${tab.customTitle ?? tab.title}](${tab.url})`, 'Markdown link copied')),
+    copyLink: copyTabs((tab) => tab.url, (tabs) => tabs.map((t) => t.url).join('\n'), 'link'),
+    copyMarkdown: copyTabs(markdownLink, (tabs) => tabs.map((t) => `- ${markdownLink(t)}`).join('\n'), 'Markdown link'),
     screenshot: () => call('capturePage'),
     nextSpace: () => cycleSpace(1),
     previousSpace: () => cycleSpace(-1),
