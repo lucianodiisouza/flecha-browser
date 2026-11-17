@@ -357,6 +357,9 @@ export class Store {
       color: SPACE_COLORS[n % SPACE_COLORS.length],
       pinned: [],
       today: [],
+      // New Spaces keep their own cookies and logins, as people expect from Arc's Spaces and profiles;
+      // the Space editor, which opens right after, has the switch to share them instead.
+      isolated: true,
     };
     this.state.spaces.push(space);
     if (activate) this.state.activeSpaceId = space.id;
