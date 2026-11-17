@@ -42,6 +42,7 @@ export interface SavedSpace {
   emoji?: string;
   color: string;
   pinned: PinnedNode[];
+  pinnedCollapsed?: boolean;
   /** Separate cookies, storage and logins from the other Spaces. */
   isolated?: boolean;
 }
@@ -538,7 +539,7 @@ export interface FlechaApi {
   stop(): void;
   switchSpace(spaceId: string): void;
   newSpace(): void;
-  updateSpace(spaceId: string, patch: { name?: string; emoji?: string; color?: string }): void;
+  updateSpace(spaceId: string, patch: { name?: string; emoji?: string; color?: string; pinnedCollapsed?: boolean }): void;
   setSpaceIsolated(spaceId: string, isolated: boolean): void;
   deleteSpace(spaceId: string): void;
   /** Puts the Space before `beforeSpaceId`, or last. */
@@ -586,7 +587,7 @@ export interface FlechaApi {
   splitWith(tabId: string): void;
   /** While a tab is dragged, the sidebar UI covers the page so it can be dropped there. */
   setTabDragging(dragging: boolean): void;
-  dropToSplit(tabId: string, side: 'left' | 'right'): void;
+  dropToSplit(tabId: string, side: 'left' | 'right', withTabId?: string): void;
   splitNew(input: string): void;
   closePeek(): void;
   openDownload(id: string): void;

@@ -35,8 +35,17 @@ export function resolveInput(raw: string, engine?: SearchEngineId): string {
 /** What was typed as a URL, completed (`github.com` → `https://github.com`); undefined when it reads as a search. */
 export function webAddress(raw: string): string | undefined {
   const input = raw.trim();
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input) || /^(about|data|file):/i.test(input)) return input;
-  if (/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/.*)?$/i.test(input)) return `http://${input}`;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input) || /^(about|data|file|mailto):/i.test(input)) return input;
+  if (/^(localhost|[a-z0-9.-]+\.localhost|(?:\d{1,3}\.){3}\d{1,3}|\[::1\])(?=[:/?#]|$)/i.test(input)) {
+    if (/\s/.test(input)) return undefined;
+    try {
+      const url = new URL(`http://${input}`);
+      if (!url.username && !url.password) return `http://${input}`;
+    } catch {
+      return undefined;
+    }
+    return undefined;
+  }
   if (!/\s/.test(input) && /^[^/]+\.[a-z]{2,}(:\d+)?(\/.*)?$/i.test(input)) return `https://${input}`;
   return undefined;
 }

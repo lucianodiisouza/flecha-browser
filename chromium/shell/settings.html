@@ -23,6 +23,7 @@
       <button class="nav-item" data-pane="tabs-spaces"><span class="nav-icon indigo"><i data-icon="stack"></i></span>Tabs &amp; Spaces</button>
       <button class="nav-item" data-pane="privacy"><span class="nav-icon blue"><i data-icon="lock"></i></span>Privacy</button>
       <button class="nav-item" data-pane="downloads"><span class="nav-icon green"><i data-icon="download"></i></span>Downloads</button>
+      <button class="nav-item" data-pane="import"><span class="nav-icon teal"><i data-icon="import"></i></span>Import</button>
       <button class="nav-item" data-pane="video"><span class="nav-icon purple"><i data-icon="sparkle"></i></span>Video</button>
       <div class="nav-label">Developer</div>
       <button class="nav-item" data-pane="environments"><span class="nav-icon amber"><i data-icon="code"></i></span>Environments</button>
@@ -37,6 +38,18 @@
       <header class="pane-titlebar"><h1 id="pane-title"></h1></header>
 
       <section id="search-results" class="pane" hidden></section>
+
+      <section class="pane" data-pane="import">
+        <div class="card">
+          <div class="row">
+            <div class="row-text">
+              <strong>Import from another browser</strong>
+              <small>Bring over bookmarks, history, or Spaces. You can also choose an exported bookmarks file.</small>
+            </div>
+            <button id="import-browser" class="button" type="button">Import…</button>
+          </div>
+        </div>
+      </section>
 
       <section class="pane" data-pane="general">
         <div class="card">

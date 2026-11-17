@@ -14,6 +14,29 @@ function twoWindows() {
   return { store, first, second, personal: store.state.spaces[0].id, work: work.id };
 }
 
+test('a targeted split uses the chosen row even when another tab is active', () => {
+  const { store, first, second } = twoWindows();
+  const left = store.addTab('https://example.com/left', { windowId: first });
+  const right = store.addTab('https://example.com/right', { windowId: first });
+  store.addTab('https://example.com/active', { windowId: first });
+  const elsewhere = store.addTab('https://example.com/elsewhere', { windowId: second });
+  store.splitWith(left.id, 'left', first, right.id);
+  assert.deepEqual(store.activeSpaceIn(first).split, [left.id, right.id]);
+  store.splitWith(left.id, 'right', first, elsewhere.id);
+  assert.deepEqual(store.activeSpaceIn(first).split, [left.id, right.id]);
+  assert.equal(store.activeSpaceIn(second).split, undefined);
+});
+
+test('a folded Pinned section is shared by its Space and survives a save', () => {
+  const { store, first, second, personal, work } = twoWindows();
+  store.updateSpace(personal, { pinnedCollapsed: true });
+  assert.equal(store.windowView(first).spaces.find((space) => space.id === personal).pinnedCollapsed, true);
+  assert.equal(store.windowView(second).spaces.find((space) => space.id === personal).pinnedCollapsed, true);
+  const saved = decodeState(store.serialize());
+  assert.equal(saved.spaces.find((space) => space.id === personal).pinnedCollapsed, true);
+  assert.equal(saved.spaces.find((space) => space.id === work).pinnedCollapsed, undefined);
+});
+
 test('a version 1 state becomes one window with each Space\'s Today tabs and selection', () => {
   const v1 = {
     version: 1,

@@ -1,5 +1,6 @@
 const randomUUID = () => crypto.randomUUID();
 import type { ActiveEnvironment, Environment, EnvironmentTarget } from '../../shared/types';
+import { webAddress } from './url';
 
 /**
  * Environments group the origins one project lives on (local, staging, production…).
@@ -45,9 +46,12 @@ export function describe(url: string, environments: Environment[] = []): ActiveE
 
 /** Production is red so it is never mistaken for a safe place to click around. */
 function tone(target: EnvironmentTarget): ActiveEnvironment['tone'] {
-  const text = `${target.label} ${target.origin}`.toLowerCase();
-  if (/localhost|127\.0\.0\.1|\blocal\b|\.test\b|\.local\b/.test(text)) return 'local';
-  if (/stag|preview|qa|test|dev|sandbox|uat/.test(text)) return 'staging';
+  const address = target.origin.replace(/^[a-z]+:\/\//i, '').toLowerCase();
+  const label = target.label.toLowerCase() === address ? '' : target.label.toLowerCase();
+  if (/\bprod(uction)?\b/.test(label)) return 'production';
+  if (/localhost|127\.0\.0\.1|\blocal\b|\.test\b|\.local\b/.test(`${label} ${address}`)) return 'local';
+  const host = address.replace(/:\d+$/, '').replace(/\.[^.]+$/, '');
+  if (/\b(stag(e|ing)|preview|qa|test(ing)?|dev(elop(ment)?)?|sandbox|uat)\b/.test(`${label} ${host}`)) return 'staging';
   return 'production';
 }
 
@@ -59,9 +63,10 @@ export function parseTargets(text: string): EnvironmentTarget[] {
     if (!parts.length) continue;
     const raw = parts[parts.length - 1];
     try {
-      const origin = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : `https://${raw}`).origin;
-      const label = parts.length > 1 ? parts.slice(0, -1).join(' ') : new URL(origin).host;
-      targets.push({ label, origin });
+      const url = new URL(webAddress(raw) ?? `https://${raw}`);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') continue;
+      const label = parts.length > 1 ? parts.slice(0, -1).join(' ') : url.host;
+      targets.push({ label, origin: url.origin });
     } catch {
       // Skip lines that aren't a URL.
     }

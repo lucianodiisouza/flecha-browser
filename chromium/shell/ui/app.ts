@@ -10,7 +10,7 @@ import { isUndoKey } from '../lib/undo';
 import { spaceDropBefore } from '../lib/spaceOrder';
 import { EMPTY_ACTIONS, EMPTY_TABS, type Match, type ResultKind, displayUrl, historyQuery, inlineCompletion, matchQuality, rank, score } from '../lib/commandBar';
 import { suggestable, suggestionRequests } from '../lib/suggest';
-import { searchUrl } from '../lib/url';
+import { searchUrl, webAddress } from '../lib/url';
 import type { MenuEntry } from '../settingsUi';
 import { importFromBrowser, showPageMenu } from '../windowUi';
 import { SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from '../../shared/sidebarWidth';
@@ -33,6 +33,7 @@ const DRAG_TYPE = 'application/x-flecha-tab';
 const SPACE_DRAG_TYPE = 'application/x-flecha-space';
 /** The Space whose button is being dragged: drag events only say what kind of thing it is. */
 let draggedSpace: string | undefined;
+let draggedTab: string | undefined;
 
 let state: UiState | undefined;
 
@@ -163,6 +164,11 @@ function render(s: UiState) {
     $('today').replaceChildren(...todayRows(s, space));
     renderAgentFolder(s, space);
   }
+  $('pinned-header').hidden = incognito;
+  $('pinned').hidden = !!space.pinnedCollapsed && !draggedTab;
+  $('btn-toggle-pinned').setAttribute('aria-expanded', String(!space.pinnedCollapsed));
+  $('pinned-count').hidden = !space.pinnedCollapsed || !space.pinned.length;
+  $('pinned-count').textContent = String(space.pinned.length);
 
   $('spaces').replaceChildren(
     ...s.spaces.map((sp) =>
@@ -622,33 +628,52 @@ function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget | undefined) 
     api.tabMenu(tab.id);
   });
   el.addEventListener('dragstart', (e) => {
+    draggedTab = tab.id;
     e.dataTransfer!.setData(DRAG_TYPE, tab.id);
     e.dataTransfer!.effectAllowed = 'move';
     $('favorites').classList.add('show-empty');
+    $('pinned').hidden = false;
     showSplitDrop(tab.id);
   });
   el.addEventListener('dragend', () => {
+    draggedTab = undefined;
     $('favorites').classList.remove('show-empty');
+    $('pinned').hidden = !!state?.spaces.find((space) => space.id === state?.activeSpaceId)?.pinnedCollapsed;
     hideSplitDrop();
   });
-  if (target) acceptDrops(el, target, 'drop-before');
+  if (target) acceptDrops(el, target, 'drop-before', el.classList.contains('row') && tab.device !== 'mobile' ? tab.id : undefined);
 }
 
-function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-over') {
+function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-over', splitTarget?: string) {
+  const clear = () => el.classList.remove(hoverClass, 'drop-split-left', 'drop-split-right');
+  const splitSide = (e: DragEvent): 'left' | 'right' | undefined => {
+    if (!splitTarget || !draggedTab || splitTarget === draggedTab || state?.tabs[draggedTab]?.device === 'mobile') return;
+    const rect = el.getBoundingClientRect();
+    // The split zones follow upstream #13. Top and bottom remain available for moving tabs.
+    if (e.clientY - rect.top <= 7 || rect.bottom - e.clientY <= 7) return;
+    const x = (e.clientX - rect.left) / rect.width;
+    if (x < 0.25) return 'left';
+    if (x >= 0.4) return 'right';
+  };
   el.addEventListener('dragover', (e) => {
     if (!e.dataTransfer?.types.includes(DRAG_TYPE)) return;
     e.preventDefault();
     e.stopPropagation();
-    el.classList.add(hoverClass);
+    clear();
+    const side = splitSide(e);
+    el.classList.add(side ? `drop-split-${side}` : hoverClass);
   });
-  el.addEventListener('dragleave', () => el.classList.remove(hoverClass));
+  el.addEventListener('dragleave', clear);
   el.addEventListener('drop', (e) => {
-    el.classList.remove(hoverClass);
+    clear();
     const id = e.dataTransfer?.getData(DRAG_TYPE);
     if (!id) return;
     e.preventDefault();
     e.stopPropagation();
-    api.moveTab(id, target);
+    const side = splitSide(e);
+    hideSplitDrop();
+    if (side && splitTarget) api.dropToSplit(id, side, splitTarget);
+    else api.moveTab(id, target);
   });
 }
 
@@ -960,7 +985,7 @@ let completion: ReturnType<typeof inlineCompletion>;
 let mayComplete = false;
 
 function looksLikeUrl(q: string) {
-  return /^[a-z][a-z0-9+.-]*:\/\//i.test(q) || (!/\s/.test(q) && /\.[a-z]{2,}(:\d+)?(\/|$)/i.test(q)) || /^localhost(:\d+)?/.test(q);
+  return webAddress(q) !== undefined;
 }
 
 function openPalette(mode: PaletteMode) {
@@ -1737,6 +1762,10 @@ $('sidebar').addEventListener('contextmenu', (e) => {
 
 acceptDrops($('favorites'), { zone: 'favorites' });
 acceptDrops($('pinned'), { zone: 'pinned' });
+$('btn-toggle-pinned').onclick = () => {
+  const space = state?.spaces.find((item) => item.id === state?.activeSpaceId);
+  if (space) api.updateSpace(space.id, { pinnedCollapsed: !space.pinnedCollapsed });
+};
 acceptDrops($('today'), { zone: 'today' });
 acceptDrops($('btn-newtab'), { zone: 'today' });
 

@@ -15,6 +15,7 @@ import type { AgentResult, AgentTab, AgentToolName } from '../shared/agentTools'
 import { applyBrowserImport, importOptions, previewBrowserImport, type BrowserImportData } from '../shared/importApply';
 import { HOST_NAME, type HostMethods, type ToHost, type ToShell } from '../native-host/protocol';
 import { broadcast, handle } from './hub';
+import { acquire, release } from './features/debuggee';
 
 export interface NativeHostContext {
   store: Store;
@@ -425,6 +426,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
   // attached, the page acts focused although its tab isn't on screen, and tab sleep leaves it be.
 
   const DEBUG_IDLE = 120_000;
+  const DEBUG_HOLDER = 'agent';
   const attached = new Map<number, ReturnType<typeof setTimeout>>();
   const attaching = new Map<number, Promise<void>>();
   const consoleLogs = new Map<number, Array<{ level: string; message: string; source: string; time: number }>>();
@@ -433,7 +435,10 @@ export function registerNativeHost(ctx: NativeHostContext) {
     clearTimeout(attached.get(chromeId));
     attached.set(
       chromeId,
-      setTimeout(() => void chrome.debugger.detach({ tabId: chromeId }).catch(() => undefined).finally(() => forget(chromeId)), DEBUG_IDLE),
+      setTimeout(() => {
+        forget(chromeId);
+        void release(chromeId, DEBUG_HOLDER);
+      }, DEBUG_IDLE),
     );
   }
 
@@ -502,7 +507,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
       return Promise.resolve();
     }
     pending = (async () => {
-      await chrome.debugger.attach({ tabId: chromeId }, '1.3');
+      await acquire(chromeId, DEBUG_HOLDER);
       keepAttached(chromeId);
       consoleLogs.set(chromeId, []);
       try {
@@ -517,8 +522,8 @@ export function registerNativeHost(ctx: NativeHostContext) {
       } catch (error) {
         // A tab left half set up would skip the setup on later calls; let go so the next call
         // starts over. onDetach doesn't fire for our own detach, so forget it here.
-        await chrome.debugger.detach({ tabId: chromeId }).catch(() => undefined);
         forget(chromeId);
+        await release(chromeId, DEBUG_HOLDER);
         throw error;
       }
     })()

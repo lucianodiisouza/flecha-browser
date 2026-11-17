@@ -180,6 +180,7 @@ const TAB_FIELDS: Record<string, Check> = {
 const SPACE_FIELDS: Record<string, Check> = {
   emoji: isString,
   isolated: isBoolean,
+  pinnedCollapsed: isBoolean,
 };
 
 const WINDOW_SPACE_FIELDS: Record<string, Check> = {

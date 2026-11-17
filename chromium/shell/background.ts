@@ -728,16 +728,20 @@ async function start() {
   }
 
   /** A tab dropped on the page: show it beside the page, on the side it was dropped. */
-  function dropToSplit(tabId: string, side: 'left' | 'right') {
+  function dropToSplit(tabId: string, side: 'left' | 'right', withTabId?: string) {
     const windowId = here();
     const chromeWindowId = hereChrome();
     frameOf(chromeWindowId).tabDragging = false;
     sendFrame(chromeWindowId);
     const space = store.activeSpaceIn(windowId);
-    if (!space.activeTabId || space.activeTabId === tabId) return store.activate(tabId, { windowId });
+    const target = withTabId ?? space.activeTabId;
+    if (!withTabId && (!target || target === tabId)) return store.activate(tabId, { windowId });
+    if (!target || target === tabId || store.state.tabs[target]?.device === 'mobile' || store.state.tabs[tabId]?.device === 'mobile') return;
+    const ids = store.allTabIds(space, windowId);
+    if (!ids.includes(tabId) || !ids.includes(target)) return;
     // A responsive mirror only exists for its split; it goes away when something else takes its place.
     if (space.splitMode === 'responsive') exitSplit(windowId);
-    store.splitWith(tabId, side, windowId);
+    store.splitWith(tabId, side, windowId, target);
   }
 
   async function refreshNav(windowId: string) {
@@ -1140,7 +1144,7 @@ async function start() {
       if (atHome && chromeId !== undefined) void chrome.tabs.update(chromeId, { url });
     }),
     closeTabs: (id: string, which: string) => void unload(store.closeTodayTabs(id, which === 'others' ? 'others' : 'below')),
-    updateSpace: (id: string, patch: { name?: string; emoji?: string; color?: string }) => store.updateSpace(id, patch ?? {}),
+    updateSpace: (id: string, patch: Parameters<Store['updateSpace']>[1]) => store.updateSpace(id, patch ?? {}),
     // Its open tabs reopen in the other partition (sync() finds them in the wrong one).
     setSpaceIsolated: spacesOnly((id: string, isolated: boolean) => {
       if (!canIsolate) return broadcastTo(hereChrome(), 'flash', 'Separate cookies aren’t in this build yet');
@@ -1210,7 +1214,8 @@ async function start() {
     },
     splitWith: (id: string) => store.splitWith(id, 'right', here()),
     exitSplit: () => exitSplit(),
-    dropToSplit: (id: string, side: string) => dropToSplit(String(id), side === 'left' ? 'left' : 'right'),
+    dropToSplit: (id: string, side: string, withId?: string) =>
+      dropToSplit(String(id), side === 'left' ? 'left' : 'right', typeof withId === 'string' ? withId : undefined),
     splitNew: (input: string) => {
       const windowId = here();
       store.splitWith(openTab(input, false, windowId).id, 'right', windowId);
@@ -1367,7 +1372,7 @@ async function start() {
     actualSize: () => call('zoom', 0),
     // Owned by other shell modules, which handle a hub command of the same name.
     devTools: () => call('devTools'),
-    responsive: () => call('responsive'),
+    responsive: () => call('toggleResponsive'),
     nextEnvironment: () => call('nextEnvironment'),
     editBoost: () => call('editBoost'),
     closePeek: () => call('closePeek'),
@@ -1417,7 +1422,7 @@ async function start() {
   void refreshDefaultBrowser();
 
   // Boosts, environments, local servers, the responsive view, console errors and ad blocking.
-  features = registerFeatures({ store, broadcastState: sendState, liveTabId: (id) => live.get(id), activeChromeTabId: () => activeChromeId() });
+  features = registerFeatures({ store, broadcastState: sendState, liveTabId: (id) => live.get(id), activeChromeTabId: () => activeChromeId(), windowId: here });
 
   // Imports and the coding-agent bridge, through Flecha's native messaging host. Both are
   // about your regular Spaces, so incognito windows have neither.

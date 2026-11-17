@@ -5,7 +5,31 @@ import { test } from 'node:test';
 import { loadModule } from './load-module.mjs';
 
 const { displayUrl, historyQuery, inlineCompletion, matchQuality, rank, score } = await loadModule('chromium/shell/lib/commandBar.ts');
-const { SEARCH_ENGINES } = await loadModule('chromium/shell/lib/url.ts');
+const { SEARCH_ENGINES, resolveInput, webAddress } = await loadModule('chromium/shell/lib/url.ts');
+const { describe, parseTargets } = await loadModule('chromium/shell/lib/environments.ts');
+const { devSuggestions } = await loadModule('chromium/shell/ui/devCommands.ts');
+
+test('typed development addresses open directly and environment badges follow explicit labels', () => {
+  for (const address of ['192.168.0.10:3000/docs', 'app.localhost:3030', '0.0.0.0:8000', '[::1]:8080']) {
+    assert.equal(resolveInput(address), `http://${address}`);
+  }
+  assert.equal(webAddress('mailto:dev@example.com'), 'mailto:dev@example.com');
+  assert.equal(webAddress('300.10.0.1'), undefined);
+  const targets = parseTargets('prod https://staging.example.com\napp.localhost:3030\nflecha.dev\nlatest.example.com');
+  const envs = [{ id: 'project', name: 'Project', targets }];
+  assert.deepEqual(targets.map(({ origin }) => origin), ['https://staging.example.com', 'http://app.localhost:3030', 'https://flecha.dev', 'https://latest.example.com']);
+  assert.deepEqual(targets.map(({ origin }) => describe(origin, envs).tone), ['production', 'local', 'production', 'production']);
+});
+
+test('developer command lookup ignores inherited properties and decodes UTF-8 JWTs', () => {
+  assert.deepEqual(devSuggestions('constructor hello'), []);
+  assert.deepEqual(devSuggestions('__proto__ hello'), []);
+  const header = { alg: 'none' };
+  const payload = { sub: 'räksmörgås' };
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const [suggestion] = devSuggestions(`${encode(header)}.${encode(payload)}.`);
+  assert.deepEqual(JSON.parse(suggestion.copy), { header, payload });
+});
 
 const result = (label, kind, match, extra = {}) => ({ label, score: score(kind, match), ...extra });
 const labels = (results) => rank(results).map((r) => r.label);

@@ -10,14 +10,23 @@ if (surface === 'window' && typeof chrome.flechaPrivate?.getExtensionActions ===
 async function showExtensionActions() {
   const windowId = await chrome.flechaPrivate.getWindowId();
   const list = document.getElementById('extensions')!;
+  const pins = document.getElementById('extension-pins')!;
+  const toggle = document.getElementById('btn-toggle-extension-pins')!;
   const menuButton = document.getElementById('btn-extensions')!;
   const anchor = (button: HTMLElement) => {
     const r = button.getBoundingClientRect();
     return { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) };
   };
   // A browser without patch 0071 has no extensions menu to show.
-  menuButton.hidden = typeof chrome.flechaPrivate.showExtensionsMenu !== 'function';
-  menuButton.addEventListener('click', () => void chrome.flechaPrivate.showExtensionsMenu(windowId, anchor(menuButton)));
+  const hasMenu = typeof chrome.flechaPrivate.showExtensionsMenu === 'function';
+  menuButton.hidden = !hasMenu;
+  if (hasMenu) menuButton.addEventListener('click', () => void chrome.flechaPrivate.showExtensionsMenu(windowId, anchor(menuButton)));
+  let collapsed = false;
+  toggle.addEventListener('click', () => {
+    collapsed = !collapsed;
+    pins.hidden = collapsed;
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+  });
   // Each action keeps its button, updated in place: a button replaced between a press and its
   // release would lose the click, and badges can change many times a second.
   const buttons = new Map<string, HTMLButtonElement>();
@@ -56,9 +65,10 @@ async function showExtensionActions() {
       .then((all) => all.filter((action) => action.id !== chrome.runtime.id))
       .then((actions) => {
         for (const id of buttons.keys()) if (!actions.some((action) => action.id === id)) buttons.delete(id);
-        const row = [...actions.map(show), menuButton];
+        const row = actions.filter((action) => !hasMenu || action.pinned).map(show);
         // Moved only when the order changed, so a press on a button stays on it.
-        if (row.length !== list.children.length || row.some((button, i) => list.children[i] !== button)) list.replaceChildren(...row);
+        if (row.length !== pins.children.length || row.some((button, i) => pins.children[i] !== button)) pins.replaceChildren(...row);
+        toggle.hidden = !hasMenu || !row.length;
         list.hidden = !actions.length;
       })
       .catch((err) => console.error('Flecha shell: extension actions failed', err))

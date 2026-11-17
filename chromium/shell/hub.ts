@@ -93,15 +93,20 @@ export function onConnect(fn: (port: chrome.runtime.Port, windowId: number | und
 export function listen(ready: Promise<unknown>) {
   chrome.runtime.onConnect.addListener(async (port) => {
     if (port.name !== 'flecha') return;
+    let connected = true;
+    port.onDisconnect.addListener(() => {
+      connected = false;
+      ports.delete(port);
+    });
     // Buffer what arrives while the background is still loading.
     const early: Message[] = [];
     const buffer = (m: Message) => void early.push(m);
     port.onMessage.addListener(buffer);
     await ready;
     port.onMessage.removeListener(buffer);
+    if (!connected) return;
     const windowId = windowOf(port);
     ports.set(port, windowId);
-    port.onDisconnect.addListener(() => ports.delete(port));
     const dispatch = async (message: Message) => {
       if (message.type === 'ping') return;
       if (message.type !== 'cmd' && message.type !== 'invoke') return;
@@ -113,10 +118,10 @@ export function listen(ready: Promise<unknown>) {
       }
       try {
         const value = await asWindow(windowId, () => fn(...message.args));
-        if (message.type === 'invoke') port.postMessage({ type: 'result', id: message.id, value } satisfies Message);
+        if (message.type === 'invoke' && connected) port.postMessage({ type: 'result', id: message.id, value } satisfies Message);
       } catch (err) {
         console.error(`Flecha shell: "${message.name}" failed`, err);
-        if (message.type === 'invoke') port.postMessage({ type: 'result', id: message.id, error: String(err) } satisfies Message);
+        if (message.type === 'invoke' && connected) port.postMessage({ type: 'result', id: message.id, error: String(err) } satisfies Message);
       }
     };
     port.onMessage.addListener(dispatch);

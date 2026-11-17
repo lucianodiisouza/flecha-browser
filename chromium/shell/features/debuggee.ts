@@ -7,7 +7,8 @@
 const PROTOCOL = '1.3';
 
 const holders = new Map<number, Set<string>>();
-const attaching = new Map<number, Promise<boolean>>();
+const attaching = new Map<number, Promise<void>>();
+const detaching = new Map<number, Promise<void>>();
 const detachListeners: Array<(tabId: number, reason: string) => void> = [];
 
 chrome.debugger.onDetach.addListener((source, reason) => {
@@ -21,35 +22,46 @@ export function onDebuggerDetach(fn: (tabId: number, reason: string) => void) {
   detachListeners.push(fn);
 }
 
-/** Attaches for `holder`, if no one had. Resolves false when Chromium refuses (a chrome:// page, say). */
-export async function hold(tabId: number, holder: string): Promise<boolean> {
+/** Shares the attachment and preserves Chromium's error for callers that explain refusals. */
+export async function acquire(tabId: number, holder: string): Promise<void> {
+  const detach = detaching.get(tabId);
+  if (detach) await detach;
   const set = holders.get(tabId);
   if (set) {
     set.add(holder);
-    return (await attaching.get(tabId)) ?? true;
+    return attaching.get(tabId);
   }
-  holders.set(tabId, new Set([holder]));
+  const owners = new Set([holder]);
+  holders.set(tabId, owners);
   const attach = chrome.debugger
     .attach({ tabId }, PROTOCOL)
-    .then(() => true)
     .catch((err: Error) => {
       // Attached already (by a previous background that went to sleep): keep using it.
-      if (/already attached/i.test(String(err?.message ?? err))) return true;
-      holders.delete(tabId);
-      return false;
+      if (/already attached/i.test(String(err?.message ?? err))) return;
+      if (holders.get(tabId) === owners) holders.delete(tabId);
+      throw err;
+    }).finally(() => {
+      if (attaching.get(tabId) === attach) attaching.delete(tabId);
     });
   attaching.set(tabId, attach);
-  const ok = await attach;
-  attaching.delete(tabId);
-  return ok;
+  return attach;
 }
+
+/** Resolves false when Chromium refuses to attach. */
+export const hold = (tabId: number, holder: string): Promise<boolean> => acquire(tabId, holder).then(() => true, () => false);
 
 /** Lets go for `holder`; detaches once no feature holds the tab. */
 export async function release(tabId: number, holder: string) {
   const set = holders.get(tabId);
   if (!set?.delete(holder) || set.size) return;
+  const attach = attaching.get(tabId);
+  if (attach) await attach.catch(() => undefined);
+  if (holders.get(tabId) !== set || set.size) return;
   holders.delete(tabId);
-  await chrome.debugger.detach({ tabId }).catch(() => undefined);
+  const detach = chrome.debugger.detach({ tabId }).catch(() => undefined);
+  detaching.set(tabId, detach);
+  await detach;
+  detaching.delete(tabId);
 }
 
 export const isHeld = (tabId: number, holder: string) => !!holders.get(tabId)?.has(holder);

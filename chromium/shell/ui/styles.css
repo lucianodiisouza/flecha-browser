@@ -327,6 +327,20 @@ body {
   margin: -4px 0;
 }
 
+#extension-pins {
+  display: flex;
+  flex-wrap: wrap;
+  gap: inherit;
+}
+
+#extensions[hidden], #extension-pins[hidden], #extensions button[hidden], #pinned-header[hidden] {
+  display: none;
+}
+
+#btn-toggle-extension-pins[aria-expanded='true'] svg {
+  transform: rotate(90deg);
+}
+
 /* 28px: the size patch 0056 draws each action's icon and badge at. */
 .ext-action {
   display: grid;
@@ -848,6 +862,14 @@ body {
 .drag-over {
   background: var(--fill-hover);
   border-radius: var(--radius-md);
+}
+
+.drop-split-left {
+  background-image: linear-gradient(to right, var(--fill-hover) 50%, transparent 50%);
+}
+
+.drop-split-right {
+  background-image: linear-gradient(to left, var(--fill-hover) 50%, transparent 50%);
 }
 
 /* ---- local servers ------------------------------------------------------ */

@@ -453,15 +453,18 @@ export class Store {
 
   // ---- split view -----------------------------------------------------------------
 
-  /** Puts `tabId` next to the window's active tab, on the right unless `side` says otherwise. */
-  splitWith(tabId: string, side: 'left' | 'right' = 'right', windowId?: string) {
+  /** Puts `tabId` beside the named tab, or beside the active tab when no target is given. */
+  splitWith(tabId: string, side: 'left' | 'right' = 'right', windowId?: string, withTabId?: string) {
     const win = this.window(windowId);
     const ws = this.windowSpace(win.activeSpaceId, win.id);
-    const current = ws.activeTabId;
+    const current = withTabId ?? ws.activeTabId;
     const space = this.savedSpace(win.activeSpaceId);
-    if (!space || !current || current === tabId || !this.allTabIds(space, win.id).includes(tabId)) return;
+    if (!space || !current || current === tabId) return;
+    const ids = this.allTabIds(space, win.id);
+    if (!ids.includes(tabId) || !ids.includes(current)) return;
     // A pinned tab or favorite on screen elsewhere comes here, as when it's activated.
     this.claim(tabId, win);
+    this.claim(current, win);
     ws.split = side === 'left' ? [tabId, current] : [current, tabId];
     delete ws.splitMode;
     ws.activeTabId = tabId;
@@ -643,14 +646,15 @@ export class Store {
     this.changed();
   }
 
-  /** Name, emoji and colour. Invalid values are ignored rather than stored. */
-  updateSpace(spaceId: string, patch: { name?: string; emoji?: string; color?: string }) {
+  /** Updates a Space's name, appearance and sidebar preferences. */
+  updateSpace(spaceId: string, patch: { name?: string; emoji?: string; color?: string; pinnedCollapsed?: boolean }) {
     const space = this.savedSpace(spaceId);
     if (!space) return;
     const name = typeof patch.name === 'string' ? patch.name.trim().slice(0, 40) : '';
     if (name) space.name = name;
     if (typeof patch.emoji === 'string') space.emoji = [...patch.emoji.trim()].slice(0, 2).join('') || undefined;
     if (typeof patch.color === 'string' && /^#[0-9a-f]{6}$/i.test(patch.color)) space.color = patch.color.toLowerCase();
+    if (typeof patch.pinnedCollapsed === 'boolean') space.pinnedCollapsed = patch.pinnedCollapsed;
     this.changed();
   }
 

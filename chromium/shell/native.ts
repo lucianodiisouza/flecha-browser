@@ -9,6 +9,7 @@ import type { Store } from '../shared/store';
 import { SHORTCUTS, fixedShortcuts, keysFor } from './lib/shortcuts';
 import { broadcast, broadcastTo, callerWindow, handle } from './hub';
 import { incognito, sessionKey } from './incognito';
+import { phoneSplitRatio } from './lib/responsiveViewport';
 
 export interface NativeContext {
   store: Store;
@@ -281,7 +282,9 @@ if (has('setSplitRatio')) {
     when((ctx, tabId: number, ratio: number) => {
       const id = ctx.flechaTabId?.(tabId);
       const windowId = id && ctx.store.windowShowing(id);
-      if (windowId && ctx.store.activeSpaceIn(windowId).split?.[0] === id) ctx.store.setSplitRatio(ratio, windowId);
+      if (!windowId) return;
+      const space = ctx.store.activeSpaceIn(windowId);
+      if (space.splitMode !== 'responsive' && space.split?.[0] === id) ctx.store.setSplitRatio(ratio, windowId);
     }),
   );
 }
@@ -292,24 +295,36 @@ function registerSplitRatio(ctx: NativeContext) {
   /** The ratio last applied, by the split's left tab. */
   const sent = new Map<number, number>();
   const apply = () => {
-    for (const win of ctx.store.state.windows) {
+    for (const win of ctx.store.state.windows) void (async () => {
       const space = ctx.store.activeSpaceIn(win.id);
       const left = space.split && ctx.chromeTabId!(space.split[0]);
-      if (left === undefined || !space.split) continue;
-      const ratio = space.splitRatio ?? 0.5;
-      if (sent.get(left) === ratio) continue;
+      if (left === undefined || !space.split) return;
+      let ratio = space.splitRatio ?? 0.5;
+      if (space.splitMode === 'responsive') {
+        const right = ctx.chromeTabId!(space.split[1]);
+        if (right === undefined) return;
+        const [desktop, phone] = await Promise.all([chrome.tabs.get(left), chrome.tabs.get(right)]).catch(() => []);
+        if (!desktop?.width || !phone?.width || !ctx.store.hasWindow(win.id) || ctx.store.activeSpaceIn(win.id).split !== space.split) return;
+        ratio = phoneSplitRatio(desktop.width + phone.width);
+      }
+      if (sent.get(left) === ratio) return;
       // Fails until Chromium has made the split; tabs.onUpdated (splitViewId) tries again.
       void chrome.flechaPrivate.setSplitRatio(left, ratio).then(
         () => sent.set(left, ratio),
         () => undefined,
       );
-    }
+    })();
   };
   apply();
   ctx.store.onChange(apply);
-  chrome.tabs.onUpdated.addListener((_id, info) => {
-    if ('splitViewId' in info) apply();
+  chrome.tabs.onUpdated.addListener((id, info) => {
+    if ('splitViewId' in info) {
+      sent.delete(id);
+      apply();
+    }
   });
+  chrome.windows.onBoundsChanged.addListener(apply);
+  chrome.tabs.onRemoved.addListener((id) => sent.delete(id));
 }
 
 // ---- theme (patch 0018) ------------------------------------------------------------------

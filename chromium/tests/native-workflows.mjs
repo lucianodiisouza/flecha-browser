@@ -271,6 +271,25 @@ try {
   assert.deepEqual(await fs.readFile(heliumHistory), originalHeliumHistory);
   console.log('PASS onboarding discovers and imports Helium history without bookmarks or source changes');
   await rpc('finishOnboarding');
+  await rpc('openSettings', 'import');
+  const settingsImport = await attach((await findTarget(t => t.url.includes('/settings.html#import'))).targetId);
+  await loaded(settingsImport, 'chrome-extension://');
+  assert.equal(await evaluate(settingsImport, "document.querySelector('[data-pane=import].pane').hidden"), false);
+  await evaluate(settingsImport, "document.querySelector('#import-browser').click()");
+  const importChoices = await evaluate(settingsImport, `new Promise(resolve => {
+    const check = () => {
+      const dialog = document.querySelector('.shell-dialog[open]');
+      if (dialog) { observer.disconnect(); resolve([...dialog.querySelectorAll('button')].map(button => button.textContent)); }
+    };
+    const observer = new MutationObserver(check);
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true });
+    check();
+  })`);
+  assert.deepEqual(importChoices, ['Chrome', 'Helium', 'Bookmarks File…', 'Cancel']);
+  if (artifacts) await fs.writeFile(path.join(artifacts, 'settings-import.png'), Buffer.from((await send('Page.captureScreenshot', { format: 'png' }, settingsImport)).data, 'base64'));
+  const importWindowId = await evaluate(settingsImport, 'chrome.windows.getCurrent().then(window => window.id)');
+  await evaluate(session, `chrome.windows.remove(${importWindowId})`);
+  console.log('PASS Settings Import opens the browser and bookmarks-file chooser');
   await rpc('newSpace');
   await stateWhere('s => s.spaces.length > 1');
   await evaluate(session, "document.querySelector('#space-done').click()");
@@ -287,6 +306,11 @@ try {
   const preserved = async (label) => { assert.deepEqual(await evaluate(page, "({ draft: document.querySelector('#draft').value, counter, documentToken, scrollY })"), documentState); console.log(`PASS document preserved through ${label}`); };
   await rpc('togglePin', a);
   await stateWhere(`s => s.spaces.some(sp => sp.pinned.some(n => n.kind === 'tab' && n.tabId === ${JSON.stringify(a)}))`);
+  await evaluate(session, "document.querySelector('#btn-toggle-pinned').click()");
+  await domWhere("() => document.querySelector('#pinned').hidden && document.querySelector('#pinned-count').textContent === '1'");
+  await evaluate(session, "document.querySelector('#btn-toggle-pinned').click()");
+  await domWhere("() => !document.querySelector('#pinned').hidden");
+  console.log('PASS the sidebar folds and unfolds the current Space’s Pinned section');
   await rpc('newTab', base + '/b');
   state = await stateWhere(`s => Object.values(s.tabs).some(t => t.url === ${JSON.stringify(base + '/b')})`);
   const b = Object.values(state.tabs).find(t => t.url === base + '/b').id;
@@ -564,16 +588,35 @@ try {
   await send('Fetch.disable', {}, session);
   listeners.delete(toFakeSuggest);
   await rpc('close', Object.values((await stateWhere('s => true')).tabs).find((t) => t.url.startsWith('https://www.google.com/search')).id);
-  await rpc('activate', a);
-  await active(a);
-  await rpc('splitWith', b);
-  await stateWhere('s => !!s.spaces.find(sp => sp.id === s.activeSpaceId).split');
+  const unrelatedUrl = base + '/unrelated-split';
+  await rpc('newTab', unrelatedUrl);
+  const unrelated = Object.values((await stateWhere(`s => Object.values(s.tabs).some(t => t.url === ${JSON.stringify(unrelatedUrl)})`)).tabs).find(t => t.url === unrelatedUrl).id;
+  await active(unrelated);
+  const splitHighlight = await evaluate(session, `(() => {
+    const rowFor = id => document.querySelector('.row[data-tab-id="' + CSS.escape(id) + '"]');
+    const source = rowFor(${JSON.stringify(b)});
+    const target = rowFor(${JSON.stringify(a)});
+    const dataTransfer = new DataTransfer();
+    source.dispatchEvent(new DragEvent('dragstart', { dataTransfer, bubbles: true }));
+    const rect = target.getBoundingClientRect();
+    const event = { dataTransfer, bubbles: true, cancelable: true, clientX: rect.right - 1, clientY: rect.top + rect.height / 2 };
+    target.dispatchEvent(new DragEvent('dragover', event));
+    const highlighted = target.classList.contains('drop-split-right');
+    target.dispatchEvent(new DragEvent('drop', event));
+    source.dispatchEvent(new DragEvent('dragend', event));
+    return { highlighted, height: rect.height, width: rect.width };
+  })()`);
+  assert.equal(splitHighlight.highlighted, true, JSON.stringify(splitHighlight));
+  const sidebarSplit = await stateWhere('s => !!s.spaces.find(sp => sp.id === s.activeSpaceId).split');
+  assert.deepEqual(sidebarSplit.spaces.find(sp => sp.id === sidebarSplit.activeSpaceId).split, [a, b]);
   const splitTabs = await evaluate(session, 'chrome.tabs.query({}).then(tabs => tabs.filter(t => t.splitViewId !== undefined && t.splitViewId !== -1).map(t => t.id))');
   assert.equal(splitTabs.length, 2);
   await preserved('entering split view');
   await rpc('exitSplit');
   await stateWhere('s => !s.spaces.find(sp => sp.id === s.activeSpaceId).split');
   await preserved('leaving split view');
+  await rpc('close', unrelated);
+  await stateWhere(`s => !s.tabs[${JSON.stringify(unrelated)}]`);
   await rpc('openPeek', base + '/peek');
   const peek = await findTarget(t => t.type === 'page' && t.url === base + '/peek');
   assert.ok(peek.targetId);
@@ -660,7 +703,24 @@ try {
 
   // Extension actions: a sidebar button with its badge, whose popup drops from it and closes on a second click.
   const actionButton = "document.querySelector('#extensions .ext-action[aria-label=\"Probe Action\"]')";
+  await domWhere("() => !document.querySelector('#extensions').hidden && !document.querySelector('#btn-extensions').hidden");
+  assert.equal(await evaluate(session, `Boolean(${actionButton})`), false, 'an unpinned extension stays in Chromium’s Extensions menu');
+  await rpc('newTab', 'chrome://extensions/');
+  const extensionsPage = await attach((await findTarget(t => t.type === 'page' && t.url.startsWith('chrome://extensions'))).targetId);
+  await loaded(extensionsPage, 'chrome://extensions');
+  const quietId = await evaluate(extensionsPage, `chrome.developerPrivate.getExtensionsInfo().then(async list => {
+    for (const name of ['Probe Action', 'Quiet Extension']) {
+      const extensionId = list.find(extension => extension.name === name).id;
+      await chrome.developerPrivate.updateExtensionConfiguration({ extensionId, pinnedToToolbar: true });
+    }
+    return list.find(extension => extension.name === 'Quiet Extension').id;
+  })`);
+  await rpc('activate', pageTab);
   await domWhere(`() => ${actionButton}?.querySelector('img')?.src.startsWith('data:image/png')`);
+  await evaluate(session, "document.querySelector('#btn-toggle-extension-pins').click()");
+  assert.equal(await evaluate(session, "document.querySelector('#extension-pins').hidden && !document.querySelector('#btn-extensions').hidden"), true);
+  await evaluate(session, "document.querySelector('#btn-toggle-extension-pins').click()");
+  console.log('PASS only pinned extensions have sidebar buttons, and collapsing keeps the Extensions menu available');
   const button = await evaluate(session, `${actionButton}.getBoundingClientRect().toJSON()`);
   const frameWindow = await evaluate(session, '({ x: screenX, y: screenY, width: outerWidth })');
   const clickButton = () => execFileSync(inputTool, [env.DISPLAY, String(browser.pid), 'click', String(Math.round(button.x + button.width / 2)), String(Math.round(button.y + button.height / 2))], { env });
@@ -763,10 +823,9 @@ try {
   // An extension reloaded (as an update does) while its sidebar menu is open: the menu closes with
   // the extension's action, whose menu model it showed, and the browser keeps running. Without
   // developer mode, Chromium keeps a reloaded unpacked extension off: Quiet is gone from here on.
-  await rpc('newTab', 'chrome://extensions/');
-  const extensionsPage = await attach((await findTarget(t => t.type === 'page' && t.url.startsWith('chrome://extensions'))).targetId);
-  await loaded(extensionsPage, 'chrome://extensions');
-  const quietId = await evaluate(extensionsPage, "chrome.developerPrivate.getExtensionsInfo().then(list => list.find(e => e.name === 'Quiet Extension').id)");
+  const extensionTab = Object.values((await stateWhere('s => true')).tabs).find(t => t.url.startsWith('chrome://extensions'));
+  await rpc('activate', extensionTab.id);
+  await active(extensionTab.id);
   const beforeReload = menuWindows().map(w => w.id);
   xclick(quiet.x + quiet.width / 2, quiet.y + quiet.height / 2);
   await until(() => menuWindows().some(w => !beforeReload.includes(w.id)));

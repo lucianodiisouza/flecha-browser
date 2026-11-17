@@ -4,32 +4,80 @@
  */
 import type { Message } from './protocol';
 
-const port = chrome.runtime.connect({ name: 'flecha' });
-const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+type Reply = { resolve: (value: unknown) => void; reject: (error: Error) => void };
+type Connection = { port: chrome.runtime.Port; replies: Map<number, Reply>; openedAt: number };
 const listeners = new Map<string, Array<(...args: any[]) => void>>();
 let nextId = 1;
+let current: Connection | undefined;
+let retry: ReturnType<typeof setTimeout> | undefined;
+let retryDelay = 0;
+// Use upstream's backoff when the service worker repeatedly drops the connection.
+const STABLE_MS = 10_000;
+const RETRY_MAX_MS = 5_000;
 
-port.onMessage.addListener((message: Message) => {
-  if (message.type === 'result') {
-    const call = pending.get(message.id);
-    pending.delete(message.id);
-    if (message.error) call?.reject(new Error(message.error));
-    else call?.resolve(message.value);
-  } else if (message.type === 'event') {
-    for (const fn of listeners.get(message.name) ?? []) fn(...message.args);
+function disconnected(connection: Connection) {
+  if (current !== connection) return;
+  current = undefined;
+  for (const reply of connection.replies.values()) reply.reject(new Error('Flecha’s background restarted'));
+  connection.replies.clear();
+  retryDelay = Date.now() - connection.openedAt >= STABLE_MS ? 0 : Math.min(Math.max(retryDelay * 2, 100), RETRY_MAX_MS);
+  retry = setTimeout(connect, retryDelay);
+}
+
+function connect(): Connection | undefined {
+  if (current) return current;
+  clearTimeout(retry);
+  let port: chrome.runtime.Port;
+  try {
+    port = chrome.runtime.connect({ name: 'flecha' });
+  } catch {
+    return undefined;
   }
-});
-setInterval(() => port.postMessage({ type: 'ping' } satisfies Message), 20_000);
+  const connection: Connection = { port, replies: new Map(), openedAt: Date.now() };
+  current = connection;
+  port.onDisconnect.addListener(() => {
+    void chrome.runtime.lastError;
+    disconnected(connection);
+  });
+  port.onMessage.addListener((message: Message) => {
+    if (current !== connection) return;
+    if (message.type === 'result') {
+      const reply = connection.replies.get(message.id);
+      connection.replies.delete(message.id);
+      if (message.error) reply?.reject(new Error(message.error));
+      else reply?.resolve(message.value);
+    } else if (message.type === 'event') {
+      for (const fn of listeners.get(message.name) ?? []) fn(...message.args);
+    }
+  });
+  return connection;
+}
+
+function post(message: Message, reply?: Reply) {
+  const connection = connect();
+  if (!connection) {
+    reply?.reject(new Error('Flecha’s background can’t be reached'));
+    return;
+  }
+  if (message.type === 'invoke' && reply) connection.replies.set(message.id, reply);
+  try {
+    connection.port.postMessage(message);
+  } catch {
+    disconnected(connection);
+  }
+}
+
+connect();
+setInterval(() => post({ type: 'ping' }), 20_000);
 
 export const cmd =
   (name: string) =>
   (...args: unknown[]) =>
-    port.postMessage({ type: 'cmd', name, args } satisfies Message);
+    post({ type: 'cmd', name, args });
 
 export function invoke<T = unknown>(name: string, ...args: unknown[]): Promise<T> {
   const id = nextId++;
-  port.postMessage({ type: 'invoke', id, name, args } satisfies Message);
-  return new Promise((resolve, reject) => pending.set(id, { resolve: resolve as (v: unknown) => void, reject }));
+  return new Promise((resolve, reject) => post({ type: 'invoke', id, name, args }, { resolve: resolve as (value: unknown) => void, reject }));
 }
 
 export function on(name: string, fn: (...args: any[]) => void) {

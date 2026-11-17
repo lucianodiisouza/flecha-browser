@@ -26,6 +26,7 @@ export interface FeaturesContext {
   liveTabId(flechaTabId: string): number | undefined;
   /** The Chromium tab of the active Flecha tab. */
   activeChromeTabId(): number | undefined;
+  windowId(): string;
 }
 
 /** What the background's uiState() reads from the features. */
@@ -113,7 +114,7 @@ export function registerFeatures(ctx: FeaturesContext): Features {
       void chrome.tabs.update(chromeId, { url: env.switches[0].url });
     },
 
-    toggleResponsive: () => phone.toggle(),
+    toggleResponsive: () => phone.toggle(ctx.windowId()),
 
     // The sidebar's error badge: that tab, with DevTools open.
     showConsole: async (tabId: string) => {

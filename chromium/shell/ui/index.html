@@ -44,6 +44,8 @@
       </div>
 
       <div id="extensions" role="toolbar" aria-label="Extensions" hidden>
+        <button id="btn-toggle-extension-pins" class="ext-action" type="button" aria-label="Pinned extensions" aria-controls="extension-pins" aria-expanded="true" hidden><i data-icon="chevron"></i></button>
+        <div id="extension-pins"></div>
         <button id="btn-extensions" class="ext-action" data-tip="Extensions" aria-label="Extensions" aria-haspopup="dialog"><i data-icon="puzzle"></i></button>
       </div>
 
@@ -66,6 +68,10 @@
       </header>
 
       <div id="scroll">
+        <header class="group-header" id="pinned-header">
+          <button id="btn-toggle-pinned" class="text-button" type="button" aria-controls="pinned" aria-expanded="true">Pinned</button>
+          <span id="pinned-count" hidden></span>
+        </header>
         <div id="pinned" class="drop-zone"></div>
         <div id="agent-folder" class="folder agent-folder" hidden></div>
         <header class="group-header today-header">

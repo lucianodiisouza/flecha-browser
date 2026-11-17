@@ -4,6 +4,7 @@ import { setupTabsPane } from './tabsPane.js';
 import { setupVsrPane } from './vsrPane.js';
 import { setupDebugPane } from './debugPane.js';
 import { isEnter } from '../lib/keys';
+import { importFromBrowser } from '../windowUi';
 
 declare global {
   interface Window {
@@ -420,6 +421,15 @@ api.onChange(async () => renderAgent(await api.get()));
 
 document.getElementById('openBoosts')!.addEventListener('click', () => api.openBoosts());
 document.getElementById('showTour')!.addEventListener('click', () => api.showTour());
+const importButton = document.querySelector<HTMLButtonElement>('#import-browser')!;
+importButton.addEventListener('click', async () => {
+  importButton.disabled = true;
+  try {
+    await importFromBrowser();
+  } finally {
+    importButton.disabled = false;
+  }
+});
 document.getElementById('chooseFolder')!.addEventListener('click', async () => render(await api.chooseDownloadsFolder()));
 askWhereToSave.addEventListener('change', async () => render(await api.set({ askWhereToSave: askWhereToSave.checked })));
 
