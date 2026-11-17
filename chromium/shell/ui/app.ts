@@ -304,12 +304,25 @@ function renderPinnedHeader(space: Space) {
   badge.hidden = !collapsed || !space.pinned.length;
 }
 
+/** Folder ids from before the Pinned header's New Folder button, so the new one can be spotted. */
+let foldersBeforeNew: Set<string> | undefined;
+
+function folderIds(nodes: PinnedNode[], ids = new Set<string>()): Set<string> {
+  for (const node of nodes) if (node.kind === 'folder') ids.add(node.id), folderIds(node.children, ids);
+  return ids;
+}
+
 function renderNode(node: PinnedNode, space: Space, folderId: string | undefined): HTMLElement {
   if (node.kind === 'tab') {
     const tab = state!.tabs[node.tabId];
     return tab ? tabRow(tab, space, { zone: 'pinned', folderId, beforeTabId: tab.id }) : h('span');
   }
   const name = h('span', { class: 'title folder-name' }, node.name);
+  // The folder the Pinned header's button just made: name it right away.
+  if (foldersBeforeNew && !foldersBeforeNew.has(node.id)) {
+    foldersBeforeNew = undefined;
+    queueMicrotask(() => editInline(name, node.name, (value) => api.renameFolder(node.id, value)));
+  }
   const header = h(
     'button',
     {
@@ -503,38 +516,17 @@ function acceptTabDrops(el: HTMLElement, tab: TabInfo, target: DropTarget) {
     e.stopPropagation();
 
     const rect = el.getBoundingClientRect();
-    const offsetY = e.clientY - rect.top;
     const relX = (e.clientX - rect.left) / rect.width;
-
-    // Top and bottom edge zones for vertical reordering
-    if (offsetY <= 7) {
-      clearHover();
-      el.classList.add('drop-before');
-      e.dataTransfer.dropEffect = 'move';
-    } else if (rect.height - offsetY <= 7) {
-      clearHover();
-      el.classList.add('drop-after');
-      e.dataTransfer.dropEffect = 'move';
-    } else if (relX >= 0.40) {
-      // Dragging to the right side of the tab row: split view on the right!
-      clearHover();
-      el.classList.add('drop-split-right');
-      e.dataTransfer.dropEffect = 'move';
-    } else if (relX < 0.25) {
-      // Dragging to the far left side of the tab row: split view on the left!
-      clearHover();
-      el.classList.add('drop-split-left');
-      e.dataTransfer.dropEffect = 'move';
-    } else {
-      // Middle-left area: reorder before/after based on upper/lower half
-      clearHover();
-      if (offsetY <= rect.height / 2) {
-        el.classList.add('drop-before');
-      } else {
-        el.classList.add('drop-after');
-      }
-      e.dataTransfer.dropEffect = 'move';
-    }
+    const relY = (e.clientY - rect.top) / rect.height;
+    // Reordering gets the outer thirds; dropping onto the middle of a tab splits with it, as in Arc.
+    // Rows reorder up and down; favorites sit in a grid, so they reorder left and right.
+    const isFavorite = el.classList.contains('fav');
+    const along = isFavorite ? relX : relY;
+    clearHover();
+    if (along < 0.3) el.classList.add('drop-before');
+    else if (along > 0.7) el.classList.add('drop-after');
+    else el.classList.add(!isFavorite && relX < 0.5 ? 'drop-split-left' : 'drop-split-right');
+    e.dataTransfer.dropEffect = 'move';
   });
 
   el.addEventListener('dragleave', (e) => {
@@ -1389,6 +1381,14 @@ acceptDrops($('btn-newtab'), { zone: 'today' });
 
 const activeSpace = () => state?.spaces.find((s) => s.id === state!.activeSpaceId);
 $('local-servers-header').addEventListener('click', () => api.setLocalServersCollapsed(!state?.localServersCollapsed));
+$('btn-new-folder').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const space = activeSpace();
+  if (!space) return;
+  foldersBeforeNew = folderIds(space.pinned);
+  if (space.pinnedCollapsed) api.setPinnedCollapsed(space.id, false);
+  api.newFolder();
+});
 $('pinned-header').addEventListener('click', () => {
   const space = activeSpace();
   if (space) api.setPinnedCollapsed(space.id, !space.pinnedCollapsed);

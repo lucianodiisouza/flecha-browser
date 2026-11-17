@@ -95,6 +95,8 @@ const api: FlechaApi = {
   updateSpace: cmd('updateSpace'),
   setPinnedCollapsed: cmd('setPinnedCollapsed'),
   setLocalServersCollapsed: cmd('setLocalServersCollapsed'),
+  newFolder: cmd('newFolder'),
+  moveToNewFolder: cmd('moveToNewFolder'),
   ignoreLocalPort: cmd('ignoreLocalPort'),
   setSpaceIsolated: cmd('setSpaceIsolated'),
   // Electron asks first, in a message box; the page asks in its own dialog.
