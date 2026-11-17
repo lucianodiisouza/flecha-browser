@@ -879,6 +879,20 @@ api.onFlash((message) => {
   flashTimer = window.setTimeout(() => wrap.classList.remove('flashing'), 1400);
 });
 
+// ---- sites that need DRM ----------------------------------------------------------------
+
+let drmUrl = '';
+api.onDrmSite(({ site, url }) => {
+  drmUrl = url;
+  $('drm-notice-text').textContent = `${site} plays only with Widevine DRM, which Flecha doesn’t include (it needs a paid certification). Watch it in Safari instead.`;
+  $('drm-notice').hidden = false;
+});
+$('drm-dismiss').onclick = () => ($('drm-notice').hidden = true);
+$('drm-safari').onclick = () => {
+  $('drm-notice').hidden = true;
+  api.openInSafari(drmUrl);
+};
+
 // ---- Space editor -------------------------------------------------------------------
 
 const spaceEditor = $('space-editor');

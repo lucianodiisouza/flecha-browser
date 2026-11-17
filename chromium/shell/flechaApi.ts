@@ -107,6 +107,8 @@ const api: FlechaApi = {
   setPinnedCollapsed: cmd('setPinnedCollapsed'),
   setLocalServersCollapsed: cmd('setLocalServersCollapsed'),
   setTabSelection: cmd('setTabSelection'),
+  onDrmSite: (cb) => on('drm-site', cb),
+  openInSafari: cmd('openInSafari'),
   newFolder: cmd('newFolder'),
   moveToNewFolder: cmd('moveToNewFolder'),
   ignoreLocalPort: cmd('ignoreLocalPort'),

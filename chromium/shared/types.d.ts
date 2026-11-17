@@ -449,6 +449,10 @@ export interface FlechaApi {
   updateSpace(spaceId: string, patch: { name?: string; emoji?: string; color?: string }): void;
   setPinnedCollapsed(spaceId: string, collapsed: boolean): void;
   setLocalServersCollapsed(collapsed: boolean): void;
+  /** A streaming site that needs Widevine DRM came up in the active tab (lib/drm.ts). */
+  onDrmSite(cb: (info: { site: string; url: string }) => void): void;
+  /** Opens a page in Safari, or copies its link where Flecha can't. */
+  openInSafari(url: string): void;
   /** Tabs ⌘- or ⇧-clicked in the sidebar, in sidebar order; ⌘⇧C and ⌥⌘C copy all of them. */
   setTabSelection(tabIds: string[]): void;
   /** A folder at the end of the active Space's pinned tabs. */

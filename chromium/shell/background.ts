@@ -12,6 +12,7 @@ import { shortcutHints, type ShortcutId } from './lib/shortcuts';
 import { describe as describeEnvironment } from './lib/environments';
 import type { BrowserState, DropTarget, SearchEngineId, TabInfo, UiState } from '../shared/types';
 import { broadcast, call, handle, listen, onConnect } from './hub';
+import { drmSite } from './lib/drm';
 import type { MenuRun } from './protocol';
 import type { MenuEntry } from './settingsUi';
 import { openSettings, registerSettings } from './settingsHandlers';
@@ -124,6 +125,17 @@ async function start() {
 
   // Icons fetched from the sites themselves, for those Chromium has none of yet.
   const siteIcons = new SiteIcons((icons) => broadcast('site-icons', icons));
+  // Widevine streaming sites can't play here: the sidebar says so, once per site and session.
+  const drmNoted = new Set<string>();
+  chrome.webNavigation.onCommitted.addListener(({ tabId, frameId, url }) => {
+    const site = frameId === 0 ? drmSite(url) : undefined;
+    if (!site || drmNoted.has(site)) return;
+    drmNoted.add(site);
+    void chrome.tabs.get(tabId).then(
+      (tab) => tab.active && broadcast('drm-site', { site, url }),
+      () => undefined,
+    );
+  });
   const favicons = new Favicons(
     () => sendStateSoon(),
     (hosts) => void siteIcons.want(hosts),
@@ -648,6 +660,12 @@ async function start() {
     closeTabs: (id: string, which: string) => void unload(store.closeTodayTabs(id, which === 'others' ? 'others' : 'below')),
     updateSpace: (id: string, patch: { name?: string; emoji?: string; color?: string }) => store.updateSpace(id, patch ?? {}),
     setPinnedCollapsed: (id: string, collapsed: boolean) => store.setPinnedCollapsed(String(id), !!collapsed),
+    openInSafari: (url: string) => {
+      const open = nativeHost?.openInSafari(String(url));
+      // No helper (incognito, or it isn't installed): the link, to paste into another browser.
+      if (!open) return copyToClipboard(String(url), 'Link copied: paste it into Safari or Chrome');
+      return open.catch(() => copyToClipboard(String(url), 'Link copied: paste it into Safari or Chrome'));
+    },
     setTabSelection: (ids: string[]) => {
       selectedTabIds = Array.isArray(ids) ? ids.map(String).filter((id) => store.state.tabs[id]) : [];
     },
