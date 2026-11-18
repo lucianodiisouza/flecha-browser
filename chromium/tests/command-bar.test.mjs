@@ -51,6 +51,7 @@ test('typed development addresses open directly and environment badges follow ex
     'example.com: bad?token=fixture',
     'example.com: bad? token=fixture',
     'example.com: /api?token=fixture',
+    'example.com :65536/private?token=fixture',
     '%65xample%2ecom:65536/api?token=fixture',
     '%ZZxample%2ecom:65536/api?token=fixture',
     '[::gg]:80/api?token=fixture',
@@ -58,6 +59,7 @@ test('typed development addresses open directly and environment badges follow ex
     'staging:bad/api?token=fixture',
     'build123: bad? token=fixture',
     'staging:/api?token=fixture',
+    'staging :bad/api?token=fixture',
   ]) {
     assert.equal(resolveInput(malformed), 'about:blank');
     assert.equal(suggestable(malformed), false);
@@ -70,6 +72,7 @@ test('typed development addresses open directly and environment badges follow ex
   assert.equal(resolveInput('node.js: 2024 tutorial'), 'https://www.google.com/search?q=node.js%3A%202024%20tutorial');
   assert.equal(resolveInput('node.js: 2024 tutorial?'), 'https://www.google.com/search?q=node.js%3A%202024%20tutorial%3F');
   assert.equal(resolveInput('node.js: 2024 tutorial? Where next'), 'https://www.google.com/search?q=node.js%3A%202024%20tutorial%3F%20Where%20next');
+  assert.equal(resolveInput('node.js : 2024 tutorial? Where next'), 'https://www.google.com/search?q=node.js%20%3A%202024%20tutorial%3F%20Where%20next');
   assert.match(resolveInput('mailto: vs tel: links'), /[?&]q=mailto%3A%20vs%20tel%3A%20links/);
   assert.equal(resolveInput('mailto:?subject=Hello'), 'mailto:?subject=Hello');
   assert.equal(new URL(resolveInput('%65xample.com/docs')).href, 'https://example.com/docs');

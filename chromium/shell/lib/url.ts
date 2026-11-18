@@ -37,7 +37,7 @@ export function looksLikeRejectedAddress(input: string): boolean {
   try { authority = decodeURIComponent(authority); } catch { /* A bad escape can still follow a host. */ }
   if (hasAddressCredentials(authority) || /^\[[^\s\[\]]*:[^\s\[\]]*(?:\]|$)/.test(authority)) return true;
   const colon = authority.indexOf(':');
-  const host = colon < 0 ? authority : authority.slice(0, colon);
+  const host = (colon < 0 ? authority : authority.slice(0, colon)).trim();
   const port = colon < 0 ? '' : authority.slice(colon + 1).trim();
   // A separated question in prose is different from a path or query attached to the authority.
   const addressTail = /^[/?#\\]\S/.test(tail) || /[?#]\s*[^=\s&#/?]+=/.test(tail);
