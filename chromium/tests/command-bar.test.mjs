@@ -33,6 +33,15 @@ test('typed addresses open directly with encoded paths and queries', () => {
   assert.equal(localAddress.hostname, 'localhost');
   assert.equal(localAddress.searchParams.get(' access token'), 'fixture');
   assert.equal(suggestable(localQuery), false);
+  for (const [input, host] of [
+    ['localhost? opaque-fixture?', 'localhost'],
+    ['app.localhost? Why?', 'app.localhost'],
+    ['192.168.0.10? opaque fixture', '192.168.0.10'],
+    ['example.com? opaque-fixture?', 'example.com'],
+  ]) {
+    assert.equal(new URL(resolveInput(input)).hostname, host);
+    assert.equal(suggestable(input), false);
+  }
   for (const address of ['例子.中国', 'xn--fsqu00a.xn--fiqs8s']) assert.equal(resolveInput(address), `https://${address}`);
 });
 

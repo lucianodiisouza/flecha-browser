@@ -10,14 +10,13 @@ type Holder = string | symbol;
 const holders = new Map<number, Map<Holder, symbol>>();
 const attaching = new Map<number, Promise<void>>();
 const detaching = new Map<number, Promise<void>>();
-const resetting = new Map<symbol, Promise<void>>();
-const externallyDetached = new WeakSet<Map<Holder, symbol>>();
+type SharedReset = { done: Promise<void>; canceled?: boolean };
+const resetting = new Map<number, Map<symbol, SharedReset>>();
 const detachListeners: Array<(tabId: number, reason: string) => void> = [];
 
 chrome.debugger.onDetach.addListener((source, reason) => {
   if (source.tabId === undefined) return;
-  const owners = holders.get(source.tabId);
-  if (owners) externallyDetached.add(owners);
+  for (const reset of resetting.get(source.tabId)?.values() ?? []) reset.canceled = true;
   holders.delete(source.tabId);
   for (const fn of detachListeners) fn(source.tabId, reason);
 });
@@ -31,10 +30,10 @@ export function onDebuggerDetach(fn: (tabId: number, reason: string) => void) {
 export async function acquire(tabId: number, holder: Holder): Promise<void> {
   let owners = holders.get(tabId);
   const existing = owners?.get(holder);
-  const cleanup = existing && resetting.get(existing);
-  if (owners && cleanup) {
-    await cleanup.catch(() => undefined);
-    if (externallyDetached.has(owners)) throw new Error('Debugger attachment was released');
+  const cleanup = existing && resetting.get(tabId)?.get(existing);
+  if (cleanup) {
+    await cleanup.done.catch(() => undefined);
+    if (cleanup.canceled) throw new Error('Debugger attachment was released');
     return acquire(tabId, holder);
   }
   if (!owners) {
@@ -76,16 +75,19 @@ export async function release(tabId: number, holder: Holder, resetShared?: () =>
   const set = holders.get(tabId);
   const claim = set?.get(holder);
   if (resetShared && set && claim && set.size > 1) {
-    const pending = resetting.get(claim);
-    if (pending) return pending;
+    const tabResets = resetting.get(tabId) ?? new Map<symbol, SharedReset>();
+    const pending = tabResets.get(claim);
+    if (pending) return pending.done;
     const cleanup = Promise.resolve().then(resetShared).then(() => undefined).finally(async () => {
       try {
         if (holders.get(tabId) === set && set.get(holder) === claim) await release(tabId, holder);
       } finally {
-        resetting.delete(claim);
+        tabResets.delete(claim);
+        if (!tabResets.size) resetting.delete(tabId);
       }
     });
-    resetting.set(claim, cleanup);
+    tabResets.set(claim, { done: cleanup });
+    resetting.set(tabId, tabResets);
     return cleanup;
   }
   if (!set?.delete(holder) || set.size) return;

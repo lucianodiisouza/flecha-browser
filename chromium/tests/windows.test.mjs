@@ -433,10 +433,14 @@ test('the saved-state decoder drops a responsive mirror whose source no longer e
   const desktop = store.addTab('https://example.com/desktop', { windowId: first });
   const phone = store.openResponsive(first);
   store.activate(phone, { windowId: first });
+  const survivor = store.addTab('https://example.com/survivor', { windowId: second });
   const snapshot = JSON.parse(store.serialize());
+  snapshot.windows = [second, first].map((id) => snapshot.windows.find((win) => win.id === id));
+  snapshot.windows[0].spaces[work] = { today: [survivor.id], activeTabId: phone, split: [phone, survivor.id] };
+  const withDesktop = decodeState(JSON.stringify(snapshot)).windows[0].spaces[work];
+  assert.equal(withDesktop.activeTabId, phone);
+  assert.deepEqual(withDesktop.split, [phone, survivor.id]);
   delete snapshot.tabs[desktop.id];
-  const other = snapshot.windows.find((win) => win.id === second);
-  other.spaces[work] = { today: [], activeTabId: phone, split: [phone, desktop.id] };
   const loaded = decodeState(JSON.stringify(snapshot));
   const space = loaded.windows.find((win) => win.id === first).spaces[personal];
   assert.equal(loaded.tabs[phone], undefined);

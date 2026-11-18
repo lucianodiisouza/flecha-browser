@@ -45,7 +45,7 @@ export function registerFeatures(ctx: FeaturesContext): Features {
     broadcast('boosts:changed');
     ctx.broadcastState();
   };
-  void boosts.ready().then(ctx.broadcastState);
+  void boosts.ready().then(ctx.broadcastState, (error) => console.warn('Flecha boosts: couldn’t load saved boosts', error));
 
   // ---- local dev servers ----
   const servers = watchLocalServers(() => ctx.broadcastState());

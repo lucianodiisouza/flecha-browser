@@ -298,16 +298,18 @@ function saveEnvironmentField(id: string, field: EnvironmentField, edit: FieldEd
   const edits = environmentDrafts.get(id);
   queueEnvironmentWrite(async () => {
     if (removingEnvironments.has(id) || (retry && environmentDrafts.get(id)?.[field] !== edit)) return;
-    if (!savedEnvironments.some((env) => env.id === id) && unconfirmedCreates.has(id)) {
-      render(await api.get());
-      if (removingEnvironments.has(id) || environmentDrafts.get(id)?.[field] !== edit) return;
-    }
-    const previous = savedEnvironments.find((env) => env.id === id);
-    const creating = !previous && incompleteEnvironments.has(id);
-    if (!previous && !creating) return;
-    const submitted = creating ? edits : { [field]: edit };
+    let creating = false;
+    let submitted: EnvironmentEdits | undefined = { [field]: edit };
     let view: SettingsView;
     try {
+      if (!savedEnvironments.some((env) => env.id === id) && unconfirmedCreates.has(id)) {
+        render(await api.get());
+        if (removingEnvironments.has(id) || environmentDrafts.get(id)?.[field] !== edit) return;
+      }
+      const previous = savedEnvironments.some((env) => env.id === id);
+      creating = !previous && incompleteEnvironments.has(id);
+      if (!previous && !creating) return;
+      if (creating) submitted = edits;
       if (creating) unconfirmedCreates.set(id, { edits, values: {
         name: local.name?.trim() || 'Project',
         targetsText: formatTargets(parseTargets(local.targetsText ?? '')),

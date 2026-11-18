@@ -53,14 +53,22 @@ export {};
 
 let files: Record<string, string> = {};
 let compiled: Record<string, CompiledBoost> = {};
-const loaded = (async () => {
+let loading: Promise<void> | undefined;
+async function readStoredBoosts() {
   const saved = await chrome.storage.local.get([STORE_KEY, COMPILED_KEY]);
   files = (saved[STORE_KEY] as typeof files | undefined) ?? {};
   compiled = (saved[COMPILED_KEY] as typeof compiled | undefined) ?? {};
-})();
+}
 
-let writes = loaded;
-let commits = loaded;
+function loadBoosts() {
+  return loading ??= readStoredBoosts().catch((error) => {
+    loading = undefined;
+    throw error;
+  });
+}
+
+let writes = Promise.resolve();
+let commits = writes;
 
 function writeBoosts(
   name: string,
@@ -69,6 +77,7 @@ function writeBoosts(
   change: (nextFiles: typeof files, nextCompiled: typeof compiled) => boolean,
 ) {
   const commit = writes.then(async () => {
+    await loadBoosts();
     const nextFiles = { ...files };
     const nextCompiled = { ...compiled };
     if (!change(nextFiles, nextCompiled)) return false;
@@ -130,7 +139,7 @@ async function registerUserScripts(): Promise<boolean> {
   }
 }
 
-let registered: Promise<boolean> = loaded.then(registerUserScripts);
+let registered: Promise<boolean> = loadBoosts().then(registerUserScripts, () => false);
 
 const matching = (url: string, kind: BoostKind) =>
   Object.keys(files).filter((name) => {
@@ -212,18 +221,22 @@ async function runScripts(tabId: number, url: string, documentId?: string) {
 // Listeners go on as the background starts, so the event that woke it isn't lost.
 chrome.webNavigation.onCommitted.addListener(({ tabId, frameId, url }) => {
   if (frameId !== 0) return;
-  void loaded.then(() => applyStyles(tabId, url));
+  void loadBoosts().then(() => applyStyles(tabId, url)).catch(logBoostError);
 });
 chrome.webNavigation.onDOMContentLoaded.addListener(({ tabId, frameId, url, documentId }) => {
   if (frameId !== 0) return;
-  void loaded.then(() => runScripts(tabId, url, documentId));
+  void loadBoosts().then(() => runScripts(tabId, url, documentId)).catch(logBoostError);
 });
 chrome.tabs.onRemoved.addListener((tabId) => inserted.delete(tabId));
+
+function logBoostError(error: unknown) {
+  console.warn('Flecha boosts: couldn’t apply saved boosts', error);
+}
 
 // ---- what the rest of the shell uses ----------------------------------------
 
 export async function ready() {
-  await loaded;
+  await loadBoosts();
 }
 
 /** Hosts with at least one boost, for the sidebar's ⚡ marker. */
@@ -233,6 +246,7 @@ export function boostedHosts(): string[] {
 
 export async function list(): Promise<BoostFile[]> {
   await commits;
+  await loadBoosts();
   return Object.keys(files)
     .sort()
     .flatMap((name) => {
@@ -250,6 +264,7 @@ export function get(name: string): BoostFile | undefined {
 /** A reconnect read may arrive while a previous port's write is still committing. */
 export async function getCommitted(name: string) {
   await commits;
+  await loadBoosts();
   return get(name);
 }
 
@@ -265,6 +280,7 @@ export async function create(host: string, kind: BoostKind) {
   if (!/^[a-z0-9-]+(\.[a-z0-9-]+)*$/.test(host) || (kind !== 'script' && kind !== 'styles')) return undefined;
   const name = boostName(host, kind);
   await writes;
+  await loadBoosts();
   if (files[name] !== undefined) return name;
   return (await save(name, TEMPLATES[kind](host), { reload: false, onlyIfMissing: true })) && name;
 }

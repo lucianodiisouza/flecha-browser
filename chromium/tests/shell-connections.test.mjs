@@ -268,6 +268,36 @@ test('a Boost save returns its own result before the queued deletion updates Chr
   assert.deepEqual(await boosts.list(), []);
 });
 
+test('a failed Boost startup read is retried before saving or registering scripts', async (t) => {
+  let reads = 0;
+  const startup = Promise.withResolvers();
+  const files = { boosts: { 'old.example.css': 'body {}' } };
+  const register = t.mock.fn(async () => {});
+  globalThis.chrome = {
+    extension: { inIncognitoContext: false },
+    storage: { local: {
+      async get() {
+        if (++reads === 1) return startup.promise;
+        return structuredClone(files);
+      },
+      async set(values) { Object.assign(files, structuredClone(values)); },
+    } },
+    tabs: { query: async () => [], onRemoved: event() },
+    webNavigation: { onCommitted: event(), onDOMContentLoaded: event() },
+    debugger: { onDetach: event() },
+    userScripts: { getScripts: async () => [], unregister: async () => {}, register },
+  };
+  t.after(() => delete globalThis.chrome);
+  const boosts = await loadModule('chromium/shell/features/boosts.ts', { fresh: true });
+  const failed = assert.rejects(boosts.ready(), /storage is starting/);
+  startup.reject(new Error('Boost storage is starting'));
+  await failed;
+  const name = 'new.example.ts';
+  assert.equal((await boosts.save(name, 'source', { build: { code: 'built' } })).code, 'source');
+  assert.deepEqual(files.boosts, { 'old.example.css': 'body {}', [name]: 'source' });
+  assert.deepEqual(register.mock.calls[0].arguments[0].map(({ id }) => id), [name]);
+});
+
 test('Boosts serializes saves and keeps the editor address aligned with a retained draft', async (t) => {
   const messages = [];
   const port = { onDisconnect: event(), onMessage: event(), postMessage: (message) => messages.push(message) };
@@ -851,11 +881,26 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   port.onMessage.emit({ type: 'tool', id: 102, name: 'console_logs', args: { tabId: phone } });
   await nextTurn();
   assert.equal(results.some(({ id }) => id === 102), false, 'the failed press keeps the tab locked while release is pending');
-  keyUp.reject(new Error('Late release failure'));
+  detachPending = Promise.withResolvers();
+  for (const _ of [1, 2]) {
+    t.mock.timers.tick(60_000);
+    await nextTurn();
+  }
+  assert.ok(results.some(({ id, result }) => id === 102 && result.isError));
+  assert.deepEqual(calls.at(-1), ['detach', tab.id]);
+  port.onMessage.emit({ type: 'tool', id: 103, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 103)?.result.content[0].text ?? '', /has not confirmed the debugger reset/);
+  detachPending.resolve();
+  detachPending = undefined;
   keyUp = undefined;
   inputFailures.clear();
   await nextTurn();
-  assert.ok(results.some(({ id, result }) => id === 102 && !result.isError));
+  port.onMessage.emit({ type: 'tool', id: 104, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  t.mock.timers.tick(100);
+  await nextTurn();
+  assert.ok(results.some(({ id, result }) => id === 104 && !result.isError));
 
   readPending = Promise.withResolvers();
   detachPending = Promise.withResolvers();
@@ -974,19 +1019,25 @@ test('debugger cleanup keeps a replacement holder and waits for an incomplete at
   assert.deepEqual(detached, [12, 14, 13], 'the reset closes the session created by the pending attach');
 });
 
-test('canceling a debugger attachment invalidates reacquisition queued behind shared cleanup', async (t) => {
+test('canceling a debugger attachment invalidates shared cleanup even while a reset is detaching', async (t) => {
   const onDetach = event();
   const attach = t.mock.fn(async () => {});
-  globalThis.chrome = { debugger: { onDetach, attach, detach: async () => {} } };
+  const detachReply = Promise.withResolvers();
+  const detach = t.mock.fn(() => detachReply.promise);
+  globalThis.chrome = { debugger: { onDetach, attach, detach } };
   t.after(() => delete globalThis.chrome);
-  const { hold, release } = await loadModule('chromium/shell/features/debuggee.ts', { fresh: true });
+  const { hold, release, resetDebugger } = await loadModule('chromium/shell/features/debuggee.ts', { fresh: true });
   assert.equal(await hold(12, 'agent'), true);
   assert.equal(await hold(12, 'responsive'), true);
   const cleanup = Promise.withResolvers();
   const leaving = release(12, 'agent', () => cleanup.promise);
   const renewing = hold(12, 'agent');
+  const resetting = resetDebugger(12, 'responsive');
+  assert.equal(detach.mock.callCount(), 1);
   onDetach.emit({ tabId: 12 }, 'canceled_by_user');
   cleanup.resolve();
+  detachReply.resolve();
+  await resetting;
   await leaving;
   assert.equal(await renewing, false);
   assert.equal(attach.mock.callCount(), 1);

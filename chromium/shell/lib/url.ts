@@ -37,7 +37,8 @@ function hasAddressCredentials(input: string): boolean {
   return destinationHasTail || !/^\s/.test(password) || /\s/.test(password.trim());
 }
 
-export const spacedQuestion = (tail: string) => /^\?\s+(?:\S+\s+\S|\S+\?$)/.test(tail) && !tail.includes('=');
+export const spacedQuestion = (tail: string) =>
+  /^\?\s+(?:\S+\s+\S|(?:who|what|when|where|why|which|how)\?$)/i.test(tail) && !tail.includes('=');
 
 export function looksLikeRejectedAddress(input: string): boolean {
   if (hasAddressCredentials(input)) return true;
@@ -77,7 +78,6 @@ export function webAddress(raw: string, { allowBareHost = false } = {}): string 
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input) || /^(about|data|file):/i.test(input)) return input;
   if (/^mailto:/i.test(input)) return /\s/.test(input.slice(7).split('?', 1)[0]) ? undefined : input;
   const [authority] = input.split(/[/?#]/, 1);
-  if (spacedQuestion(input.slice(authority.length))) return undefined;
   const bare = /^(\[[\da-f:.]+\]|[^:\s\\@\[\]]+)(?::(\d+))?$/i.exec(authority);
   if (!bare) return undefined;
   const [, host, port] = bare;
@@ -98,6 +98,7 @@ export function webAddress(raw: string, { allowBareHost = false } = {}): string 
     // Implicit HTTP is for loopback, the wildcard bind address and RFC 1918 networks.
     const localIp = ipv4 && (first === 127 || first === 10 || (first === 172 && second >= 16 && second <= 31) ||
       (first === 192 && second === 168) || hostname === '0.0.0.0');
+    if (!allowBareHost && domain && !localHost && !port && spacedQuestion(input.slice(authority.length))) return undefined;
     const address = `${localHost || localIp ? 'http' : 'https'}://${input}`;
     return /\s/.test(input) ? new URL(address).href : address;
   } catch {
