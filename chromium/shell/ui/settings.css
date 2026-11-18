@@ -220,6 +220,10 @@ code {
   display: none;
 }
 
+.row[hidden] {
+  display: none;
+}
+
 .row {
   display: flex;
   align-items: center;

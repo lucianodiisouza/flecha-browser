@@ -623,6 +623,10 @@ body {
   height: 14px;
 }
 
+.pinned-badge[hidden] {
+  display: none;
+}
+
 .pinned-badge {
   display: inline-flex;
   align-items: center;
