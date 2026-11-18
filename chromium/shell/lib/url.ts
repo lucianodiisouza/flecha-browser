@@ -26,7 +26,7 @@ export function searchUrl(terms: string, engine?: SearchEngineId): string {
 }
 
 export function hasAddressCredentials(input: string): boolean {
-  return /^[^\s/?#@]+:[^@]*@/.test(input.trim());
+  return /^[^:\s/?#@]+(?::[^@]*)?@/.test(input.trim());
 }
 
 /** Turns whatever was typed in the command bar into a URL to load. */

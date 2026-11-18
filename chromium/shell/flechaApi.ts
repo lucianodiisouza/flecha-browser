@@ -5,7 +5,7 @@
 import type { FlechaApi, PaletteMode, UiState } from '../shared/types';
 import { spaceTint } from './lib/spaceTint';
 import { SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth } from '../shared/sidebarWidth';
-import { cmd, invoke, on, onReconnect } from './client';
+import { cmd, invoke, on } from './client';
 import { confirmDeleteSpace, copy, hasWindowOverlay, setupWindowUi, showMenu } from './windowUi';
 import { incognito } from './incognito';
 import { fetchSuggestions, suggestable } from './lib/suggest';

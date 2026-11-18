@@ -285,7 +285,11 @@ export function registerNativeHost(ctx: NativeHostContext) {
     return tabs;
   }
 
-  type UseTab = { signal: AbortSignal; tab(chromeId: number): Promise<void>; track<T>(command: Promise<T>): Promise<T> };
+  type UseTab = {
+    signal: AbortSignal;
+    tab(chromeId: number): Promise<void>;
+    command(method: string, params?: object, signal?: AbortSignal): Promise<unknown>;
+  };
   const tabOperations = new Map<number, Promise<void>>();
 
   async function runTool(name: AgentToolName, args: Record<string, any>): Promise<AgentResult> {
@@ -310,7 +314,10 @@ export function registerNativeHost(ctx: NativeHostContext) {
           working.add(chromeId);
           if (attached.has(chromeId)) keepAttached(chromeId);
         },
-        track(command) {
+        command(method, params, deadline = signal) {
+          deadline.throwIfAborted();
+          if (runningTab === undefined) throw new Error('The debugger command has no tab');
+          const command = recoverCommand(runningTab, chrome.debugger.sendCommand({ tabId: runningTab }, method, params), deadline);
           commands.add(command);
           const settled = () => commands.delete(command);
           void command.then(settled, settled);
@@ -570,8 +577,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
         keepAttached(chromeId);
         consoleLogs.set(chromeId, []);
         const setup = (method: string, params?: object) => {
-          signal.throwIfAborted();
-          settingUp = use.track(chrome.debugger.sendCommand({ tabId: chromeId }, method, params));
+          settingUp = use.command(method, params, signal);
           return untilAborted(settingUp, signal);
         };
         await untilAborted(ctx.agentTabsChanged(), signal);
@@ -582,7 +588,9 @@ export function registerNativeHost(ctx: NativeHostContext) {
       });
     } catch (error) {
       // Keep the old attachment owned while a command could still change its domains.
-      const releaseWhenSafe = () => releaseAgent(chromeId, acquired);
+      const releaseWhenSafe = () => {
+        if (isHeld(chromeId, DEBUG_HOLDER)) return releaseAgent(chromeId, acquired);
+      };
       if (settingUp) void settingUp.then(releaseWhenSafe, releaseWhenSafe);
       else void releaseWhenSafe();
       throw await attachRefused(chromeId, error);
@@ -591,10 +599,8 @@ export function registerNativeHost(ctx: NativeHostContext) {
 
   async function debug(chromeId: number, method: string, params: object, use: UseTab) {
     await attach(chromeId, use);
-    use.signal.throwIfAborted();
     // Chromium also lets go of a tab when another extension's frame loads in it mid-command.
-    const command = chrome.debugger.sendCommand({ tabId: chromeId }, method, params);
-    return untilAborted(use.track(recoverCommand(chromeId, command, use.signal)), use.signal).catch(async (error: unknown) => {
+    return untilAborted(use.command(method, params), use.signal).catch(async (error: unknown) => {
       throw await attachRefused(chromeId, error);
     });
   }
@@ -659,14 +665,12 @@ export function registerNativeHost(ctx: NativeHostContext) {
 
   async function dispatchInput(chromeId: number, method: string, down: object, up: object, use: UseTab) {
     await attach(chromeId, use);
-    use.signal.throwIfAborted();
-    const target = { tabId: chromeId };
-    const pressed = use.track(chrome.debugger.sendCommand(target, method, down));
+    const pressed = use.command(method, down);
     try {
       await untilAborted(pressed, use.signal);
     } finally {
       if (isHeld(chromeId, DEBUG_HOLDER)) {
-        await withDeadline(TOOL_TIMEOUT, () => use.track(chrome.debugger.sendCommand(target, method, up)));
+        await withDeadline(TOOL_TIMEOUT, (signal) => use.command(method, up, signal));
       }
     }
   }

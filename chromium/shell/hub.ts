@@ -73,12 +73,19 @@ export function run(name: string, ...args: unknown[]) {
   return true;
 }
 
-/** Sends an event to every open Flecha page. */
 function post(port: chrome.runtime.Port, message: Message) {
   if (!ports.has(port)) return;
   try {
     port.postMessage(message);
-  } catch {
+  } catch (error) {
+    // Chromium reports serialization failures as ordinary errors without closing the port.
+    if (error instanceof Error && (error.message === 'Could not serialize message.' ||
+      error.message.startsWith('Message length exceeded maximum allowed length'))) {
+      if (message.type === 'result' && message.error === undefined) {
+        post(port, { type: 'result', id: message.id, error: error.message });
+      }
+      return;
+    }
     ports.delete(port);
     try { port.disconnect(); } catch { /* The port may already be closed. */ }
   }

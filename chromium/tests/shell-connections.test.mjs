@@ -103,6 +103,40 @@ test('a broken reply port does not drop broadcasts to connected pages', async (t
   assert.deepEqual(events, [{ type: 'event', name: 'ready', args: [true] }]);
 });
 
+test('an unserializable reply fails only its own invoke', async (t) => {
+  globalThis.chrome = { runtime: { onConnect: event() } };
+  t.after(() => delete globalThis.chrome);
+  const { broadcast, handle, listen } = await loadModule('chromium/shell/hub.ts');
+  const delayed = Promise.withResolvers();
+  const circular = {};
+  circular.self = circular;
+  handle({ malformed: () => circular, delayed: () => delayed.promise });
+  listen(Promise.resolve());
+  const received = [];
+  const page = {
+    name: 'flecha', onMessage: event(), onDisconnect: event(),
+    postMessage(message) {
+      try { JSON.stringify(message); }
+      catch { throw new Error('Could not serialize message.'); }
+      received.push(message);
+    },
+    disconnect() { this.onDisconnect.emit(); },
+  };
+  chrome.runtime.onConnect.emit(page);
+  await nextTurn();
+  page.onMessage.emit({ type: 'invoke', name: 'delayed', id: 1, args: [] });
+  page.onMessage.emit({ type: 'invoke', name: 'malformed', id: 2, args: [] });
+  await nextTurn();
+  delayed.resolve('ok');
+  await nextTurn();
+  broadcast('ready', true);
+  assert.deepEqual(received, [
+    { type: 'result', id: 2, error: 'Could not serialize message.' },
+    { type: 'result', id: 1, value: 'ok' },
+    { type: 'event', name: 'ready', args: [true] },
+  ]);
+});
+
 test('agent wait validation leaves room for the transport watchdog', async () => {
   const { AGENT_TOOLS } = await loadModule('chromium/shared/agentTools.ts');
   const { MAX_TOOL_WAIT, toolTimeout, toolWatchdog } = await loadModule('chromium/native-host/protocol.ts');
@@ -247,6 +281,8 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   let failSetup = false;
   let readPending;
   let keyDown;
+  let keyUp;
+  let setupPending;
   const idleMessage = { type: 'error', args: [{ value: 'Logged while idle' }] };
   globalThis.chrome = {
     runtime: { connectNative: () => port },
@@ -259,6 +295,7 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
       async sendCommand(_tab, method, params) {
         if (method === 'Emulation.setFocusEmulationEnabled') emulatedFocus = params.enabled;
         if (method === 'Runtime.enable') {
+          await setupPending?.promise;
           if (!runtimeEnabled && calls.some(([name]) => name === 'disabled')) {
             chrome.debugger.onEvent.emit({ tabId: tab.id }, 'Runtime.consoleAPICalled', idleMessage);
           }
@@ -284,6 +321,7 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
         if (method === 'Input.dispatchKeyEvent') {
           calls.push([params.type]);
           if (params.type === 'rawKeyDown') await keyDown?.promise;
+          if (params.type === 'keyUp') await keyUp?.promise;
         }
       },
     },
@@ -424,6 +462,60 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   await nextTurn();
   assert.equal(results.find(({ id }) => id === 36)?.result.isError, undefined);
   assert.ok(results.some(({ id }) => id === 36), 'a new tool runs even though the old shared cleanup never settles');
+
+  keyDown = Promise.withResolvers();
+  port.onMessage.emit({ type: 'tool', id: 37, name: 'press_key', args: { tabId: phone, key: 'Escape' } });
+  await nextTurn();
+  t.mock.timers.tick(60_000);
+  await nextTurn();
+  assert.deepEqual(calls.slice(-2), [['rawKeyDown'], ['keyUp']]);
+  assert.match(results.find(({ id }) => id === 37).result.content[0].text, /didn’t answer press_key within 60s/);
+  t.mock.timers.tick(59_999);
+  port.onMessage.emit({ type: 'tool', id: 38, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  assert.equal(results.some(({ id }) => id === 38), false, 'the new tool waits for the stalled input session');
+  t.mock.timers.tick(1);
+  await nextTurn();
+  assert.deepEqual(calls.slice(-2), [['detach', tab.id], ['attach', tab.id]]);
+  t.mock.timers.tick(100);
+  await nextTurn();
+  assert.ok(results.some(({ id, result }) => id === 38 && !result.isError), 'the next tool recovers without resolving key-down');
+
+  keyDown = undefined;
+  keyUp = Promise.withResolvers();
+  port.onMessage.emit({ type: 'tool', id: 39, name: 'press_key', args: { tabId: phone, key: 'Escape' } });
+  await nextTurn();
+  t.mock.timers.tick(60_000);
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 39).result.content[0].text, /didn’t answer press_key within 60s/);
+  t.mock.timers.tick(59_999);
+  port.onMessage.emit({ type: 'tool', id: 40, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  t.mock.timers.tick(1);
+  await nextTurn();
+  assert.deepEqual(calls.slice(-2), [['detach', tab.id], ['attach', tab.id]]);
+  t.mock.timers.tick(100);
+  await nextTurn();
+  assert.ok(results.some(({ id, result }) => id === 40 && !result.isError), 'the next tool recovers without resolving key-up');
+
+  t.mock.timers.tick(120_000);
+  await nextTurn();
+  setupPending = Promise.withResolvers();
+  port.onMessage.emit({ type: 'tool', id: 41, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  t.mock.timers.tick(60_000);
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 41).result.content[0].text, /didn’t answer console_logs within 60s/);
+  setupPending = undefined;
+  t.mock.timers.tick(59_999);
+  port.onMessage.emit({ type: 'tool', id: 42, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  t.mock.timers.tick(1);
+  await nextTurn();
+  assert.deepEqual(calls.slice(-2), [['detach', tab.id], ['attach', tab.id]]);
+  t.mock.timers.tick(100);
+  await nextTurn();
+  assert.ok(results.some(({ id, result }) => id === 42 && !result.isError), 'the next tool recovers without resolving debugger setup');
 });
 
 test('releasing a debugger holder queued behind a detach cancels its attachment', async (t) => {

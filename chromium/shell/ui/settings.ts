@@ -172,9 +172,10 @@ const defaultStatus = document.getElementById('defaultBrowserStatus')!;
 
 type EnvironmentDraft = SettingsView['environments'][number];
 type EnvironmentField = 'name' | 'targetsText';
+type FieldEdit = { value: string };
 let environments: EnvironmentDraft[] = [];
 let savedEnvironments: EnvironmentDraft[] = [];
-const environmentDrafts = new Map<string, Partial<EnvironmentDraft>>();
+const environmentDrafts = new Map<string, Partial<Record<EnvironmentField, FieldEdit>>>();
 const incompleteEnvironments = new Map<string, EnvironmentDraft>();
 const removingEnvironments = new Set<string>();
 let environmentWrites = Promise.resolve();
@@ -185,7 +186,10 @@ function reconcileEnvironments(saved: EnvironmentDraft[]) {
   for (const env of saved) incompleteEnvironments.delete(env.id);
   const visible = [...saved, ...incompleteEnvironments.values()]
     .filter((env) => !removingEnvironments.has(env.id))
-    .map((env) => ({ ...env, ...environmentDrafts.get(env.id) }));
+    .map((env) => {
+      const edits = environmentDrafts.get(env.id);
+      return { id: env.id, name: edits?.name?.value ?? env.name, targetsText: edits?.targetsText?.value ?? env.targetsText };
+    });
   if (JSON.stringify(environments) === JSON.stringify(visible)) return;
   environments = visible;
   renderEnvironments();
@@ -219,27 +223,34 @@ function renderEnvironments() {
 }
 
 function wireEnvironmentField(id: string, field: EnvironmentField, input: HTMLInputElement | HTMLTextAreaElement) {
-  input.addEventListener('input', () => {
-    environmentDrafts.set(id, { ...environmentDrafts.get(id), [field]: input.value });
+  function draftField() {
+    const edit = { value: input.value };
+    environmentDrafts.set(id, { ...environmentDrafts.get(id), [field]: edit });
     const visible = environments.find((env) => env.id === id);
-    if (visible) visible[field] = input.value;
-  });
+    if (visible) visible[field] = edit.value;
+    return edit;
+  }
+  input.addEventListener('input', draftField);
   input.addEventListener('change', () => {
-    const value = input.value;
-    const draft = environmentDrafts.get(id);
-    if (draft) {
-      delete draft[field];
-      if (!Object.keys(draft).length) environmentDrafts.delete(id);
-    }
+    const edit = draftField();
     const local = environments.find((env) => env.id === id);
     queueEnvironmentWrite(async () => {
       if (removingEnvironments.has(id)) return;
       const previous = savedEnvironments.find((env) => env.id === id);
-      const edited = { id, name: '', targetsText: '', ...(previous ?? local), [field]: value };
+      const edited = { id, name: '', targetsText: '', ...(previous ?? local), [field]: edit.value };
       const submitted = previous
         ? savedEnvironments.map((env) => env.id === id ? edited : env)
         : [...savedEnvironments, edited];
-      const view = await api.set({ environments: submitted });
+      let view: SettingsView;
+      try {
+        view = await api.set({ environments: submitted });
+      } finally {
+        const current = environmentDrafts.get(id);
+        if (current?.[field] === edit) {
+          delete current[field];
+          if (!current.name && !current.targetsText) environmentDrafts.delete(id);
+        }
+      }
       if (!removingEnvironments.has(id) && !view.environments.some((env) => env.id === id)) {
         incompleteEnvironments.set(id, edited);
       }
