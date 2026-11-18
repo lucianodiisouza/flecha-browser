@@ -187,6 +187,14 @@ const api: FlechaApi = {
   extensionMenu: (id) => void showMenu('extensionMenu', id),
   moveExtension: cmd('moveExtension'),
   setExtensionsCollapsed: cmd('setExtensionsCollapsed'),
+  onRevealTab: (cb) => on('reveal-tab', cb),
+  revealTab: cmd('revealTab'),
+  setFolderEmoji: cmd('setFolderEmoji'),
+  resetSpaceTabs: cmd('resetSpaceTabs'),
+  mediaControl: cmd('mediaControl'),
+  captureFullPage: cmd('captureFullPage'),
+  copyQuote: cmd('copyQuote'),
+  exportSpaces: cmd('exportSpaces'),
 };
 
 window.flecha = api;

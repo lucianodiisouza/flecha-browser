@@ -43,6 +43,8 @@ export const ICONS = {
   keyboard: 'M2 4.5h12v7H2zM4.5 7h.01M6.5 7h.01M8.5 7h.01M10.5 7h.01M5 9.5h6',
   volume: 'M2.5 6.5h2.5L8 4v8L5 9.5H2.5zM10.5 6a3 3 0 0 1 0 4M12 4.5a5 5 0 0 1 0 7',
   muted: 'M2.5 6.5h2.5L8 4v8L5 9.5H2.5zM10.5 6.5l3 3M13.5 6.5l-3 3',
+  play: 'M5.5 3.5v9l7-4.5z',
+  pause: 'M5.5 3.5v9M10.5 3.5v9',
   miniWindow: 'M2.5 3.5h11v9h-11zM2.5 6h11M8.5 8.5h3v2h-3z',
   trash: 'M3 4.5h10M6.5 4.5v-1h3v1M4.5 4.5l.6 8a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-8',
   check: 'M3 8.5 6.5 12 13 4.5',

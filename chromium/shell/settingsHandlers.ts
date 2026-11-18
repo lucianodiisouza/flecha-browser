@@ -28,6 +28,17 @@ export interface SettingsContext {
   defaultBrowser?(): { isDefault: boolean; canSet: boolean };
   /** Asks macOS to make Flecha the default browser. */
   makeDefaultBrowser?(): Promise<void>;
+  /** Opens an archived address again, as a Today tab. */
+  reopen?(url: string): void;
+  /** Clears the cookies and site data of every Space that keeps its own. */
+  clearIsolatedSpaces?(): Promise<void>;
+}
+
+/** Chromium's "block third-party cookies" (chrome.privacy, which needs the privacy permission). */
+async function applyThirdPartyCookies(block: boolean) {
+  const setting = chrome.privacy?.websites?.thirdPartyCookiesAllowed;
+  if (!setting) return;
+  await setting.set({ value: !block });
 }
 
 /** What a stub answers with, so the page can say so instead of doing nothing. */
@@ -94,6 +105,7 @@ export function registerSettings(ctx: SettingsContext) {
         agent: async () => {},
         // features/adblock.ts follows state.adBlock itself, whoever sets it.
         adBlock: async () => {},
+        thirdPartyCookies: (block) => applyThirdPartyCookies(block),
       });
       ctx.broadcastState();
       return { ...view(), notice };
@@ -126,7 +138,46 @@ export function registerSettings(ctx: SettingsContext) {
     'settings:tabs-menu-run': (run: TabsMenuRun) => (run && typeof run === 'object' ? tabs.run(run) : undefined),
     'settings:show-tab': (tabId: string) => tabs.show(tabId),
     'settings:answer': (id: number, response: number) => questions.get(id)?.(Number(response)),
+
+    // Settings → Archive. Reopening goes through the sidebar's own command, so it opens like any new tab.
+    'settings:archive': () => store.state.archive,
+    'settings:edit-archive': async (edit: { op: string; closedAt?: number; url?: string }) => {
+      if (edit?.op === 'clear') store.clearArchive();
+      else if (edit?.op === 'reopen' || edit?.op === 'remove') {
+        const item = store.removeArchived(Number(edit.closedAt), String(edit.url));
+        if (item && edit.op === 'reopen') ctx.reopen?.(item.url);
+      }
+      return store.state.archive;
+    },
+    // Settings → Privacy. Isolated Spaces keep their cookies in partitions of their own, cleared one by one.
+    'settings:clear-browsing-data': async (request: { sinceHours?: number; history?: boolean; cookies?: boolean; cache?: boolean }) => {
+      const hours = Number(request?.sinceHours) || 0;
+      const since = hours > 0 ? Date.now() - hours * 3_600_000 : 0;
+      const types: chrome.browsingData.DataTypeSet = {};
+      if (request?.history) Object.assign(types, { history: true, downloads: true, formData: true });
+      if (request?.cookies) Object.assign(types, { cookies: true, localStorage: true, indexedDB: true, cacheStorage: true, serviceWorkers: true, fileSystems: true, webSQL: true });
+      if (request?.cache) Object.assign(types, { cache: true });
+      if (!Object.keys(types).length) return;
+      await chrome.browsingData.remove({ since }, types);
+      if (request?.cookies) await ctx.clearIsolatedSpaces?.();
+    },
   });
+
+  // The Archive pane follows tabs being archived while it's open.
+  // The list changes in place, so compare a summary of it.
+  const archiveKey = () => {
+    const a = store.state.archive;
+    return `${a.length}:${a[0]?.closedAt}:${a[0]?.url}:${a[a.length - 1]?.closedAt}`;
+  };
+  let lastArchive = archiveKey();
+  store.onChange(() => {
+    const key = archiveKey();
+    if (key === lastArchive) return;
+    lastArchive = key;
+    broadcast('settings:archive', store.state.archive);
+  });
+  // Chromium keeps the setting itself; this puts it back if the Store and Chromium disagree.
+  if (store.state.blockThirdPartyCookies) void applyThirdPartyCookies(true);
 
   return { tabs, view };
 }

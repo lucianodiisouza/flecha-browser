@@ -1,8 +1,13 @@
-import type { DetectedBrowser, RecordedKey, SettingsApi, SettingsView } from '../../shared/types';
+import type { ArchivedTab, DetectedBrowser, LinkRule, RecordedKey, SettingsApi, SettingsView } from '../../shared/types';
 import { browserDetail, importSummary } from './browserImport.js';
 import { ICONS, type IconName } from './icons.js';
 import { setupTabsPane } from './tabsPane.js';
 import { IS_MAC } from '../lib/shortcuts';
+import { askDialog } from '../settingsUi';
+
+/** Yes or no in Settings' own dialog: the destructive button first, Cancel the default. */
+const confirmed = async (message: string, detail: string, yes: string) =>
+  (await askDialog({ message, detail, buttons: [yes, 'Cancel'], defaultId: 1, cancelId: 1 })) === 0;
 
 declare global {
   interface Window {
@@ -493,6 +498,10 @@ function render(view: SettingsView) {
     renderShortcuts();
   }
   openLinksInFlechinha.checked = view.openLinksInFlechinha;
+  blockThirdPartyCookies.checked = view.blockThirdPartyCookies;
+  linkRules = view.linkRules;
+  ruleSpaces = view.spaces;
+  renderLinkRules();
   showLocalServers.checked = view.showLocalServers;
   document.getElementById('ignoredPortsRow')!.hidden = !view.ignoredLocalPorts.length;
   document.getElementById('ignoredPorts')!.textContent = view.ignoredLocalPorts.map((p) => `:${p}`).join(', ');
@@ -539,5 +548,165 @@ searchEngine.addEventListener('change', async () =>
   render(await api.set({ searchEngine: searchEngine.value as SettingsView['searchEngine'] })),
 );
 adBlock.addEventListener('change', async () => render(await api.set({ adBlock: adBlock.checked })));
+
+// ---- Privacy: third-party cookies and clearing browsing data -------------------------------
+
+const blockThirdPartyCookies = document.getElementById('blockThirdPartyCookies') as HTMLInputElement;
+blockThirdPartyCookies.addEventListener('change', async () => render(await api.set({ blockThirdPartyCookies: blockThirdPartyCookies.checked })));
+
+const clearChecks = ['clearHistory', 'clearCookies', 'clearCache'].map((id) => document.getElementById(id) as HTMLInputElement);
+const clearButton = document.getElementById('clearData') as HTMLButtonElement;
+const clearStatus = document.getElementById('clearStatus')!;
+const syncClearButton = () => (clearButton.disabled = !clearChecks.some((c) => c.checked));
+for (const check of clearChecks) check.addEventListener('change', syncClearButton);
+clearButton.addEventListener('click', async () => {
+  const range = document.getElementById('clearRange') as HTMLSelectElement;
+  const [history, cookies, cache] = clearChecks.map((c) => c.checked);
+  const what = [history && 'history', cookies && 'cookies and site data', cache && 'cached files'].filter(Boolean).join(', ');
+  if (!(await confirmed(`Clear ${what}?`, `From ${range.selectedOptions[0].textContent!.toLowerCase()}, in every Space. This can’t be undone.`, 'Clear'))) return;
+  clearButton.disabled = true;
+  clearStatus.textContent = 'Clearing…';
+  try {
+    await api.clearBrowsingData({ sinceHours: Number(range.value), history, cookies, cache });
+    clearStatus.textContent = 'Cleared.';
+  } catch {
+    clearStatus.textContent = 'Couldn’t clear everything. Try again.';
+  }
+  syncClearButton();
+});
+
+// ---- Air Traffic Control ---------------------------------------------------------------
+
+let linkRules: LinkRule[] = [];
+let ruleSpaces: SettingsView['spaces'] = [];
+const spaceName = (id: string) => {
+  const space = ruleSpaces.find((s) => s.id === id);
+  return space ? `${space.emoji ? `${space.emoji} ` : ''}${space.name}` : '';
+};
+
+function renderLinkRules() {
+  const select = document.getElementById('linkRuleSpace') as HTMLSelectElement;
+  const chosen = select.value;
+  select.replaceChildren(...ruleSpaces.map((s) => new Option(spaceName(s.id), s.id)));
+  if (ruleSpaces.some((s) => s.id === chosen)) select.value = chosen;
+  document.getElementById('linkRules')!.replaceChildren(
+    ...linkRules.map((rule) => {
+      const row = document.createElement('div');
+      row.className = 'list-row';
+      const match = Object.assign(document.createElement('span'), { className: 'grow mono', textContent: rule.match });
+      const arrow = Object.assign(document.createElement('small'), { textContent: `→ ${spaceName(rule.spaceId)}` });
+      const remove = Object.assign(document.createElement('button'), { className: 'icon-only', type: 'button', title: 'Remove rule' });
+      remove.append(icon('close'));
+      remove.onclick = async () => render(await api.set({ linkRules: linkRules.filter((r) => r.id !== rule.id) }));
+      row.append(match, arrow, remove);
+      return row;
+    }),
+  );
+}
+
+document.getElementById('linkRuleForm')!.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('linkRuleMatch') as HTMLInputElement;
+  const spaceId = (document.getElementById('linkRuleSpace') as HTMLSelectElement).value;
+  const match = input.value.trim();
+  if (!match || !spaceId) return input.focus();
+  render(await api.set({ linkRules: [...linkRules, { id: crypto.randomUUID(), match, spaceId }] }));
+  input.value = '';
+});
+
+// ---- Tabs & Spaces: export and import ------------------------------------------------------
+
+document.getElementById('tm-export')!.addEventListener('click', () => api.exportSpaces());
+const importFile = document.getElementById('tm-import-file') as HTMLInputElement;
+document.getElementById('tm-import')!.addEventListener('click', () => importFile.click());
+importFile.addEventListener('change', async () => {
+  const file = importFile.files?.[0];
+  importFile.value = '';
+  if (!file) return;
+  if (!(await confirmed(`Replace your Spaces with those in “${file.name}”?`, 'Your Spaces, pinned tabs and favorites become those in the file. Export first to keep a copy of what you have now.', 'Replace'))) return;
+  await api.importSpaces(await file.text());
+});
+
+// ---- Archive ---------------------------------------------------------------------------
+
+let archive: ArchivedTab[] = [];
+const archiveSearch = document.getElementById('archiveSearch') as HTMLInputElement;
+
+function archiveIcon(url: string) {
+  const img = document.createElement('img');
+  img.className = 'favicon';
+  img.alt = '';
+  // The browser's own icon cache (the favicon permission), where there is one.
+  if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
+    img.src = chrome.runtime.getURL(`/_favicon/?pageUrl=${encodeURIComponent(url)}&size=32`);
+  }
+  return img;
+}
+
+const dayLabel = (time: number) => {
+  const day = new Date(time).toDateString();
+  if (day === new Date().toDateString()) return 'Today';
+  if (day === new Date(Date.now() - 86_400_000).toDateString()) return 'Yesterday';
+  return new Date(time).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+};
+
+function renderArchive() {
+  const q = archiveSearch.value.trim().toLowerCase();
+  const items = archive.filter((a) => !q || a.title.toLowerCase().includes(q) || a.url.toLowerCase().includes(q));
+  const list = document.getElementById('archiveList')!;
+  (document.getElementById('clearArchive') as HTMLButtonElement).disabled = !archive.length;
+  if (!items.length) {
+    list.replaceChildren(Object.assign(document.createElement('div'), { className: 'empty', textContent: archive.length ? 'Nothing matches.' : 'The archive is empty.' }));
+    return;
+  }
+  const rows: HTMLElement[] = [];
+  let day = '';
+  for (const item of items.slice(0, 500)) {
+    const label = dayLabel(item.closedAt);
+    if (label !== day) rows.push(Object.assign(document.createElement('div'), { className: 'day', textContent: (day = label) }));
+    const row = document.createElement('div');
+    row.className = 'list-row';
+    row.title = item.url;
+    let site = item.url;
+    try {
+      site = new URL(item.url).hostname.replace(/^www\./, '');
+    } catch {
+      // Not a web address; show it whole.
+    }
+    const title = Object.assign(document.createElement('span'), { className: 'grow', textContent: item.title || item.url });
+    const sub = Object.assign(document.createElement('small'), {
+      textContent: `${site} · ${new Date(item.closedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`,
+    });
+    const remove = Object.assign(document.createElement('button'), { className: 'icon-only', type: 'button', title: 'Remove from the archive' });
+    remove.append(icon('close'));
+    remove.onclick = async (e) => {
+      e.stopPropagation();
+      archive = await api.editArchive({ op: 'remove', closedAt: item.closedAt, url: item.url });
+      renderArchive();
+    };
+    row.onclick = async () => {
+      archive = await api.editArchive({ op: 'reopen', closedAt: item.closedAt, url: item.url });
+      renderArchive();
+    };
+    row.append(archiveIcon(item.url), title, sub, remove);
+    rows.push(row);
+  }
+  list.replaceChildren(...rows);
+}
+
+archiveSearch.addEventListener('input', renderArchive);
+document.getElementById('clearArchive')!.addEventListener('click', async () => {
+  if (!(await confirmed(archive.length === 1 ? 'Forget the archived tab?' : `Forget all ${archive.length} archived tabs?`, 'They won’t come up in the command bar any more. This can’t be undone.', 'Clear Archive'))) return;
+  archive = await api.editArchive({ op: 'clear' });
+  renderArchive();
+});
+api.onArchive((items) => {
+  archive = items;
+  renderArchive();
+});
+api.archive().then((items) => {
+  archive = items;
+  renderArchive();
+});
 
 api.get().then(render);

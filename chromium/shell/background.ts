@@ -6,13 +6,14 @@
  * pinned tabs costs nothing until you use them. Chromium tabs that pages open themselves
  * (links to a new tab, window.open) become Flecha tabs.
  */
-import { Store, findFolder, pinnedTabIds, type StatePersistence } from '../shared/store';
+import { Store, findFolder, linkRuleSpace, pinnedTabIds, type StatePersistence } from '../shared/store';
 import { resolveInput, searchEngine } from './lib/url';
 import { shortcutHints, type ShortcutId } from './lib/shortcuts';
 import { describe as describeEnvironment } from './lib/environments';
-import type { BrowserState, DropTarget, SearchEngineId, TabInfo, UiState } from '../shared/types';
+import type { BrowserState, DropTarget, PinnedNode, SearchEngineId, TabInfo, UiState } from '../shared/types';
 import { broadcast, call, handle, listen, onConnect } from './hub';
 import { drmSite } from './lib/drm';
+import { hold, release, send } from './features/debuggee';
 import type { MenuRun } from './protocol';
 import type { MenuEntry } from './settingsUi';
 import { openSettings, registerSettings } from './settingsHandlers';
@@ -142,6 +143,9 @@ async function start() {
   );
   const rememberLive = () => void chrome.storage.session.set({ [sessionKey(LIVE_KEY)]: Object.fromEntries(live) });
 
+  /** The tab that last played sound, for the sidebar's media card (not saved). */
+  let media: UiState['media'];
+
   function uiState(): UiState {
     const tabs = Object.fromEntries(Object.entries(store.state.tabs).map(([id, { history, ...tab }]) => [id, tab]));
     return {
@@ -160,6 +164,8 @@ async function start() {
       shortcuts: shortcutHints(store.state),
       defaultBrowser,
       agent: nativeHost?.agentActivity(),
+      // Only while it's still a tab, and it isn't the one on screen.
+      media: media && store.state.tabs[media.tabId] && live.has(media.tabId) ? media : undefined,
       nav: navState,
     };
   }
@@ -459,7 +465,9 @@ async function start() {
     // first tab arrives before openFlechinha() has told us its window.
     if (await isFlechinhaWindow(tab.windowId)) return;
     const opener = tab.openerTabId !== undefined ? flechaIdFor(tab.openerTabId) : undefined;
-    const added = addTab(url(tab), { activate: tab.active, afterTabId: opener });
+    // A link from another app (no page opened it): Air Traffic Control may send it to a Space.
+    const spaceId = opener === undefined ? linkRuleSpace(store.state.linkRules, url(tab)) : undefined;
+    const added = addTab(url(tab), { activate: tab.active, afterTabId: opener, spaceId });
     live.set(added.id, tab.id!);
     rememberLive();
     // Opened from a page, it is in that page's partition, which may not be its Space's.
@@ -479,7 +487,12 @@ async function start() {
     if (info.favIconUrl && !blank) patch.favicon = info.favIconUrl;
     if (blank) patch.favicon = undefined;
     if (info.status) patch.loading = info.status === 'loading';
-    if (info.audible !== undefined) patch.audible = info.audible;
+    if (info.audible !== undefined) {
+      patch.audible = info.audible;
+      // The media card follows the last tab that played; pausing keeps it, so it can play again.
+      if (info.audible) media = { tabId: id, playing: true };
+      else if (media?.tabId === id) media = { tabId: id, playing: false };
+    }
     if (info.mutedInfo) patch.muted = info.mutedInfo.muted;
     store.updateTab(id, patch);
     if (info.status === 'complete' && tab.active) void refreshNav().then(sendState);
@@ -515,6 +528,37 @@ async function start() {
       afterTabId: activate ? undefined : store.activeSpace.activeTabId,
     });
 
+  /** A page from a Flechinha becomes an active Today tab: in the current Space, or in `spaceId`'s. */
+  function adoptTab(chromeId: number, spaceId?: string) {
+    void chrome.tabs.get(chromeId).then((tab) => {
+      if (flechaIdFor(chromeId)) return;
+      const id = addTab(url(tab), { activate: true, spaceId }).id;
+      live.set(id, chromeId);
+      rememberLive();
+      void checkOpenedTab(id, chromeId);
+    });
+  }
+
+  // Air Traffic Control for links from other apps that open in a Flechinha: the first page a
+  // Flechinha loads goes to its rule's Space instead, as Arc sends it past Little Arc.
+  const flechinhasSeen = new Set<number>();
+  chrome.windows.onRemoved.addListener((id) => flechinhasSeen.delete(id));
+  chrome.webNavigation.onCommitted.addListener(({ tabId, frameId, url: address }) => {
+    if (frameId !== 0 || incognito || !store.state.linkRules?.length) return;
+    void chrome.tabs.get(tabId).then(
+      async (tab) => {
+        if (flechinhasSeen.has(tab.windowId) || !(await isFlechinhaWindow(tab.windowId))) return;
+        flechinhasSeen.add(tab.windowId);
+        const spaceId = linkRuleSpace(store.state.linkRules, address);
+        if (!spaceId || typeof chrome.flechaPrivate?.openInFlecha !== 'function') return;
+        adoptTab(await chrome.flechaPrivate.openInFlecha(tab.windowId), spaceId);
+        // Moved this early, the emptied Flechinha can stay behind as a blank window.
+        void chrome.windows.remove(tab.windowId).catch(() => undefined);
+      },
+      () => undefined,
+    );
+  });
+
   // ---- context menus, as the Electron spike's tabMenu / spaceMenu ----------------
   // Built here, where the Store is; the page that asked draws them (windowUi.ts).
 
@@ -532,6 +576,7 @@ async function start() {
     else if (space.activeTabId && space.activeTabId !== tabId) split.push({ label: 'Open in Split View', run: does('splitWith', tabId) });
     const name = tab.customTitle ?? tab.title;
     const otherSpaces = store.state.spaces.filter((s) => s.id !== store.locate(tabId)?.space?.id);
+    const tabSpace = store.locate(tabId)?.space ?? space;
     return [
       ...split,
       ...(split.length ? [SEPARATOR] : []),
@@ -548,6 +593,9 @@ async function start() {
         : [
             { label: zone === 'today' ? 'Pin Tab' : 'Unpin Tab', run: does('togglePin', tabId) },
             { label: 'Move to New Folder', enabled: zone !== 'favorites', run: does('moveToNewFolder', tabId) },
+            ...(zone !== 'favorites' && folderChoices(tabSpace).length
+              ? [{ label: 'Move to Folder', submenu: folderChoices(tabSpace).map((f) => ({ label: f.label, run: does('moveToFolder', tabId, f.id) })) }]
+              : []),
             { label: zone === 'favorites' ? 'Remove from Favorites' : 'Add to Favorites', run: does('toggleFavorite', tabId) },
             {
               label: 'Move to Space',
@@ -576,12 +624,28 @@ async function start() {
     return [
       { label: 'Edit Space…', run: does('editSpace', spaceId) },
       { label: 'New Folder', run: does('newFolder') },
+      { label: 'Reset Pinned Tabs', run: does('resetSpaceTabs', spaceId) },
       SEPARATOR,
       { label: 'Separate Cookies and Logins', checked: !!space.isolated, run: does('setSpaceIsolated', spaceId, !space.isolated) },
       ...(space.isolated && canIsolate ? [{ label: 'Clear Cookies and Site Data…', run: { clearSpaceData: spaceId } }] : []),
       SEPARATOR,
       { label: 'Delete Space…', enabled: store.state.spaces.length > 1, run: { deleteSpace: spaceId } },
     ];
+  }
+
+  /** A Space's folders, nested ones as "Docs › Reading", for "Move to Folder". */
+  function folderChoices(space: { pinned: PinnedNode[] }) {
+    const out: Array<{ id: string; label: string }> = [];
+    const walk = (nodes: PinnedNode[], path: string) => {
+      for (const n of nodes) {
+        if (n.kind !== 'folder') continue;
+        const label = `${path}${n.emoji ? `${n.emoji} ` : ''}${n.name}`;
+        out.push({ id: n.id, label });
+        walk(n.children, `${label} › `);
+      }
+    };
+    walk(space.pinned, '');
+    return out.slice(0, 40);
   }
 
   function folderMenu(folderId: string): MenuEntry<MenuRun>[] | undefined {
@@ -595,6 +659,8 @@ async function start() {
     const markdown = tabs.map((t) => `- [${t.customTitle ?? t.title}](${t.url})`);
     return [
       { label: 'Rename…', run: { rename: folderId } },
+      { label: 'Change Icon…', run: { rename: `icon:${folderId}` } },
+      ...(folder.emoji ? [{ label: 'Remove Icon', run: does('setFolderEmoji', folderId, '') }] : []),
       { label: 'New Folder Inside', run: does('newFolderIn', folderId) },
       { label: folder.open ? 'Collapse' : 'Expand', run: does('toggleFolder', folderId) },
       SEPARATOR,
@@ -664,6 +730,60 @@ async function start() {
       store.moveFolder(String(id), { spaceId: store.activeSpace.id, folderId: to?.folderId, beforeId: to?.beforeId }),
     ),
     newFolderIn: spacesOnly((parentId: string) => store.newFolder('New Folder', { parentId: String(parentId) })),
+    moveToFolder: spacesOnly((tabId: string, folderId: string) => store.moveTab(String(tabId), { zone: 'pinned', folderId: String(folderId) })),
+    setFolderEmoji: spacesOnly((folderId: string, emoji: string) => store.setFolderEmoji(String(folderId), typeof emoji === 'string' ? emoji : undefined)),
+    revealTab: (tabId?: string) => {
+      const id = typeof tabId === 'string' ? tabId : store.activeTab?.id;
+      if (!id || !store.state.tabs[id]) return;
+      store.revealTab(id);
+      // A hidden sidebar slides out to show it.
+      if (!store.state.sidebarVisible) {
+        frame.sidebarPeek = true;
+        sendState();
+      }
+      broadcast('reveal-tab', id);
+    },
+    resetSpaceTabs: spacesOnly((spaceId: string) => {
+      const moved = store.resetPinned(String(spaceId));
+      for (const { tabId, url: address } of moved) {
+        const chromeId = live.get(tabId);
+        if (chromeId !== undefined) void chrome.tabs.update(chromeId, { url: address });
+      }
+      broadcast('flash', moved.length ? `${moved.length} pinned tab${moved.length === 1 ? '' : 's'} reset` : 'Pinned tabs are already home');
+    }),
+    mediaControl: (tabId: string, action: string) => {
+      const chromeId = live.get(String(tabId));
+      if (action === 'dismiss' || chromeId === undefined) {
+        media = undefined;
+        return sendState();
+      }
+      void chrome.scripting
+        .executeScript({ target: { tabId: chromeId, allFrames: true }, func: toggleMediaInPage })
+        .then((results) => {
+          const playing = results.some((r) => r.result === 'playing');
+          media = { tabId: String(tabId), playing };
+          sendState();
+        })
+        .catch(() => broadcast('flash', 'This page’s media can’t be controlled from here'));
+    },
+    captureFullPage: () => captureFullPage().catch((err) => {
+      console.error('Flecha shell: full-page capture failed', err);
+      broadcast('flash', 'This page can’t be captured');
+    }),
+    copyQuote: async () => {
+      const tab = store.activeTab;
+      const chromeId = activeChromeId();
+      if (!tab || chromeId === undefined) return;
+      const results = await chrome.scripting
+        .executeScript({ target: { tabId: chromeId, allFrames: true }, func: () => String(getSelection() ?? '').trim() })
+        .catch(() => []);
+      const text = results.map((r) => r.result).find((t) => typeof t === 'string' && t);
+      if (!text) return broadcast('flash', 'Select some text on the page first');
+      const quote = String(text).split(/\n+/).map((line) => `> ${line}`).join('\n');
+      return copyToClipboard(`${quote}\n>\n> — [${tab.customTitle ?? tab.title}](${tab.url})`, 'Quote copied');
+    },
+    exportSpaces: spacesOnly(() => exportSpaces()),
+    importSpaces: spacesOnly((json: string) => call('importFlechaState', String(json))),
     // Ungroup keeps its tabs where the folder was; otherwise they go to the archive.
     deleteFolder: spacesOnly((id: string, keepTabs: boolean) => void unload(store.deleteFolder(String(id), !!keepTabs))),
     unloadFolder: spacesOnly((id: string) => {
@@ -813,6 +933,48 @@ async function start() {
     broadcast('clipboard', await mainWindow(), { text, message });
   }
 
+  /** The whole page as a PNG in Downloads, through the DevTools protocol (captureVisibleTab stops at the window). */
+  async function captureFullPage() {
+    const tab = store.activeTab;
+    const chromeId = activeChromeId();
+    if (!tab || chromeId === undefined || !isWebPage(tab.url)) return broadcast('flash', 'Open a web page to capture it');
+    if (!(await hold(chromeId, 'capture'))) return broadcast('flash', 'This page can’t be captured');
+    try {
+      broadcast('flash', 'Capturing the page…');
+      const metrics = await send<{ cssContentSize: { width: number; height: number } }>(chromeId, 'Page.getLayoutMetrics');
+      const size = metrics?.cssContentSize;
+      // Very tall pages are cut at 16384px, Chromium's largest image.
+      const clip = size && { x: 0, y: 0, width: Math.ceil(size.width), height: Math.min(Math.ceil(size.height), 16384), scale: 1 };
+      const shot = await send<{ data: string }>(chromeId, 'Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, ...(clip ? { clip } : {}) });
+      if (!shot?.data) throw new Error('no image');
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      // Local time, as the Mac's own screenshots are named.
+      const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} at ${pad(now.getHours())}.${pad(now.getMinutes())}.${pad(now.getSeconds())}`;
+      const name = `${host(tab.url) || 'page'} ${stamp}.png`;
+      await chrome.downloads.download({ url: `data:image/png;base64,${shot.data}`, filename: name, saveAs: false });
+      broadcast('flash', 'Full-page screenshot saved to Downloads');
+    } finally {
+      await release(chromeId, 'capture');
+    }
+  }
+
+  /** Every Space, pinned tab and favorite as a JSON file in Downloads; Today and the archive come along. */
+  async function exportSpaces() {
+    // The agent token is a password to this browser: it stays out of files.
+    const { agent, window: _bounds, ...state } = store.state;
+    const tabs = Object.fromEntries(Object.entries(state.tabs).map(([id, { loading, audible, history, ...t }]) => [id, t]));
+    const json = JSON.stringify({ ...state, tabs }, null, 2);
+    const now = new Date();
+    const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    await chrome.downloads.download({
+      url: `data:application/json;base64,${base64(new TextEncoder().encode(json))}`,
+      filename: `Flecha Spaces ${date}.json`,
+      saveAs: false,
+    });
+    broadcast('flash', `${state.spaces.length} Spaces exported to Downloads`);
+  }
+
   /** ⌘1–⌘8 pick a tab by position (favorites, then pinned, then today); ⌘9 the last one. */
   function selectTabIndex(index: number) {
     const ids = store.allTabIds(store.activeSpace);
@@ -933,6 +1095,11 @@ async function start() {
       await call('makeDefaultBrowser');
       await refreshDefaultBrowser();
     },
+    reopen: (address) => void openTab(address),
+    clearIsolatedSpaces: async () => {
+      if (!canIsolate) return;
+      for (const space of store.state.spaces) if (space.isolated) await chrome.flechaPrivate.clearPartition(space.id).catch(() => undefined);
+    },
   });
   void refreshDefaultBrowser();
   chrome.windows.onFocusChanged.addListener((id) => id !== chrome.windows.WINDOW_ID_NONE && void refreshDefaultBrowser());
@@ -986,15 +1153,7 @@ async function start() {
       store.closeTab(id);
     },
     // Back from a Flechinha ("Open in Flecha"): an active Today tab in the current Space.
-    adoptTab: (chromeId) => {
-      void chrome.tabs.get(chromeId).then((tab) => {
-        if (flechaIdFor(chromeId)) return;
-        const id = addTab(url(tab), { activate: true }).id;
-        live.set(id, chromeId);
-        rememberLive();
-        void checkOpenedTab(id, chromeId);
-      });
-    },
+    adoptTab: (chromeId) => adoptTab(chromeId),
   });
   sync();
   wantFavicons();
@@ -1008,6 +1167,43 @@ async function start() {
 }
 
 const url = (tab: chrome.tabs.Tab) => tab.pendingUrl || tab.url || '';
+const host = (address: string) => {
+  try {
+    return new URL(address).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+};
+
+/** Base64 in chunks: spreading a big state file into one call overflows the stack. */
+function base64(bytes: Uint8Array) {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
+/**
+ * Runs in the page (chrome.scripting): pauses whatever plays, or plays what was playing last.
+ * Answers "playing" or "paused" for the frame that has media, nothing for frames without.
+ */
+function toggleMediaInPage(): 'playing' | 'paused' | undefined {
+  const all = [...document.querySelectorAll<HTMLMediaElement>('video, audio')];
+  if (!all.length) return undefined;
+  const playing = all.filter((m) => !m.paused);
+  if (playing.length) {
+    for (const m of playing) {
+      m.pause();
+      m.dataset.flechaPaused = '1';
+    }
+    return 'paused';
+  }
+  const resume = all.filter((m) => m.dataset.flechaPaused);
+  for (const m of resume.length ? resume : all.slice(0, 1)) {
+    delete m.dataset.flechaPaused;
+    void m.play().catch(() => undefined);
+  }
+  return 'playing';
+}
 /** Flecha's own pages (the sidebar opened in a tab while debugging, say) aren't browsing tabs. */
 const isShellPage = (tab: chrome.tabs.Tab) => url(tab).startsWith(chrome.runtime.getURL(''));
 /** Sites worth suggesting: not Flecha's or Chromium's own pages. */
