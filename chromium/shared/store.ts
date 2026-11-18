@@ -239,6 +239,18 @@ export class Store {
     this.changed();
   }
 
+  /** Puts each half of the split on the other side; the divider keeps each page's width. */
+  swapSplit() {
+    const space = this.activeSpace;
+    if (!space.split || space.splitMode === 'responsive') return;
+    const [left, right] = space.split;
+    space.split = [right, left];
+    if (space.splitRatio !== undefined) space.splitRatio = 1 - space.splitRatio;
+    const [i, j] = [space.today.indexOf(left), space.today.indexOf(right)];
+    if (i >= 0 && j >= 0) [space.today[i], space.today[j]] = [right, left];
+    this.changed();
+  }
+
   /** Ends the split. A responsive mirror has no life of its own, so its id is returned for closing. */
   unsplit(): string | undefined {
     const space = this.activeSpace;
@@ -524,11 +536,19 @@ export class Store {
   setFolderEmoji(folderId: string, emoji: string | undefined) {
     const folder = this.findFolder(folderId)?.folder;
     if (!folder) return;
-    const value = emoji?.trim();
-    // One emoji, whole (flags and skin tones are several code points): the first grapheme.
-    const first = value ? new Intl.Segmenter().segment(value)[Symbol.iterator]().next().value?.segment : undefined;
+    const first = firstGrapheme(emoji);
     if (first) folder.emoji = first;
     else delete folder.emoji;
+    this.changed();
+  }
+
+  /** A pinned tab's own icon: an emoji in place of the site's. */
+  setTabEmoji(tabId: string, emoji: string | undefined) {
+    const tab = this.state.tabs[tabId];
+    if (!tab) return;
+    const first = firstGrapheme(emoji);
+    if (first) tab.emoji = first;
+    else delete tab.emoji;
     this.changed();
   }
 
@@ -649,8 +669,10 @@ export class Store {
       s.spaces.push({
         id: randomUUID(),
         name: imported.name,
-        emoji: imported.emoji,
-        color: SPACE_COLORS[n % SPACE_COLORS.length],
+        emoji: imported.emoji ?? SPACE_EMOJIS[n % SPACE_EMOJIS.length],
+        color: imported.color ?? SPACE_COLORS[n % SPACE_COLORS.length],
+        // Spaces on Arc's default profile shared cookies there (and get the imported ones here).
+        ...(imported.isolated ? { isolated: true } : {}),
         pinned: this.importNodes(imported.pinned),
         today: imported.today.map((t) => this.importTab(t, false)),
       });
@@ -876,4 +898,10 @@ function removePinned(nodes: PinnedNode[], tabId: string) {
     if (n.kind === 'tab' && n.tabId === tabId) nodes.splice(i, 1);
     else if (n.kind === 'folder') removePinned(n.children, tabId);
   }
+}
+
+/** One emoji, whole (flags and skin tones are several code points): the first grapheme. */
+function firstGrapheme(value: string | undefined) {
+  const text = value?.trim();
+  return text ? new Intl.Segmenter().segment(text)[Symbol.iterator]().next().value?.segment : undefined;
 }

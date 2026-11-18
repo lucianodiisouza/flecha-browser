@@ -26,7 +26,39 @@ interface ArcSpace {
   id: string;
   title?: string | null;
   containerIDs?: unknown[];
-  customInfo?: { iconType?: { emoji_v2?: string } };
+  customInfo?: { iconType?: { emoji_v2?: string; icon?: string }; windowTheme?: { primaryColorPalette?: { midTone?: ArcColor } } };
+  /** `{ default: true }`, or `{ custom: … }` for a Space on a profile of its own. */
+  profile?: Record<string, unknown>;
+}
+
+interface ArcColor {
+  red?: number;
+  green?: number;
+  blue?: number;
+}
+
+/** Arc's built-in Space icons (SF Symbols names) that have a close emoji; the rest get none. */
+const ARC_ICONS: Record<string, string> = {
+  checkbox: '☑️', star: '⭐', heart: '❤️', briefcase: '💼', book: '📖', house: '🏠', home: '🏠', bolt: '⚡',
+  flame: '🔥', leaf: '🌿', globe: '🌐', gamecontroller: '🎮', music: '🎵', camera: '📷', paintbrush: '🖌️',
+  hammer: '🔨', flag: '🚩', bookmark: '🔖', cart: '🛒', airplane: '✈️', graduationcap: '🎓', terminal: '💻',
+  moon: '🌙', sun: '☀️', cloud: '☁️', person: '👤', bubble: '💬', envelope: '✉️', calendar: '📅', folder: '📁',
+};
+
+/**
+ * Arc's theme color as a Flecha Space color: its mid tone, mixed 40/60 with white, so it reads
+ * as the same pastel as Flecha's own colors. Arc stores extended sRGB, which can go past 0–1.
+ */
+export function arcColor(color: ArcColor | undefined): string | undefined {
+  if (!color || [color.red, color.green, color.blue].some((c) => typeof c !== 'number' || Number.isNaN(c))) return undefined;
+  const channel = (c: number) => Math.round((Math.min(1, Math.max(0, c)) * 0.4 + 0.6) * 255).toString(16).padStart(2, '0');
+  return `#${channel(color.red!)}${channel(color.green!)}${channel(color.blue!)}`;
+}
+
+function arcIcon(name: string | undefined) {
+  if (!name) return undefined;
+  const base = name.toLowerCase().split('.')[0];
+  return ARC_ICONS[base];
 }
 
 /** Electron's appData on macOS; spelled out so the native messaging host can read it without Electron. */
@@ -74,7 +106,9 @@ export function parseArcSidebar(json: any): ArcImport {
     const space = raw as ArcSpace;
     return {
       name: space.title || 'Space',
-      emoji: space.customInfo?.iconType?.emoji_v2,
+      emoji: space.customInfo?.iconType?.emoji_v2 ?? arcIcon(space.customInfo?.iconType?.icon),
+      color: arcColor(space.customInfo?.windowTheme?.primaryColorPalette?.midTone),
+      isolated: !!space.profile && !space.profile.default,
       pinned: toNodes(containerChildren(space, 'pinned')),
       today: flatTabs(toNodes(containerChildren(space, 'unpinned'))),
     };

@@ -22,7 +22,16 @@ export interface ImportCookie {
 
 /** Arc's sidebar, as arcImport.ts reads it. */
 export interface ArcImport {
-  spaces: Array<{ name: string; emoji?: string; pinned: ImportNode[]; today: ImportTab[] }>;
+  spaces: Array<{
+    name: string;
+    emoji?: string;
+    /** The Space's theme color, as a Flecha pastel (#rrggbb). */
+    color?: string;
+    /** On an Arc profile of its own, so its cookies and logins were apart from the others'. */
+    isolated?: boolean;
+    pinned: ImportNode[];
+    today: ImportTab[];
+  }>;
   favorites: ImportTab[];
 }
 

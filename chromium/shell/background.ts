@@ -103,7 +103,15 @@ async function start() {
   for (const tab of await chrome.tabs.query({})) {
     if ([...live.values()].includes(tab.id!) || isShellPage(tab)) continue;
     const active = store.activeTab;
-    if (isStartPage(tab) && active && !live.has(active.id)) {
+    // In a Space with its own cookies the start page is in the wrong partition: it only holds the
+    // window open until sync() opens the tab in its Space's partition. Taken over, it would report
+    // the new tab page first, and the tab would reopen there blank, its address lost.
+    const isolated = !!active && !!store.locate(active.id)?.space?.isolated && typeof chrome.flechaPrivate?.createTab === 'function';
+    if (isStartPage(tab) && active && isolated && placeholder === undefined) placeholder = tab.id;
+    else if (isStartPage(tab) && active && isolated) {
+      ours.add(tab.id!);
+      void chrome.tabs.remove(tab.id!);
+    } else if (isStartPage(tab) && active && !live.has(active.id)) {
       live.set(active.id, tab.id!);
       // A blank tab reloads the new tab page: Chromium drew its own before the shell was loaded.
       void chrome.tabs.update(tab.id!, { url: active.url === 'about:blank' ? 'chrome://newtab/' : active.url, active: true });
@@ -431,6 +439,11 @@ async function start() {
     frame.tabDragging = false;
     sendFrame();
     const space = store.activeSpace;
+    // One half of the split dropped on the other side: they trade places.
+    if (space.split?.includes(tabId) && space.splitMode !== 'responsive') {
+      if (space.split[side === 'left' ? 0 : 1] !== tabId) store.swapSplit();
+      return store.activate(tabId);
+    }
     if (!space.activeTabId || space.activeTabId === tabId) return store.activate(tabId);
     // A responsive mirror only exists for its split; it goes away when something else takes its place.
     if (space.splitMode === 'responsive') exitSplit();
@@ -572,7 +585,10 @@ async function start() {
     if (!tab || !zone) return undefined;
     const space = store.activeSpace;
     const split: MenuEntry<MenuRun>[] = [];
-    if (space.split?.includes(tabId)) split.push({ label: 'Exit Split View', run: does('exitSplit') });
+    if (space.split?.includes(tabId)) {
+      if (space.splitMode !== 'responsive') split.push({ label: 'Swap Sides', run: does('swapSplit') });
+      split.push({ label: 'Exit Split View', run: does('exitSplit') });
+    }
     else if (space.activeTabId && space.activeTabId !== tabId) split.push({ label: 'Open in Split View', run: does('splitWith', tabId) });
     const name = tab.customTitle ?? tab.title;
     const otherSpaces = store.state.spaces.filter((s) => s.id !== store.locate(tabId)?.space?.id);
@@ -583,6 +599,12 @@ async function start() {
       { label: 'Copy Link', run: { copy: tab.url, message: 'Link copied' } },
       { label: 'Copy as Markdown Link', run: { copy: `[${name}](${tab.url})`, message: 'Markdown link copied' } },
       { label: 'Rename…', run: { rename: tabId } },
+      ...(zone === 'pinned'
+        ? [
+            { label: 'Change Icon…', run: { rename: `tabicon:${tabId}` } },
+            ...(tab.emoji ? [{ label: 'Remove Icon', run: does('setTabEmoji', tabId, '') }] : []),
+          ]
+        : []),
       { label: 'Duplicate', run: does('newTab', tab.url) },
       // A Flechinha window of its own; the window code lives in another shell module.
       { label: 'Open in Flechinha', run: does('openFlechinha', tab.url, tabId) },
@@ -731,6 +753,7 @@ async function start() {
     ),
     newFolderIn: spacesOnly((parentId: string) => store.newFolder('New Folder', { parentId: String(parentId) })),
     moveToFolder: spacesOnly((tabId: string, folderId: string) => store.moveTab(String(tabId), { zone: 'pinned', folderId: String(folderId) })),
+    setTabEmoji: spacesOnly((tabId: string, emoji: string) => store.setTabEmoji(String(tabId), typeof emoji === 'string' ? emoji : undefined)),
     setFolderEmoji: spacesOnly((folderId: string, emoji: string) => store.setFolderEmoji(String(folderId), typeof emoji === 'string' ? emoji : undefined)),
     revealTab: (tabId?: string) => {
       const id = typeof tabId === 'string' ? tabId : store.activeTab?.id;
@@ -884,6 +907,7 @@ async function start() {
     splitWith: (id: string, side?: string, withId?: string) =>
       store.splitWith(String(id), side === 'left' ? 'left' : 'right', withId ? String(withId) : undefined),
     exitSplit,
+    swapSplit: () => store.swapSplit(),
     dropToSplit: (id: string, side: string) => dropToSplit(String(id), side === 'left' ? 'left' : 'right'),
     splitNew: (input: string) => store.splitWith(openTab(input, false).id),
     openSettings: (pane?: string) => showSettings(typeof pane === 'string' ? pane : undefined),
