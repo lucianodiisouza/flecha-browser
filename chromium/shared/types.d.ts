@@ -537,6 +537,8 @@ export interface FlechaApi {
   splitWith(tabId: string, side?: 'left' | 'right', withTabId?: string): void;
   /** The split's halves trade sides. */
   swapSplit(): void;
+  /** The window above other apps' windows, or back among them (Chromium build 0045+). */
+  toggleStayOnTop(): void;
   /** While a tab is dragged, the sidebar UI covers the page so it can be dropped there. */
   setTabDragging(dragging: boolean): void;
   dropToSplit(tabId: string, side: 'left' | 'right'): void;

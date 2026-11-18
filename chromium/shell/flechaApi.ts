@@ -161,6 +161,7 @@ const api: FlechaApi = {
   openBoostsFolder: cmd('openBoostsFolder'),
   splitWith: cmd('splitWith'),
   swapSplit: cmd('swapSplit'),
+  toggleStayOnTop: cmd('toggleStayOnTop'),
   setTabDragging: cmd('setTabDragging'),
   dropToSplit: cmd('dropToSplit'),
   splitNew: cmd('splitNew'),

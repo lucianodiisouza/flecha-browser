@@ -7,9 +7,11 @@
  */
 import type { Store } from '../shared/store';
 import { SHORTCUTS, SPACE_MODIFIER, keysFor } from './lib/shortcuts';
-import { broadcast, handle } from './hub';
+import { broadcast, handle, run as runHub } from './hub';
+import { flechaMenus } from './lib/menus';
 import { incognito } from './incognito';
 import { PHONE } from './features/responsive';
+import { SETTINGS_PAGE } from './settingsHandlers';
 
 export interface NativeContext {
   store: Store;
@@ -47,7 +49,13 @@ const when =
   (...args: A) =>
     void ready.then((ctx) => fn(ctx, ...args));
 
-if (has('setShortcuts')) chrome.flechaPrivate.onShortcut.addListener(when((ctx, command: string, windowId: number) => ctx.run(command, windowId)));
+if (has('setShortcuts')) {
+  chrome.flechaPrivate.onShortcut.addListener(
+    when((ctx, command: string, windowId: number) =>
+      command.startsWith('menu:') ? runMenuCommand(ctx, command.slice(5), windowId) : ctx.run(command, windowId),
+    ),
+  );
+}
 
 export function registerNative(ctx: NativeContext) {
   registerShortcuts(ctx);
@@ -56,7 +64,110 @@ export function registerNative(ctx: NativeContext) {
   registerFlechinha(ctx);
   registerPeek(ctx);
   registerDevToolsAndDefaultBrowser();
+  registerMenus(ctx);
   resolveCtx(ctx);
+}
+
+// ---- the menu bar and Stay On Top (patch 0045) --------------------------------------------
+
+/** Windows kept above other apps' windows. */
+const onTop = new Set<number>();
+let focusedWindow: number | undefined;
+/** The Settings popup's window: it floats while any Flecha window stays on top, or it'd hide behind it. */
+let settingsWindow: number | undefined;
+const isSettings = (tab: chrome.tabs.Tab) =>
+  (tab.pendingUrl ?? tab.url ?? '').startsWith(chrome.runtime.getURL(SETTINGS_PAGE));
+let refreshMenus = () => {};
+
+/** Spaces, Tabs and Archive in the menu bar (lib/menus.ts), sent again whenever they change. */
+function registerMenus(ctx: NativeContext) {
+  if (has('setAlwaysOnTop')) handle({ toggleStayOnTop: () => toggleStayOnTop() });
+  // The browser keeps one menu bar for every window; the regular shell sets it.
+  if (!has('setMenus') || incognito) return;
+  let sent = '';
+  refreshMenus = () => {
+    const state = ctx.store.state;
+    const menus = flechaMenus(state, {
+      stayOnTop: focusedWindow !== undefined && (onTop.has(focusedWindow) || (focusedWindow === settingsWindow && onTop.size > 0)),
+      keys: (id) => keysFor(state, id),
+      spaceModifier: SPACE_MODIFIER,
+    });
+    const json = JSON.stringify(menus);
+    if (json === sent) return;
+    sent = json;
+    void chrome.flechaPrivate.setMenus(menus).catch((err) => console.warn('Flecha shell: menus', err));
+  };
+  ctx.store.onChange(refreshMenus);
+  chrome.windows.onFocusChanged.addListener((id) => {
+    if (id === chrome.windows.WINDOW_ID_NONE) return;
+    focusedWindow = id;
+    refreshMenus();
+  });
+  chrome.windows.onRemoved.addListener((id) => {
+    const wasOnTop = onTop.delete(id);
+    if (id === settingsWindow) settingsWindow = undefined;
+    else if (wasOnTop && !onTop.size) void floatSettings();
+  });
+  chrome.tabs.onCreated.addListener((tab) => {
+    if (!isSettings(tab)) return;
+    settingsWindow = tab.windowId;
+    void floatSettings();
+  });
+  void chrome.windows.getLastFocused().then((w) => {
+    focusedWindow = w.id;
+    refreshMenus();
+  });
+}
+
+/** Stay On Top: the window in front (or `windowId`) above other apps' windows, or back among them. */
+async function toggleStayOnTop(windowId?: number) {
+  const id = windowId ?? focusedWindow ?? (await chrome.windows.getLastFocused()).id;
+  if (id === undefined || !has('setAlwaysOnTop')) return;
+  const next = !onTop.has(id);
+  await chrome.flechaPrivate.setAlwaysOnTop(next, id);
+  if (next) onTop.add(id);
+  else onTop.delete(id);
+  await floatSettings();
+  broadcast('flash', next ? 'Stays on top of other apps' : 'Back among other windows');
+  refreshMenus();
+}
+
+/** Settings floats while any Flecha window stays on top, and goes back among the others after. */
+async function floatSettings() {
+  if (!has('setAlwaysOnTop')) return;
+  if (settingsWindow === undefined) settingsWindow = (await chrome.tabs.query({})).find(isSettings)?.windowId;
+  if (settingsWindow === undefined) return;
+  await chrome.flechaPrivate.setAlwaysOnTop(onTop.size > 0, settingsWindow).catch(() => undefined);
+}
+
+/** A `menu:` command from lib/menus.ts, chosen in window `windowId`. */
+function runMenuCommand(ctx: NativeContext, command: string, windowId: number) {
+  const at = command.indexOf(':');
+  const what = at < 0 ? command : command.slice(0, at);
+  const arg = at < 0 ? '' : command.slice(at + 1);
+  const space = ctx.store.activeSpace;
+  switch (what) {
+    case 'space':
+      return void runHub('switchSpace', arg);
+    case 'editSpace':
+      return void runHub('editSpace', space.id);
+    case 'isolate':
+      return void runHub('setSpaceIsolated', space.id, !space.isolated);
+    case 'resetPinned':
+      return void runHub('resetSpaceTabs', space.id);
+    case 'newFolder':
+    case 'revealTab':
+    case 'copyQuote':
+    case 'swapSplit':
+      return void runHub(what);
+    case 'reopen': {
+      const item = ctx.store.state.archive.find((a) => a.closedAt === Number(arg));
+      if (item) runHub('settings:edit-archive', { op: 'reopen', closedAt: item.closedAt, url: item.url });
+      return;
+    }
+    case 'stayOnTop':
+      return void toggleStayOnTop(windowId >= 0 ? windowId : undefined);
+  }
 }
 
 // ---- DevTools and the default browser (patch 0027) -----------------------------------------

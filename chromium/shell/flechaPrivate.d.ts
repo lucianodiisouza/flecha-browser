@@ -214,6 +214,30 @@ declare namespace chrome.flechaPrivate {
   function makeDefaultBrowser(): Promise<DefaultBrowserState>;
 
   /**
+   * Flecha's menus in the macOS menu bar (patch 0045), in place of the ones set before: they
+   * go before the Window menu, and a menu titled like one already there ("Window") puts its
+   * items at the top of that one. Chromium's Tab and Bookmarks menus are hidden. Choosing an
+   * item sends its command to onShortcut(command, windowId) for the window in front.
+   * `accelerator` is only shown; the keys work through setShortcuts(). No text: a separator.
+   */
+  interface MenuItem {
+    text?: string;
+    command?: string;
+    accelerator?: string;
+    checked?: boolean;
+    /** Default: true. */
+    enabled?: boolean;
+  }
+  interface Menu {
+    title: string;
+    items: MenuItem[];
+  }
+  function setMenus(menus: Menu[]): Promise<void>;
+
+  /** Keeps a window above other apps' windows (Stay On Top), or not (patch 0045): a Flecha window, or any other of this profile by id (the Settings popup). */
+  function setAlwaysOnTop(onTop: boolean, windowId?: number): Promise<void>;
+
+  /**
    * A shortcut from setShortcuts() was pressed in window `windowId` (-1: a command from
    * runInRegularProfile, no window in particular).
    */

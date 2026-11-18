@@ -1,0 +1,453 @@
+--- a/chrome/common/extensions/api/flecha_private.idl
++++ b/chrome/common/extensions/api/flecha_private.idl
+@@ -77,6 +77,28 @@
+     boolean canSet;
+   };
+   callback DefaultBrowserCallback = void(DefaultBrowserState state);
++
++  // One entry of a menu in the menu bar (setMenus).
++  dictionary MenuItem {
++    // No text: a separator.
++    DOMString? text;
++    // Sent as onShortcut(command, windowId) when the item is chosen, for the
++    // window in front.
++    DOMString? command;
++    // The keys shown beside it, as setShortcuts() writes them
++    // ("CmdOrCtrl+Shift+T"). They work through setShortcuts(), not the menu.
++    DOMString? accelerator;
++    boolean? checked;
++    // Default: true.
++    boolean? enabled;
++  };
++
++  // A menu in the menu bar. If one with this title is already there (such as
++  // "Window"), the items go at its top instead.
++  dictionary Menu {
++    DOMString title;
++    MenuItem[] items;
++  };
+ 
+   dictionary DevToolsOptions {
+     // Close them if they're open (the Alt+Cmd+I menu item).
+@@ -202,6 +224,18 @@
+     // one, at the page area's top right.
+     static void showFindBar(optional long windowId, optional DoneCallback callback);
+ 
++    // Flecha's menus in the menu bar (Spaces, Tabs, Archive), in place of the
++    // ones set before; they go before the Window menu. Chromium's Tab and
++    // Bookmarks menus are hidden.
++    static void setMenus(Menu[] menus, optional DoneCallback callback);
++
++    // Keeps a window above every other app's windows (Stay On Top), or lets
++    // it go back among them: a Flecha window, or any other window of this
++    // profile by id (the Settings popup). Default: the main window.
++    static void setAlwaysOnTop(boolean onTop,
++                               optional long windowId,
++                               optional DoneCallback callback);
++
+     static void isDefaultBrowser(DefaultBrowserCallback callback);
+     // Asks macOS to make Flecha the default browser (it shows its own
+     // confirmation), then calls back with the result.
+--- a/chrome/browser/extensions/api/flecha_private/BUILD.gn
++++ b/chrome/browser/extensions/api/flecha_private/BUILD.gn
+@@ -6,9 +6,14 @@
+ 
+ source_set("flecha_private") {
+   sources = [
++    "flecha_menus.h",
+     "flecha_private_api.cc",
+     "flecha_private_api.h",
+   ]
++  if (is_mac) {
++    sources += [ "flecha_menus_mac.mm" ]
++    frameworks = [ "AppKit.framework" ]
++  }
+ 
+   deps = [
+     "//base",
+@@ -18,5 +23,6 @@
+     "//chrome/common/extensions/api",
+     "//content/public/browser",
+     "//extensions/browser",
++    "//ui/base",
+   ]
+ }
+--- /dev/null
++++ b/chrome/browser/extensions/api/flecha_private/flecha_menus.h
+@@ -0,0 +1,43 @@
++// Copyright 2026 The Flecha Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_EXTENSIONS_API_FLECHA_PRIVATE_FLECHA_MENUS_H_
++#define CHROME_BROWSER_EXTENSIONS_API_FLECHA_PRIVATE_FLECHA_MENUS_H_
++
++#include <optional>
++#include <string>
++#include <vector>
++
++#include "build/build_config.h"
++#include "ui/base/accelerators/accelerator.h"
++
++// One entry of a Flecha menu (chrome.flechaPrivate.setMenus()). An empty
++// label is a separator.
++struct FlechaMenuItem {
++  std::string label;
++  // Sent to the shell as onShortcut(command, windowId) for the window in
++  // front.
++  std::string command;
++  // Shown beside the item; the key itself works through setShortcuts().
++  std::optional<ui::Accelerator> accelerator;
++  bool checked = false;
++  bool enabled = true;
++};
++
++struct FlechaMenu {
++  std::string title;
++  std::vector<FlechaMenuItem> items;
++};
++
++#if BUILDFLAG(IS_MAC)
++// Puts these menus in the menu bar, before the Window menu, in place of the
++// ones set before. A menu titled like one already there ("Window") adds its
++// items at the top of that one instead.
++void SetFlechaMenus(const std::vector<FlechaMenu>& menus);
++#else
++// Other platforms have no menu bar of their own.
++inline void SetFlechaMenus(const std::vector<FlechaMenu>& menus) {}
++#endif
++
++#endif  // CHROME_BROWSER_EXTENSIONS_API_FLECHA_PRIVATE_FLECHA_MENUS_H_
+--- /dev/null
++++ b/chrome/browser/extensions/api/flecha_private/flecha_menus_mac.mm
+@@ -0,0 +1,156 @@
++// Copyright 2026 The Flecha Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/extensions/api/flecha_private/flecha_menus.h"
++
++#import <AppKit/AppKit.h>
++
++#include <utility>
++
++#include "base/strings/sys_string_conversions.h"
++#include "base/values.h"
++#include "chrome/browser/flecha/flecha_frame_host.h"
++#include "chrome/browser/flecha/flecha_shell_events.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
++#include "ui/base/accelerators/platform_accelerator_cocoa.h"
++#include "ui/base/base_window.h"
++#include "ui/gfx/native_ui_types.h"
++
++namespace {
++
++// The tag of the items setMenus() was told are disabled.
++constexpr NSInteger kFlechaDisabledItemTag = -0xf1ec;
++
++// The Flecha window a menu command is for: the one in front, else (Settings,
++// DevTools or picture-in-picture in front) the browser window last active,
++// else any that isn't a Flechinha.
++FlechaFrameHost* FlechaHostInFront() {
++  NSWindow* front = NSApp.keyWindow ?: NSApp.mainWindow;
++  BrowserWindowInterface* last_browser =
++      GetLastActiveBrowserWindowInterfaceWithAnyProfile();
++  FlechaFrameHost* last_active = nullptr;
++  FlechaFrameHost* any = nullptr;
++  for (FlechaFrameHost* host : FlechaFrameHost::All()) {
++    BrowserWindowInterface* browser = host->GetBrowserWindowInterface();
++    if (front && browser && browser->GetWindow() &&
++        browser->GetWindow()->GetNativeWindow().GetNativeNSWindow() == front) {
++      return host;
++    }
++    if (host->IsFlechinha()) {
++      continue;
++    }
++    if (!last_active && browser && browser == last_browser) {
++      last_active = host;
++    }
++    if (!any) {
++      any = host;
++    }
++  }
++  return last_active ? last_active : any;
++}
++
++}  // namespace
++
++// Runs Flecha's menu items: each sends its command to the shell, as a
++// keyboard shortcut would.
++@interface FlechaMenuTarget : NSObject <NSMenuItemValidation>
++@end
++
++@implementation FlechaMenuTarget
++
++- (void)runFlechaCommand:(NSMenuItem*)item {
++  if (![item.representedObject isKindOfClass:[NSString class]]) {
++    return;
++  }
++  NSString* command = item.representedObject;
++  FlechaFrameHost* host = FlechaHostInFront();
++  if (!command.length || !host) {
++    return;
++  }
++  base::ListValue args;
++  args.Append(base::SysNSStringToUTF8(command));
++  args.Append(host->GetWindowId());
++  DispatchFlechaShellEvent(
++      Profile::FromBrowserContext(host->GetBrowserContext()),
++      "flechaPrivate.onShortcut", std::move(args));
++}
++
++- (BOOL)validateMenuItem:(NSMenuItem*)item {
++  return item.tag != kFlechaDisabledItemTag && FlechaHostInFront() != nullptr;
++}
++
++@end
++
++void SetFlechaMenus(const std::vector<FlechaMenu>& menus) {
++  static FlechaMenuTarget* target = [[FlechaMenuTarget alloc] init];
++  // What the last call put in the menu bar, to take out again.
++  static NSMutableArray<NSMenuItem*>* added = [[NSMutableArray alloc] init];
++
++  NSMenu* main_menu = NSApp.mainMenu;
++  if (!main_menu) {
++    return;
++  }
++  for (NSMenuItem* item in added) {
++    [item.menu removeItem:item];
++  }
++  [added removeAllObjects];
++
++  auto make_item = [](const FlechaMenuItem& entry) -> NSMenuItem* {
++    if (entry.label.empty()) {
++      return [NSMenuItem separatorItem];
++    }
++    NSMenuItem* item =
++        [[NSMenuItem alloc] initWithTitle:base::SysUTF8ToNSString(entry.label)
++                                   action:@selector(runFlechaCommand:)
++                            keyEquivalent:@""];
++    item.target = target;
++    item.representedObject = base::SysUTF8ToNSString(entry.command);
++    item.state =
++        entry.checked ? NSControlStateValueOn : NSControlStateValueOff;
++    if (!entry.enabled) {
++      item.tag = kFlechaDisabledItemTag;
++    }
++    if (entry.accelerator) {
++      KeyEquivalentAndModifierMask* keys =
++          ui::GetKeyEquivalentAndModifierMaskFromAccelerator(
++              *entry.accelerator);
++      item.keyEquivalent = keys.keyEquivalent;
++      item.keyEquivalentModifierMask = keys.modifierMask;
++    }
++    return item;
++  };
++
++  const NSInteger window_menu =
++      NSApp.windowsMenu ? [main_menu indexOfItemWithSubmenu:NSApp.windowsMenu]
++                        : -1;
++  NSInteger insert_at = window_menu >= 0 ? window_menu : main_menu.numberOfItems;
++  for (const FlechaMenu& menu : menus) {
++    NSString* title = base::SysUTF8ToNSString(menu.title);
++    NSMenuItem* existing = [main_menu itemWithTitle:title];
++    if (existing.submenu && !existing.hidden) {
++      NSInteger at = 0;
++      for (const FlechaMenuItem& entry : menu.items) {
++        NSMenuItem* item = make_item(entry);
++        [existing.submenu insertItem:item atIndex:at++];
++        [added addObject:item];
++      }
++      NSMenuItem* separator = [NSMenuItem separatorItem];
++      [existing.submenu insertItem:separator atIndex:at];
++      [added addObject:separator];
++      continue;
++    }
++    NSMenu* submenu = [[NSMenu alloc] initWithTitle:title];
++    for (const FlechaMenuItem& entry : menu.items) {
++      [submenu addItem:make_item(entry)];
++    }
++    NSMenuItem* top = [[NSMenuItem alloc] initWithTitle:title
++                                                 action:nil
++                                          keyEquivalent:@""];
++    top.submenu = submenu;
++    [main_menu insertItem:top atIndex:insert_at++];
++    [added addObject:top];
++  }
++}
+--- a/chrome/browser/extensions/api/flecha_private/flecha_private_api.h
++++ b/chrome/browser/extensions/api/flecha_private/flecha_private_api.h
+@@ -160,6 +160,24 @@
+   ResponseAction Run() override;
+ };
+ 
++class FlechaPrivateSetMenusFunction : public ExtensionFunction {
++ public:
++  DECLARE_EXTENSION_FUNCTION("flechaPrivate.setMenus", UNKNOWN)
++
++ protected:
++  ~FlechaPrivateSetMenusFunction() override = default;
++  ResponseAction Run() override;
++};
++
++class FlechaPrivateSetAlwaysOnTopFunction : public ExtensionFunction {
++ public:
++  DECLARE_EXTENSION_FUNCTION("flechaPrivate.setAlwaysOnTop", UNKNOWN)
++
++ protected:
++  ~FlechaPrivateSetAlwaysOnTopFunction() override = default;
++  ResponseAction Run() override;
++};
++
+ class FlechaPrivateIsDefaultBrowserFunction : public ExtensionFunction {
+  public:
+   DECLARE_EXTENSION_FUNCTION("flechaPrivate.isDefaultBrowser", UNKNOWN)
+--- a/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
++++ b/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
+@@ -23,6 +23,7 @@
+ #include "chrome/common/webui_url_constants.h"
+ #include "ui/base/base_window.h"
+ #include "ui/display/screen.h"
++#include "chrome/browser/extensions/api/flecha_private/flecha_menus.h"
+ #include "chrome/browser/flecha/flecha_accelerator.h"
+ #include "chrome/browser/flecha/flecha_frame_host.h"
+ #include "chrome/browser/flecha/flecha_shell_events.h"
+@@ -38,6 +39,7 @@
+ #include "chrome/browser/themes/theme_service.h"
+ #include "chrome/browser/themes/theme_service_factory.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "components/tabs/public/tab_interface.h"
+ #include "chrome/common/extensions/api/flecha_private.h"
+@@ -534,6 +536,60 @@
+     return RespondNow(Error(kNoWindowError, "(find)"));
+   }
+   chrome::Find(host->GetBrowserWindowInterface());
++  return RespondNow(NoArguments());
++}
++
++ExtensionFunction::ResponseAction FlechaPrivateSetMenusFunction::Run() {
++  auto params = flecha_private::SetMenus::Params::Create(args());
++  EXTENSION_FUNCTION_VALIDATE(params);
++  std::vector<FlechaMenu> menus;
++  for (const flecha_private::Menu& menu : params->menus) {
++    FlechaMenu& out = menus.emplace_back();
++    out.title = menu.title;
++    for (const flecha_private::MenuItem& item : menu.items) {
++      FlechaMenuItem& entry = out.items.emplace_back();
++      entry.label = item.text.value_or("");
++      entry.command = item.command.value_or("");
++      if (item.accelerator) {
++        entry.accelerator = ParseFlechaAccelerator(*item.accelerator);
++      }
++      entry.checked = item.checked.value_or(false);
++      entry.enabled = item.enabled.value_or(true);
++    }
++  }
++  SetFlechaMenus(menus);
++  return RespondNow(NoArguments());
++}
++
++ExtensionFunction::ResponseAction FlechaPrivateSetAlwaysOnTopFunction::Run() {
++  auto params = flecha_private::SetAlwaysOnTop::Params::Create(args());
++  EXTENSION_FUNCTION_VALIDATE(params);
++  FlechaFrameHost* host =
++      params->window_id ? HostForWindow(*params->window_id, browser_context())
++                        : FlechaFrameHost::Main(Profile::FromBrowserContext(
++                                                    browser_context())
++                                                    ->GetOriginalProfile());
++  BrowserWindowInterface* browser =
++      host ? host->GetBrowserWindowInterface() : nullptr;
++  // Any other window of this profile by its id, such as the Settings popup,
++  // which floats along with a Flecha window that stays on top.
++  if (!browser && params->window_id) {
++    Profile* profile =
++        Profile::FromBrowserContext(browser_context())->GetOriginalProfile();
++    for (BrowserWindowInterface* candidate : GetAllBrowserWindowInterfaces()) {
++      if (candidate->GetSessionID().id() == *params->window_id &&
++          candidate->GetProfile()->GetOriginalProfile() == profile) {
++        browser = candidate;
++        break;
++      }
++    }
++  }
++  if (!browser || !browser->GetWindow()) {
++    return RespondNow(Error(kNoWindowError, "(stay on top)"));
++  }
++  browser->GetWindow()->SetZOrderLevel(params->on_top
++                                           ? ui::ZOrderLevel::kFloatingWindow
++                                           : ui::ZOrderLevel::kNormal);
+   return RespondNow(NoArguments());
+ }
+ 
+--- a/chrome/browser/ui/cocoa/main_menu_builder.mm
++++ b/chrome/browser/ui/cocoa/main_menu_builder.mm
+@@ -293,26 +293,35 @@
+       Item(IDS_VIEW_MENU_MAC)
+           .tag(IDC_VIEW_MENU)
+           .submenu({
++              // Flecha: its window has no bookmarks bar, toolbar, omnibox or
++              // tab strip, so their options are left out.
+               Item(IDS_BOOKMARK_BAR_ALWAYS_SHOW_MAC)
+                   .command_id(IDC_SHOW_BOOKMARK_BAR)
+-                  .remove_if(is_pwa),
++                  .remove_if(true),
+               Item(IDS_TOGGLE_FULLSCREEN_TOOLBAR_MAC)
+-                  .command_id(IDC_TOGGLE_FULLSCREEN_TOOLBAR),
++                  .command_id(IDC_TOGGLE_FULLSCREEN_TOOLBAR)
++                  .remove_if(true),
+               Item(IDS_CONTEXT_MENU_SHOW_FULL_URLS)
+-                  .command_id(IDC_SHOW_FULL_URLS),
++                  .command_id(IDC_SHOW_FULL_URLS)
++                  .remove_if(true),
+               Item(IDS_CONTEXT_MENU_SHOW_GOOGLE_LENS_SHORTCUT)
+-                  .command_id(IDC_SHOW_GOOGLE_LENS_SHORTCUT),
++                  .command_id(IDC_SHOW_GOOGLE_LENS_SHORTCUT)
++                  .remove_if(true),
+                Item(IDS_AI_MODE_ENTRYPOINT_CONTEXT_MENU_SHOW)
+                    .string_format_1(
+                        l10n_util::GetStringUTF16(IDS_AI_MODE_ENTRYPOINT_LABEL))
+-                   .command_id(IDC_SHOW_AI_MODE_OMNIBOX_BUTTON),
++                   .command_id(IDC_SHOW_AI_MODE_OMNIBOX_BUTTON)
++                   .remove_if(true),
+               Item(IDS_CONTEXT_MENU_SHOW_SEARCH_TOOLS)
+-                  .command_id(IDC_SHOW_SEARCH_TOOLS),
++                  .command_id(IDC_SHOW_SEARCH_TOOLS)
++                  .remove_if(true),
+                Item(IDS_SWITCH_TO_VERTICAL_TAB_MAC)
+-                   .command_id(IDC_TOGGLE_VERTICAL_TABS),
++                   .command_id(IDC_TOGGLE_VERTICAL_TABS)
++                   .remove_if(true),
+               Item(IDS_VERTICAL_TABS_VIEW_MENU_TOGGLE_COLLAPSE)
+                   .command_id(IDC_TOGGLE_VERTICAL_TABS_COLLAPSE)
+-                  .key_equivalent(@"L", NSEventModifierFlagCommand),
++                  .key_equivalent(@"L", NSEventModifierFlagCommand)
++                  .remove_if(true),
+               Item(IDS_CUSTOMIZE_TOUCH_BAR)
+                   .tag(IDC_CUSTOMIZE_TOUCH_BAR)
+                   .action(@selector(toggleTouchBarCustomizationPalette:))
+@@ -425,6 +434,9 @@
+   NSMenuItem* item =
+       Item(IDS_BOOKMARKS_MENU)
+           .tag(AppMenuModel::kBookmarksMenuPlaceholder)
++          // Flecha: no bookmarks of Chromium's (pinned tabs take their
++          // place). Hidden, not removed: AppController still looks it up.
++          .set_hidden(true)
+           .submenu({
+               Item(bookmarks_manager_string_id)
+                   .command_id(IDC_SHOW_BOOKMARK_MANAGER),
+@@ -517,6 +529,11 @@
+   NSMenuItem* item =
+       Item(IDS_TAB_MENU_MAC)
+           .tag(IDC_TAB_MENU)
++          // Flecha: its shell's own Tabs menu (chrome.flechaPrivate.setMenus)
++          // takes this one's place; Chromium's pins, groups and moves tabs
++          // behind the shell's back. Hidden, not removed: AppController's
++          // TabMenuBridge still uses it.
++          .set_hidden(true)
+           .submenu({
+               Item(is_rtl ? IDS_TAB_CXMENU_NEWTABTOLEFT
+                           : IDS_TAB_CXMENU_NEWTABTORIGHT)
