@@ -72,10 +72,22 @@ export async function release(tabId: number, holder: Holder, resetShared?: () =>
   if (attach) await attach.catch(() => undefined);
   if (holders.get(tabId) !== set || set.size) return;
   holders.delete(tabId);
-  const detach = chrome.debugger.detach({ tabId }).catch(() => undefined);
-  detaching.set(tabId, detach);
-  await detach;
-  detaching.delete(tabId);
+  await detach(tabId);
+}
+
+/** Ends a stalled command's session before any holder can attach again. */
+export async function resetDebugger(tabId: number, holder: Holder) {
+  if (!holders.get(tabId)?.has(holder)) return;
+  holders.delete(tabId);
+  await detach(tabId);
+  for (const fn of detachListeners) fn(tabId, 'reset');
+}
+
+async function detach(tabId: number) {
+  const pending = chrome.debugger.detach({ tabId }).catch(() => undefined);
+  detaching.set(tabId, pending);
+  await pending;
+  if (detaching.get(tabId) === pending) detaching.delete(tabId);
 }
 
 export const isHeld = (tabId: number, holder: string) => !!holders.get(tabId)?.has(holder);

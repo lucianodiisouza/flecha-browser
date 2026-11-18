@@ -15,7 +15,7 @@ import type { AgentResult, AgentTab, AgentToolName } from '../shared/agentTools'
 import { applyBrowserImport, importOptions, previewBrowserImport, type BrowserImportData } from '../shared/importApply';
 import { HOST_NAME, TOOL_TIMEOUT, toolTimeout, type HostMethods, type ToHost, type ToShell } from '../native-host/protocol';
 import { broadcast, handle } from './hub';
-import { acquire, isHeld, release, send } from './features/debuggee';
+import { acquire, isHeld, onDebuggerDetach, release, resetDebugger, send } from './features/debuggee';
 
 export interface NativeHostContext {
   store: Store;
@@ -492,11 +492,11 @@ export function registerNativeHost(ctx: NativeHostContext) {
 
   function releaseAgent(chromeId: number, reset = true) {
     // A responsive view can keep the session open. The next agent call must set up after these resets.
-    const released = release(chromeId, DEBUG_HOLDER, reset ? () => Promise.all([
+    const released = release(chromeId, DEBUG_HOLDER, reset ? () => settleOrReset(chromeId, Promise.all([
       send(chromeId, 'Emulation.setFocusEmulationEnabled', { enabled: false }),
       send(chromeId, 'Runtime.disable'),
       send(chromeId, 'Log.disable'),
-    ]) : undefined)
+    ])) : undefined)
       .finally(() => releasing.delete(chromeId));
     releasing.set(chromeId, released);
     forget(chromeId);
@@ -593,15 +593,38 @@ export function registerNativeHost(ctx: NativeHostContext) {
     await attach(chromeId, use);
     use.signal.throwIfAborted();
     // Chromium also lets go of a tab when another extension's frame loads in it mid-command.
-    return untilAborted(use.track(chrome.debugger.sendCommand({ tabId: chromeId }, method, params)), use.signal).catch(async (error: unknown) => {
+    const command = chrome.debugger.sendCommand({ tabId: chromeId }, method, params);
+    return untilAborted(use.track(recoverCommand(chromeId, command, use.signal)), use.signal).catch(async (error: unknown) => {
       throw await attachRefused(chromeId, error);
     });
+  }
+
+  async function recoverCommand<T>(chromeId: number, command: Promise<T>, signal: AbortSignal): Promise<T> {
+    try {
+      return await untilAborted(command, signal);
+    } catch (error) {
+      if (!signal.aborted || error !== signal.reason) throw error;
+      await settleOrReset(chromeId, command.catch(() => undefined));
+      throw error;
+    }
+  }
+
+  async function settleOrReset(chromeId: number, command: Promise<unknown>) {
+    // Evaluation can wait on a page promise forever. Chrome rejects pending CDP
+    // replies on detach, so wait for the session to close before the next tool.
+    try {
+      await withDeadline(TOOL_TIMEOUT, () => command);
+    } catch (error) {
+      if (!(error instanceof AgentTimeout)) throw error;
+      await resetDebugger(chromeId, DEBUG_HOLDER);
+    }
   }
 
   async function evaluate(chromeId: number, expression: string, use: UseTab): Promise<unknown> {
     const result = (await debug(chromeId, 'Runtime.evaluate', {
       expression,
       awaitPromise: true,
+      timeout: TOOL_TIMEOUT,
       returnByValue: true,
       userGesture: true,
     }, use)) as { result?: { value?: unknown }; exceptionDetails?: { text?: string; exception?: { description?: string } } };
@@ -631,7 +654,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     }
     if (log.length > 500) log.splice(0, log.length - 500);
   });
-  chrome.debugger.onDetach.addListener((source) => source.tabId !== undefined && forget(source.tabId));
+  onDebuggerDetach(forget);
   chrome.tabs.onRemoved.addListener((chromeId) => forget(chromeId));
 
   async function dispatchInput(chromeId: number, method: string, down: object, up: object, use: UseTab) {

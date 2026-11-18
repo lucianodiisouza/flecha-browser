@@ -175,16 +175,17 @@ type EnvironmentField = 'name' | 'targetsText';
 let environments: EnvironmentDraft[] = [];
 let savedEnvironments: EnvironmentDraft[] = [];
 const environmentDrafts = new Map<string, Partial<EnvironmentDraft>>();
+const incompleteEnvironments = new Map<string, EnvironmentDraft>();
+const removingEnvironments = new Set<string>();
 let environmentWrites = Promise.resolve();
 const environmentList = document.getElementById('environmentList')!;
 
 function reconcileEnvironments(saved: EnvironmentDraft[]) {
   savedEnvironments = saved;
-  const known = new Set(saved.map((env) => env.id));
-  const visible = saved.map((env) => ({ ...env, ...environmentDrafts.get(env.id) }));
-  for (const [id, draft] of environmentDrafts) {
-    if (!known.has(id)) visible.push({ id, name: '', targetsText: '', ...draft });
-  }
+  for (const env of saved) incompleteEnvironments.delete(env.id);
+  const visible = [...saved, ...incompleteEnvironments.values()]
+    .filter((env) => !removingEnvironments.has(env.id))
+    .map((env) => ({ ...env, ...environmentDrafts.get(env.id) }));
   if (JSON.stringify(environments) === JSON.stringify(visible)) return;
   environments = visible;
   renderEnvironments();
@@ -207,12 +208,7 @@ function renderEnvironments() {
       remove.append(icon('close'));
       wireEnvironmentField(env.id, 'name', name);
       wireEnvironmentField(env.id, 'targetsText', targets);
-      remove.addEventListener('click', () => {
-        environmentDrafts.delete(env.id);
-        if (savedEnvironments.some((item) => item.id === env.id)) {
-          updateEnvironments((saved) => saved.filter((item) => item.id !== env.id));
-        } else reconcileEnvironments(savedEnvironments);
-      });
+      remove.addEventListener('click', () => removeEnvironment(env.id));
       const header = document.createElement('div');
       header.className = 'env-header';
       header.append(name, remove);
@@ -236,32 +232,45 @@ function wireEnvironmentField(id: string, field: EnvironmentField, input: HTMLIn
       if (!Object.keys(draft).length) environmentDrafts.delete(id);
     }
     const local = environments.find((env) => env.id === id);
-    updateEnvironments((saved) => {
-      const previous = saved.find((env) => env.id === id);
+    queueEnvironmentWrite(async () => {
+      if (removingEnvironments.has(id)) return;
+      const previous = savedEnvironments.find((env) => env.id === id);
       const edited = { id, name: '', targetsText: '', ...(previous ?? local), [field]: value };
-      return previous ? saved.map((env) => env.id === id ? edited : env) : [...saved, edited];
-    }, id);
+      const submitted = previous
+        ? savedEnvironments.map((env) => env.id === id ? edited : env)
+        : [...savedEnvironments, edited];
+      const view = await api.set({ environments: submitted });
+      if (!removingEnvironments.has(id) && !view.environments.some((env) => env.id === id)) {
+        incompleteEnvironments.set(id, edited);
+      }
+      render(view);
+    });
   });
 }
 
-function updateEnvironments(edit: (saved: EnvironmentDraft[]) => EnvironmentDraft[], editedId?: string) {
-  environmentWrites = environmentWrites.then(async () => {
-    const submitted = edit(savedEnvironments);
+function queueEnvironmentWrite(write: () => Promise<void>) {
+  environmentWrites = environmentWrites.then(write).catch(showLoadError);
+}
+
+function removeEnvironment(id: string) {
+  environmentDrafts.delete(id);
+  incompleteEnvironments.delete(id);
+  removingEnvironments.add(id);
+  reconcileEnvironments(savedEnvironments);
+  queueEnvironmentWrite(async () => {
     try {
-      const view = await api.set({ environments: submitted });
-      if (editedId && !view.environments.some((env) => env.id === editedId)) {
-        const edited = submitted.find((env) => env.id === editedId);
-        if (edited) environmentDrafts.set(editedId, { ...edited, ...environmentDrafts.get(editedId) });
-      }
-      render(view);
-    } catch {
-      showLoadError();
+      const remaining = savedEnvironments.filter((env) => env.id !== id);
+      if (remaining.length !== savedEnvironments.length) render(await api.set({ environments: remaining }));
+    } finally {
+      removingEnvironments.delete(id);
+      reconcileEnvironments(savedEnvironments);
     }
   });
 }
 
 document.getElementById('addEnvironment')!.addEventListener('click', () => {
-  environmentDrafts.set(crypto.randomUUID(), {});
+  const id = crypto.randomUUID();
+  incompleteEnvironments.set(id, { id, name: '', targetsText: '' });
   reconcileEnvironments(savedEnvironments);
   environmentList.querySelector<HTMLInputElement>('.env-card:last-child .env-name')?.focus();
 });

@@ -178,9 +178,10 @@ const api: FlechaApi = {
     resizing = clampSidebarWidth(width);
     applyFrame();
     if (!done) return;
-    const stateAtCommit = lastState;
     void invoke<number>('setSidebarWidth', resizing).then((saved) => {
-      if (lastState && lastState === stateAtCommit) lastState = { ...lastState, sidebarWidth: saved };
+      if (revision === resizeRevision && lastState && Number.isFinite(saved)) {
+        lastState = { ...lastState, sidebarWidth: saved };
+      }
     }, () => undefined).finally(() => {
       if (revision !== resizeRevision) return;
       resizing = undefined;

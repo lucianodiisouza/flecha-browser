@@ -235,7 +235,7 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
   assert.equal(code.value, 'second file');
 });
 
-test('the agent restores focus and can replay console logs after idle on a shared debugger', async (t) => {
+test('the agent restores focus, replays idle logs, and recovers a stalled debugger', async (t) => {
   const calls = [];
   const results = [];
   const tab = { id: 12, title: 'Phone fixture', url: 'https://example.com/phone' };
@@ -368,14 +368,6 @@ test('the agent restores focus and can replay console logs after idle on a share
   await nextTurn();
   t.mock.timers.tick(120_000);
   await nextTurn();
-  t.mock.timers.tick(60_000);
-  await nextTurn();
-  port.onMessage.emit({ type: 'tool', id: 33, name: 'console_logs', args: { tabId: phone } });
-  await nextTurn();
-  t.mock.timers.tick(60_000);
-  await nextTurn();
-  assert.match(results.find(({ id }) => id === 33).result.content[0].text, /didn’t answer console_logs within 60s/);
-  assert.equal(emulatedFocus, false, 'a canceled waiter cannot enable focus while cleanup is pending');
   port.onMessage.emit({ type: 'tool', id: 29, name: 'console_logs', args: { tabId: phone } });
   await nextTurn();
   t.mock.timers.tick(100);
@@ -398,7 +390,40 @@ test('the agent restores focus and can replay console logs after idle on a share
   assert.match(results.find(({ id }) => id === 31).result.content[0].text, /didn’t answer press_key/);
   keyDown.resolve();
   await nextTurn();
-  await release(tab.id, 'responsive');
+
+  readPending = Promise.withResolvers();
+  port.onMessage.emit({ type: 'tool', id: 34, name: 'evaluate', args: { tabId: phone, expression: 'new Promise(() => {})' } });
+  await nextTurn();
+  t.mock.timers.tick(60_000);
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 34).result.content[0].text, /didn’t answer evaluate within 60s/);
+  t.mock.timers.tick(59_999);
+  port.onMessage.emit({ type: 'tool', id: 35, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  assert.equal(results.some(({ id }) => id === 35), false, 'the retry cannot run on the stalled session');
+  t.mock.timers.tick(1);
+  await nextTurn();
+  assert.deepEqual(calls.slice(-2), [['detach', tab.id], ['attach', tab.id]]);
+  t.mock.timers.tick(100);
+  await nextTurn();
+  assert.equal(results.find(({ id }) => id === 35)?.result.isError, undefined);
+  assert.ok(results.some(({ id }) => id === 35), 'a new tool runs even though the original evaluation never settles');
+
+  assert.equal(await hold(tab.id, 'responsive'), true);
+  disableRuntime = Promise.withResolvers();
+  t.mock.timers.tick(120_000);
+  await nextTurn();
+  t.mock.timers.tick(59_999);
+  port.onMessage.emit({ type: 'tool', id: 36, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  assert.equal(results.some(({ id }) => id === 36), false, 'a new tool waits for the shared cleanup');
+  t.mock.timers.tick(1);
+  await nextTurn();
+  assert.deepEqual(calls.slice(-2), [['detach', tab.id], ['attach', tab.id]]);
+  t.mock.timers.tick(100);
+  await nextTurn();
+  assert.equal(results.find(({ id }) => id === 36)?.result.isError, undefined);
+  assert.ok(results.some(({ id }) => id === 36), 'a new tool runs even though the old shared cleanup never settles');
 });
 
 test('releasing a debugger holder queued behind a detach cancels its attachment', async (t) => {

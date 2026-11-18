@@ -30,15 +30,18 @@ export function responsive(ctx: ResponsiveContext) {
   const followed = new Map<string, string>();
 
   onDebuggerDetach((tabId, reason) => {
-    emulating.delete(tabId);
+    const wasEmulating = emulating.delete(tabId);
     if (reason === 'canceled_by_user') refused.add(tabId);
+    if (reason === 'reset' && wasEmulating && Object.entries(store.state.tabs).some(
+      ([id, tab]) => tab.device === 'mobile' && ctx.liveTabId(id) === tabId,
+    )) void emulate(tabId, false);
   });
   chrome.tabs.onRemoved.addListener((tabId) => {
     emulating.delete(tabId);
     refused.delete(tabId);
   });
 
-  async function emulate(chromeId: number) {
+  async function emulate(chromeId: number, reload = true) {
     emulating.add(chromeId);
     if (!(await hold(chromeId, HOLDER))) return void emulating.delete(chromeId);
     await Promise.all([
@@ -48,6 +51,7 @@ export function responsive(ctx: ResponsiveContext) {
       send(chromeId, 'Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }),
       send(chromeId, 'Emulation.setEmitTouchEventsForMouse', { enabled: true, configuration: 'mobile' }),
     ]);
+    if (!reload) return;
     // The first load went out as a desktop; load it again as the phone (Electron emulated before loading).
     const tab = await chrome.tabs.get(chromeId).catch(() => undefined);
     if (tab?.url && /^https?:/.test(tab.url)) await send(chromeId, 'Page.reload', { ignoreCache: false });

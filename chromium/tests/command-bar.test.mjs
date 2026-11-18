@@ -23,9 +23,10 @@ test('typed development addresses open directly and environment badges follow ex
   assert.equal(resolveInput('203.0.113.9:3000'), 'https://203.0.113.9:3000');
   assert.equal(resolveInput('[fd00::1]:8443'), 'https://[fd00::1]:8443');
   for (const address of ['例子.中国', 'xn--fsqu00a.xn--fiqs8s']) assert.equal(resolveInput(address), `https://${address}`);
-  const credentialed = 'test-user:fixture-password@example.com/private';
-  assert.equal(resolveInput(credentialed), 'about:blank');
-  assert.equal(suggestable(credentialed), false);
+  for (const credentialed of ['test-user:fixture-password@example.com/private', 'test-user:two words@example.com']) {
+    assert.equal(resolveInput(credentialed), 'about:blank');
+    assert.equal(suggestable(credentialed), false);
+  }
   for (const broken of ['300.10.0.1', '192.168.1.010:3000', 'localhost: 3000', 'localhost:65536', 'localhost:3000@example.com']) {
     assert.equal(webAddress(broken), undefined, broken);
   }
