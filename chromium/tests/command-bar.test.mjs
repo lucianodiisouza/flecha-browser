@@ -30,6 +30,8 @@ test('typed development addresses open directly and environment badges follow ex
     'test-user:two words@example.com',
     'test user:fixture-password@example.com/private',
     'test user:two words@example.com/private',
+    'test user: fixture-password@example.com/private',
+    'test user: two words@example.com',
     'test-token@example.com/private',
     'test-token@example.com',
     ':fixture-password@example.com/private',
@@ -56,7 +58,14 @@ test('typed development addresses open directly and environment badges follow ex
     'example.com :65536/private?token=fixture',
     '%65xample%2ecom:65536/api?token=fixture',
     '%ZZxample%2ecom:65536/api?token=fixture',
+    'example%E3%80%82com:65536/private?token=fixture',
+    'example%EF%BC%8Ecom:65536/private?token=fixture',
+    'example%EF%BD%A1com:65536/private?token=fixture',
+    '%ZZxample%E3%80%82com:65536/private?token=fixture',
     '[::gg]:80/api?token=fixture',
+    '2001:db8::1/private?token=fixture',
+    'fe80::1%eth0/private?token=fixture',
+    '2001:db8:0:0:0:0:0:1/private?token=fixture',
     'staging:65536/api?token=fixture',
     'staging:bad/api?token=fixture',
     'build123: bad? token=fixture',
@@ -68,6 +77,11 @@ test('typed development addresses open directly and environment badges follow ex
   }
   assert.equal(suggestable('re: meet @ noon'), true);
   assert.equal(resolveInput('contact fixture@example.com'), 'https://www.google.com/search?q=contact%20fixture%40example.com');
+  for (const prose of ['email: alice@example.com', 'contact: alice@example.com', 'work email: alice@example.com']) {
+    assert.equal(new URL(resolveInput(prose)).searchParams.get('q'), prose);
+    assert.equal(suggestable(prose), false);
+  }
+  assert.equal(new URL(resolveInput('12:34:56')).searchParams.get('q'), '12:34:56');
   assert.match(resolveInput('re: meet @ noon'), /[?&]q=re%3A%20meet%20%40%20noon/);
   assert.equal(resolveInput('re: read? Where next'), 'https://www.google.com/search?q=re%3A%20read%3F%20Where%20next');
   assert.equal(resolveInput('node.js: tutorial'), 'https://www.google.com/search?q=node.js%3A%20tutorial');

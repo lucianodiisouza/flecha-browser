@@ -26,16 +26,24 @@ export function searchUrl(terms: string, engine?: SearchEngineId): string {
 }
 
 function hasAddressCredentials(input: string): boolean {
-  return /^(?:[^:\s/?#@]+|[^:/?#@]*:[^@]*)@(?=\S|$)/.test(input.trim());
+  const text = input.trim();
+  const credentials = /^[^:/?#@]*:([^@]*)@(?=\S|$)/.exec(text);
+  if (!credentials) return /^[^:\s/?#@]+@(?=\S|$)/.test(text);
+  const [, password] = credentials;
+  // A label followed by a space and a plain email address can be an explicit search.
+  return !/^\s/.test(password) || /\s/.test(password.trim()) ||
+    /^[^\s/?#\\]+[/?#\\]/.test(text.slice(credentials[0].length));
 }
 
 export function looksLikeRejectedAddress(input: string): boolean {
   if (hasAddressCredentials(input)) return true;
   const [typed] = input.split(/[/?#\\]/, 1);
   const tail = input.slice(typed.length);
-  let authority = typed.replace(/%2e|[。．｡]/gi, '.');
+  let authority = typed;
   try { authority = decodeURIComponent(authority); } catch { /* A bad escape can still follow a host. */ }
-  if (hasAddressCredentials(authority) || /^\[[^\s\[\]]*:[^\s\[\]]*(?:\]|$)/.test(authority)) return true;
+  authority = authority.replace(/[。．｡]|%2e|%e3%80%82|%ef%bc%8e|%ef%bd%a1/gi, '.').trim();
+  if (hasAddressCredentials(authority + tail) || /^\[[^\s\[\]]*:[^\s\[\]]*(?:\]|$)/.test(authority)) return true;
+  if (/^[\da-f:.]+(?:%[\w.-]+)?$/i.test(authority) && /::|:.*:.*:/.test(authority)) return true;
   const colon = authority.indexOf(':');
   const host = (colon < 0 ? authority : authority.slice(0, colon)).trim();
   const port = colon < 0 ? '' : authority.slice(colon + 1).trim();
