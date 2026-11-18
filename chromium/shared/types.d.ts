@@ -219,6 +219,7 @@ export interface PeekState {
 export type DropTarget =
   | { zone: 'favorites'; beforeTabId?: string }
   | { zone: 'today'; beforeTabId?: string }
+  /** In pinned, `beforeTabId` may also be a folder's id. */
   | { zone: 'pinned'; folderId?: string; beforeTabId?: string };
 
 /**
@@ -465,6 +466,9 @@ export interface FlechaApi {
   deleteSpace(spaceId: string): void;
   tabMenu(tabId: string): void;
   spaceMenu(spaceId: string): void;
+  folderMenu(folderId: string): void;
+  /** Moves a folder within the active Space's pinned tabs: into `folderId`, before `beforeId` (a tab or folder). */
+  moveFolder(folderId: string, to: { folderId?: string; beforeId?: string }): void;
   toggleFolder(folderId: string): void;
   renameFolder(folderId: string, name: string): void;
   moveTab(tabId: string, target: DropTarget): void;

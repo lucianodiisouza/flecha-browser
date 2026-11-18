@@ -118,6 +118,8 @@ const api: FlechaApi = {
   // Electron pops native menus; the page draws them, from items the background builds.
   tabMenu: (id) => void showMenu('tabMenu', id),
   spaceMenu: (id) => void showMenu('spaceMenu', id),
+  folderMenu: (id) => void showMenu('folderMenu', id),
+  moveFolder: cmd('moveFolder'),
   toggleFolder: cmd('toggleFolder'),
   renameFolder: cmd('renameFolder'),
   moveTab: cmd('moveTab'),

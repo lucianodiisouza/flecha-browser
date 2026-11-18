@@ -136,7 +136,7 @@ export class Store {
     } else {
       const parent = target.folderId ? findFolder(targetSpace.pinned, target.folderId)?.children : undefined;
       const list = parent ?? (target.beforeTabId ? findParentList(targetSpace.pinned, target.beforeTabId) : undefined) ?? targetSpace.pinned;
-      const i = target.beforeTabId ? list.findIndex((n) => n.kind === 'tab' && n.tabId === target.beforeTabId) : -1;
+      const i = target.beforeTabId ? list.findIndex((n) => nodeId(n) === target.beforeTabId) : -1;
       list.splice(i < 0 ? list.length : i, 0, { kind: 'tab', tabId });
     }
 

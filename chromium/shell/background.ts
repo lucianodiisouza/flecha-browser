@@ -6,7 +6,7 @@
  * pinned tabs costs nothing until you use them. Chromium tabs that pages open themselves
  * (links to a new tab, window.open) become Flecha tabs.
  */
-import { Store, type StatePersistence } from '../shared/store';
+import { Store, findFolder, pinnedTabIds, type StatePersistence } from '../shared/store';
 import { resolveInput, searchEngine } from './lib/url';
 import { shortcutHints, type ShortcutId } from './lib/shortcuts';
 import { describe as describeEnvironment } from './lib/environments';
@@ -584,6 +584,29 @@ async function start() {
     ];
   }
 
+  function folderMenu(folderId: string): MenuEntry<MenuRun>[] | undefined {
+    if (incognito) return undefined;
+    const folder = findFolder(store.activeSpace.pinned, folderId);
+    if (!folder) return undefined;
+    const tabs = pinnedTabIds(folder.children)
+      .map((id) => store.state.tabs[id])
+      .filter(Boolean);
+    const links = tabs.map((t) => t.url);
+    const markdown = tabs.map((t) => `- [${t.customTitle ?? t.title}](${t.url})`);
+    return [
+      { label: 'Rename…', run: { rename: folderId } },
+      { label: 'New Folder Inside', run: does('newFolderIn', folderId) },
+      { label: folder.open ? 'Collapse' : 'Expand', run: does('toggleFolder', folderId) },
+      SEPARATOR,
+      { label: 'Copy Links', enabled: links.length > 0, run: { copy: links.join('\n'), message: links.length === 1 ? 'Link copied' : `${links.length} links copied` } },
+      { label: 'Copy as Markdown List', enabled: links.length > 0, run: { copy: markdown.join('\n'), message: 'Markdown list copied' } },
+      { label: 'Close Its Tabs', enabled: tabs.some((t) => live.has(t.id)), run: does('unloadFolder', folderId) },
+      SEPARATOR,
+      { label: 'Ungroup', run: does('deleteFolder', folderId, true) },
+      { label: 'Delete Folder and Tabs…', enabled: links.length > 0, run: { deleteFolder: folderId } },
+    ];
+  }
+
   /** Opens the sidebar's Space editor (name, emoji, colour), in that Space. */
   function editSpace(spaceId: string) {
     if (store.state.activeSpaceId !== spaceId) store.switchSpace(spaceId);
@@ -636,6 +659,17 @@ async function start() {
     }),
     tabMenu: (id: string) => tabMenu(String(id)),
     spaceMenu: (id: string) => spaceMenu(String(id)),
+    folderMenu: (id: string) => folderMenu(String(id)),
+    moveFolder: spacesOnly((id: string, to: { folderId?: string; beforeId?: string }) =>
+      store.moveFolder(String(id), { spaceId: store.activeSpace.id, folderId: to?.folderId, beforeId: to?.beforeId }),
+    ),
+    newFolderIn: spacesOnly((parentId: string) => store.newFolder('New Folder', { parentId: String(parentId) })),
+    // Ungroup keeps its tabs where the folder was; otherwise they go to the archive.
+    deleteFolder: spacesOnly((id: string, keepTabs: boolean) => void unload(store.deleteFolder(String(id), !!keepTabs))),
+    unloadFolder: spacesOnly((id: string) => {
+      const folder = findFolder(store.activeSpace.pinned, String(id));
+      if (folder) void unload(pinnedTabIds(folder.children));
+    }),
     setOverlay: (name: string, on: boolean) => {
       if (on) frame.overlays.add(String(name));
       else frame.overlays.delete(String(name));

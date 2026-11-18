@@ -17,6 +17,8 @@ export type MenuRun =
   | { copy: string; message: string }
   /** The sidebar's inline rename of a tab row. */
   | { rename: string }
+  /** Asks first, in the page, then deletes the folder and its tabs. */
+  | { deleteFolder: string }
   /** Asks first, in the page, then deletes the Space. */
   | { deleteSpace: string }
   /** Asks first, in the page, then signs out of everything in the Space (separate cookies). */
