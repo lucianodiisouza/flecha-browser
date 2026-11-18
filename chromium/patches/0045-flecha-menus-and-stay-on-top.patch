@@ -6,8 +6,8 @@
  
 +  // One entry of a menu in the menu bar (setMenus).
 +  dictionary MenuItem {
-+    // No label: a separator.
-+    DOMString? label;
++    // No text: a separator.
++    DOMString? text;
 +    // Sent as onShortcut(command, windowId) when the item is chosen, for the
 +    // window in front.
 +    DOMString? command;
@@ -318,7 +318,7 @@
 +    out.title = menu.title;
 +    for (const flecha_private::MenuItem& item : menu.items) {
 +      FlechaMenuItem& entry = out.items.emplace_back();
-+      entry.label = item.label.value_or("");
++      entry.label = item.text.value_or("");
 +      entry.command = item.command.value_or("");
 +      if (item.accelerator) {
 +        entry.accelerator = ParseFlechaAccelerator(*item.accelerator);

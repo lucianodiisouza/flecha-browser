@@ -8,7 +8,7 @@ const fresh = () => new Store({ load: () => undefined, save: () => undefined });
 const keys = (id: string) => ({ pinTab: 'CmdOrCtrl+D', newSpace: 'Ctrl+Shift+N' })[id];
 const menu = (store: Store, title: string, stayOnTop = false) =>
   flechaMenus(store.state, { stayOnTop, keys, spaceModifier: 'Ctrl' }).find((m) => m.title === title)!;
-const labelled = (store: Store, title: string, label: string) => menu(store, title).items.find((i) => i.label === label);
+const labelled = (store: Store, title: string, label: string) => menu(store, title).items.find((i) => i.text === label);
 
 test('Spaces lists every Space, checks the active one and numbers the first nine', () => {
   const store = fresh();
@@ -40,7 +40,7 @@ test('Tabs follows the active tab: Pin or Unpin, and split items only in a split
 
 test('Archive shows the latest archived tabs, and Window has Stay On Top', () => {
   const store = fresh();
-  assert.equal(menu(store, 'Archive').items.at(-1)?.label, 'No Archived Tabs');
+  assert.equal(menu(store, 'Archive').items.at(-1)?.text, 'No Archived Tabs');
   store.state.archive.unshift({ url: 'https://old.example/', title: 'Old page', closedAt: 42 });
   assert.equal(labelled(store, 'Archive', 'Old page')?.command, 'menu:reopen:42');
   assert.equal(menu(store, 'Window', true).items[0].checked, true);

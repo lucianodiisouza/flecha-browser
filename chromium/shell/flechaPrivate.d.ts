@@ -218,10 +218,10 @@ declare namespace chrome.flechaPrivate {
    * go before the Window menu, and a menu titled like one already there ("Window") puts its
    * items at the top of that one. Chromium's Tab and Bookmarks menus are hidden. Choosing an
    * item sends its command to onShortcut(command, windowId) for the window in front.
-   * `accelerator` is only shown; the keys work through setShortcuts(). No label: a separator.
+   * `accelerator` is only shown; the keys work through setShortcuts(). No text: a separator.
    */
   interface MenuItem {
-    label?: string;
+    text?: string;
     command?: string;
     accelerator?: string;
     checked?: boolean;
