@@ -349,7 +349,14 @@ test('a failed Boost startup read is retried before saving or registering script
 
 test('the legacy Boost debugger runs only in the bound document across navigation', async (t) => {
   const boost = 'old.example.ts';
-  const scripts = { boosts: { [boost]: 'source' }, boostsCompiled: { [boost]: { code: 'globalThis.runs += 1' } } };
+  const source = 'globalThis.runs += 1; globalThis.pageReceiver = this === globalThis;';
+  const { compileBoost } = await loadModule('chromium/shell/features/compileBoost.ts');
+  const compiled = compileBoost(boost, source);
+  assert.ok(compiled.code, compiled.error);
+  const page = createContext({ runs: 0 });
+  runInContext(compiled.code, page);
+  assert.equal(page.pageReceiver, true);
+  const scripts = { boosts: { [boost]: source }, boostsCompiled: { [boost]: compiled } };
   const documents = new Map(['original', 'replacement', 'checking', 'steady'].map((id) => [id, createContext({ document: {}, runs: 0 })]));
   const navigation = event();
   const attaching = Promise.withResolvers();
@@ -412,8 +419,44 @@ test('the legacy Boost debugger runs only in the bound document across navigatio
   navigate();
   await nextTurn();
   assert.equal(documents.get('steady').runs, 1);
+  assert.equal(documents.get('steady').pageReceiver, page.pageReceiver);
   assert.deepEqual(callTargets(), ['checking', 'steady']);
   assert.equal(detach.mock.callCount(), 3);
+});
+
+test('a rejected injection reports the script and still attempts the next matching Boost', async (t) => {
+  const files = { boosts: { 'all.ts': 'first', 'old.example.ts': 'second' }, boostsCompiled: {
+    'all.ts': { code: 'globalThis.runs += 10' },
+    'old.example.ts': { code: 'globalThis.runs += 1' },
+  } };
+  const warn = t.mock.method(console, 'warn', () => {});
+  t.after(() => delete globalThis.chrome);
+  for (const native of [true, false]) {
+    const navigation = event();
+    let attempts = 0;
+    const inject = t.mock.fn(async () => {
+      if (++attempts === 1) throw new Error('Injection rejected');
+      return [];
+    });
+    globalThis.chrome = {
+      extension: { inIncognitoContext: false },
+      storage: { local: { get: async () => files } },
+      tabs: { onRemoved: event() },
+      webNavigation: { onCommitted: event(), onDOMContentLoaded: navigation },
+      debugger: { onDetach: event() },
+      scripting: { executeScript: inject },
+      userScripts: native ? { getScripts: async () => [], unregister: async () => {}, register: async () => {}, execute: inject } : undefined,
+    };
+    const boosts = await loadModule('chromium/shell/features/boosts.ts', { fresh: true });
+    await boosts.ready();
+    navigation.emit({ tabId: 1, frameId: 0, url: 'https://old.example/', documentId: 'matching-document' });
+    await nextTurn();
+    assert.deepEqual(inject.mock.calls.map(({ arguments: [arg] }) => arg.target.documentIds), [['matching-document'], ['matching-document']]);
+    const [first, second] = inject.mock.calls.map(({ arguments: [arg] }) => native ? arg.js[0].code : arg.args[0]);
+    assert.match(first, /flecha\.boost\/all\.ts/);
+    assert.match(second, /flecha\.boost\/old\.example\.ts/);
+    assert.match(warn.mock.calls.at(-1).arguments[0], /all\.ts.*matching-document/);
+  }
 });
 
 test('Boosts serializes saves and keeps the editor address aligned with a retained draft', async (t) => {

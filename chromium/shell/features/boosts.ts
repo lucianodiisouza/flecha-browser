@@ -221,7 +221,9 @@ async function runScriptWithDebugger(tabId: number, documentId: string, name: st
       functionDeclaration: `function (claim) {
         if (this !== document || this[${marker}] !== claim) return;
         delete this[${marker}];
-        ${source}
+        (function () {
+          ${source}
+        }).call(globalThis);
       }`,
       arguments: [{ value: claim }],
       userGesture: false,
@@ -242,9 +244,12 @@ function reportError(tabId: number, documentId: string, name: string, message: s
 
 async function runScripts(tabId: number, url: string, documentId: string) {
   for (const name of matching(url, 'script')) {
-    const code = compiled[name]?.code;
-    if (code) await runScript(tabId, documentId, name, code);
-    else if (compiled[name]?.error) reportError(tabId, documentId, name, compiled[name].error!);
+    const script = compiled[name];
+    if (script?.code) {
+      await runScript(tabId, documentId, name, script.code).catch((error) => {
+        console.warn(`Flecha boosts: couldn’t run ${name} in document ${documentId}`, error);
+      });
+    } else if (script?.error) reportError(tabId, documentId, name, script.error);
   }
 }
 
