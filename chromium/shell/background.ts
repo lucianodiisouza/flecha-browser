@@ -706,10 +706,13 @@ async function start() {
     const here = new Set(tabs.map((t) => t.id));
     for (const [key, { native: [left, right], store: pair }] of wanted) {
       if (have.has(key) || !here.has(left) || !here.has(right)) continue;
+      const stillWanted = () => store.hasWindow(windowId) && live.get(pair[0]) === left && live.get(pair[1]) === right &&
+        store.windowView(windowId).spaces.some((space) => space.split === pair);
       // Split tabs must be next to each other, left first.
+      if (!stillWanted()) continue;
       await chrome.tabs.move(left, { index: -1 }).catch(() => undefined);
+      if (!stillWanted()) continue;
       await chrome.tabs.move(right, { index: -1 }).catch(() => undefined);
-      const stillWanted = () => store.hasWindow(windowId) && store.windowView(windowId).spaces.some((space) => space.split === pair);
       if (!stillWanted()) continue;
       creatingSplits.set(chromeWindowId, [left, right]);
       try {

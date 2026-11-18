@@ -89,7 +89,7 @@ export function registerFeatures(ctx: FeaturesContext): Features {
     openBoostsFolder: incognito ? boostsInRegularWindow : () => boosts.openPage(),
     'settings:open-boosts': () => boosts.openPage(),
     'boosts:list': () => boosts.list(),
-    'boosts:get': (name: string) => boosts.get(String(name)),
+    'boosts:get': (name: string) => boosts.getCommitted(String(name)),
     'boosts:create': async (host: string, kind: BoostKind) => {
       const name = await boosts.create(String(host), kind);
       if (name) boostsChanged();

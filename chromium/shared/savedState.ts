@@ -108,7 +108,13 @@ export function repairState(raw: Record<string, unknown>): BrowserState | undefi
   const spaces = rawSpaces.map((s) => repairSpace(s, claim));
   if (!spaces.length) return undefined;
   const spaceIds = new Set(spaces.map((s) => s.id));
-  const window = (w: Record<string, unknown>) => repairWindow(w, spaceIds, spaces[0].id, claim, (id) => placed.has(id as string));
+  const discardPhone = (id: string) => {
+    if (tabs[id]?.device !== 'mobile') return false;
+    delete tabs[id];
+    placed.delete(id);
+    return true;
+  };
+  const window = (w: Record<string, unknown>) => repairWindow(w, spaceIds, spaces[0].id, claim, (id) => placed.has(id as string), discardPhone);
   // Before version 2 each Space held the Today tabs and selection of the one window.
   const rawWindows = Array.isArray(raw.windows)
     ? raw.windows.filter(isRecord)
@@ -230,10 +236,11 @@ function repairWindow(
   firstSpaceId: string,
   claim: (id: unknown) => id is string,
   placed: (id: unknown) => boolean,
+  discardPhone: (id: string) => boolean,
 ): FlechaWindow {
   const spaces: Record<string, WindowSpace> = {};
   for (const [spaceId, ws] of isRecord(raw.spaces) ? Object.entries(raw.spaces) : []) {
-    if (spaceIds.has(spaceId) && isRecord(ws)) spaces[spaceId] = repairWindowSpace(ws, claim, placed);
+    if (spaceIds.has(spaceId) && isRecord(ws)) spaces[spaceId] = repairWindowSpace(ws, claim, placed, discardPhone);
   }
   return {
     id: typeof raw.id === 'string' ? raw.id : crypto.randomUUID(),
@@ -243,11 +250,17 @@ function repairWindow(
   };
 }
 
-function repairWindowSpace(raw: Record<string, unknown>, claim: (id: unknown) => id is string, placed: (id: unknown) => boolean): WindowSpace {
+function repairWindowSpace(raw: Record<string, unknown>, claim: (id: unknown) => id is string, placed: (id: unknown) => boolean,
+  discardPhone: (id: string) => boolean): WindowSpace {
   const ws = { ...pick(raw, ['activeTabId', 'split', ...Object.keys(WINDOW_SPACE_FIELDS)]), today: Array.isArray(raw.today) ? raw.today.filter(claim) : [] } as WindowSpace;
   dropInvalid(ws as unknown as Record<string, unknown>, WINDOW_SPACE_FIELDS);
   if (ws.activeTabId !== undefined && !placed(ws.activeTabId)) delete ws.activeTabId;
   if (ws.split && !(Array.isArray(ws.split) && ws.split.length === 2 && ws.split.every(placed))) {
+    const phone = Array.isArray(raw.split) && raw.split.length === 2 ? raw.split[1] : undefined;
+    if (ws.splitMode === 'responsive' && typeof phone === 'string' && ws.today.includes(phone) && discardPhone(phone)) {
+      ws.today = ws.today.filter((id) => id !== phone);
+      if (ws.activeTabId === phone) delete ws.activeTabId;
+    }
     delete ws.split;
     delete ws.splitMode;
   }

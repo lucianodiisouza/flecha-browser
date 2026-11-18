@@ -59,7 +59,21 @@ const loaded = (async () => {
   compiled = (saved[COMPILED_KEY] as typeof compiled | undefined) ?? {};
 })();
 
-const persist = () => chrome.storage.local.set({ [STORE_KEY]: files, [COMPILED_KEY]: compiled });
+let writes = loaded;
+
+function writeBoosts(change: (nextFiles: typeof files, nextCompiled: typeof compiled) => boolean) {
+  const write = writes.then(async () => {
+    const nextFiles = { ...files };
+    const nextCompiled = { ...compiled };
+    if (!change(nextFiles, nextCompiled)) return false;
+    await chrome.storage.local.set({ [STORE_KEY]: nextFiles, [COMPILED_KEY]: nextCompiled });
+    files = nextFiles;
+    compiled = nextCompiled;
+    return true;
+  });
+  writes = write.then(() => undefined, () => undefined);
+  return write;
+}
 
 const userScripts = () => {
   try {
@@ -214,6 +228,12 @@ export function get(name: string): BoostFile | undefined {
   return { name, ...parsed, code: files[name], error: compiled[name]?.error };
 }
 
+/** A reconnect read may arrive while a previous port's write is still committing. */
+export async function getCommitted(name: string) {
+  await writes;
+  return get(name);
+}
+
 /** The boost for a page's site, created from the template the first time. */
 export async function fileFor(url: string | undefined, kind: BoostKind) {
   const host = boostHostFor(url);
@@ -225,8 +245,9 @@ export async function create(host: string, kind: BoostKind) {
   host = String(host).trim().toLowerCase().replace(/^www\./, '');
   if (!/^[a-z0-9-]+(\.[a-z0-9-]+)*$/.test(host) || (kind !== 'script' && kind !== 'styles')) return undefined;
   const name = boostName(host, kind);
+  await writes;
   if (files[name] !== undefined) return name;
-  return (await save(name, TEMPLATES[kind](host), { reload: false })) && name;
+  return (await save(name, TEMPLATES[kind](host), { reload: false, onlyIfMissing: true })) && name;
 }
 
 /**
@@ -234,13 +255,17 @@ export async function create(host: string, kind: BoostKind) {
  * incognito window applies your boosts but writes none: a boost names its site, and both copies
  * of the shell share chrome.storage.local.
  */
-export async function save(name: string, code: string, { reload = true, build }: { reload?: boolean; build?: CompiledBoost } = {}): Promise<BoostFile | undefined> {
+export async function save(name: string, code: string, { reload = true, build, onlyIfMissing }: { reload?: boolean; build?: CompiledBoost; onlyIfMissing?: boolean } = {}): Promise<BoostFile | undefined> {
   const parsed = parseBoostName(name);
   if (incognito || !parsed || !/^[a-z0-9.-]+$/i.test(parsed.host)) return undefined;
-  files[name] = String(code);
-  // The Boosts page compiles (compileBoost) and sends both; a new template has nothing to run.
-  if (parsed.kind === 'script') compiled[name] = build ? { code: build.code && String(build.code), error: build.error && String(build.error) } : {};
-  await persist();
+  const changed = await writeBoosts((nextFiles, nextCompiled) => {
+    if (onlyIfMissing && Object.hasOwn(nextFiles, name)) return false;
+    nextFiles[name] = String(code);
+    // The editor sends the compiled output; a new template has nothing to run.
+    if (parsed.kind === 'script') nextCompiled[name] = build ? { code: build.code && String(build.code), error: build.error && String(build.error) } : {};
+    return true;
+  });
+  if (!changed) return get(name);
   if (parsed.kind === 'script') registered = registerUserScripts();
   await refreshPages(parsed, reload);
   return get(name);
@@ -248,10 +273,14 @@ export async function save(name: string, code: string, { reload = true, build }:
 
 export async function remove(name: string) {
   const parsed = parseBoostName(name);
-  if (incognito || !parsed || files[name] === undefined) return;
-  delete files[name];
-  delete compiled[name];
-  await persist();
+  if (incognito || !parsed) return;
+  const changed = await writeBoosts((nextFiles, nextCompiled) => {
+    if (!Object.hasOwn(nextFiles, name)) return false;
+    delete nextFiles[name];
+    delete nextCompiled[name];
+    return true;
+  });
+  if (!changed) return;
   if (parsed.kind === 'script') registered = registerUserScripts();
   // Unstyle pages now; a removed script stays until the page reloads, as in Electron.
   await refreshPages(parsed, false);

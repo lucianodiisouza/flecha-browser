@@ -7,6 +7,7 @@ import { isEnter } from '../lib/keys';
 import { importFromBrowser } from '../windowUi';
 import { onReconnect } from '../client';
 import { toast } from '../settingsUi';
+import { formatTargets, parseTargets } from '../lib/environments';
 
 declare global {
   interface Window {
@@ -174,20 +175,36 @@ type EnvironmentDraft = SettingsView['environments'][number];
 const environmentFields = ['name', 'targetsText'] as const;
 type EnvironmentField = typeof environmentFields[number];
 type FieldEdit = { value: string; failed?: boolean };
+type EnvironmentEdits = Partial<Record<EnvironmentField, FieldEdit>>;
 let environments: EnvironmentDraft[] = [];
 let savedEnvironments: EnvironmentDraft[] = [];
-const environmentDrafts = new Map<string, Partial<Record<EnvironmentField, FieldEdit>>>();
+const environmentDrafts = new Map<string, EnvironmentEdits>();
 const incompleteEnvironments = new Map<string, EnvironmentDraft>();
-const unconfirmedCreates = new Set<string>();
+const unconfirmedCreates = new Map<string, { values: Pick<EnvironmentDraft, EnvironmentField>; edits?: EnvironmentEdits }>();
 const removingEnvironments = new Map<string, 'pending' | 'queued'>();
-const environmentErrors = new Map<string, string>();
+const environmentErrors = new Map<string, Partial<Record<EnvironmentField, string>>>();
 const environmentCards = new Map<string, ReturnType<typeof environmentCard>>();
 let environmentWrites = Promise.resolve();
 const environmentList = document.getElementById('environmentList')!;
 
 function reconcileEnvironments(saved: EnvironmentDraft[]) {
   savedEnvironments = saved;
-  for (const env of saved) incompleteEnvironments.delete(env.id);
+  for (const env of saved) {
+    incompleteEnvironments.delete(env.id);
+    const create = unconfirmedCreates.get(env.id);
+    if (!create) continue;
+    unconfirmedCreates.delete(env.id);
+    const drafts = environmentDrafts.get(env.id);
+    if (!drafts) continue;
+    for (const field of environmentFields) {
+      if (drafts[field] === create.edits?.[field] && env[field] === create.values[field]) {
+        delete drafts[field];
+        const errors = environmentErrors.get(env.id);
+        if (errors) delete errors[field];
+      }
+    }
+    if (!drafts.name && !drafts.targetsText) environmentDrafts.delete(env.id);
+  }
   environments = [...saved, ...incompleteEnvironments.values()]
     .filter((env) => !removingEnvironments.has(env.id))
     .map((env) => {
@@ -217,7 +234,7 @@ function renderEnvironments() {
     const edits = environmentDrafts.get(env.id);
     const failed = environmentFields.some((field) => edits?.[field]?.failed);
     const error = environmentErrors.get(env.id);
-    const message = [failed && 'Couldn’t confirm these changes were saved.', error].filter(Boolean).join(' ');
+    const message = [failed && 'Couldn’t confirm these changes were saved.', error?.name, error?.targetsText].filter(Boolean).join(' ');
     if (status.textContent !== message) status.textContent = message;
     retry.hidden = !failed;
     if (card !== position) {
@@ -287,7 +304,10 @@ function saveEnvironmentField(id: string, field: EnvironmentField, edit: FieldEd
     const submitted = creating ? edits : { [field]: edit };
     let view: SettingsView;
     try {
-      if (creating) unconfirmedCreates.add(id);
+      if (creating) unconfirmedCreates.set(id, { edits, values: {
+        name: local.name?.trim() || 'Project',
+        targetsText: formatTargets(parseTargets(local.targetsText ?? '')),
+      } });
       view = await api.set({ environment: creating
         ? { op: 'create', id, name: local.name ?? '', targetsText: local.targetsText ?? '' }
         : { op: 'edit', id, field, value: edit.value } });
@@ -301,10 +321,17 @@ function saveEnvironmentField(id: string, field: EnvironmentField, edit: FieldEd
       throw error;
     }
     if (view.notice) {
-      if (view.environments.some((env) => env.id === id) || incompleteEnvironments.has(id)) environmentErrors.set(id, view.notice);
+      if (view.environments.some((env) => env.id === id) || incompleteEnvironments.has(id)) {
+        environmentErrors.set(id, { ...environmentErrors.get(id), [creating ? 'targetsText' : field]: view.notice });
+      }
       else if (!removingEnvironments.has(id)) toast(view.notice);
     } else {
-      environmentErrors.delete(id);
+      const errors = environmentErrors.get(id);
+      if (creating) environmentErrors.delete(id);
+      else if (errors) {
+        delete errors[field];
+        if (!errors.name && !errors.targetsText) environmentErrors.delete(id);
+      }
       const current = environmentDrafts.get(id);
       if (current) {
         for (const key of environmentFields) if (current[key] === submitted?.[key]) delete current[key];

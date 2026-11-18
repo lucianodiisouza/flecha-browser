@@ -751,16 +751,25 @@ export class Store {
     const cutoff = Date.now() - hours * 60 * 60 * 1000;
     const removed: string[] = [];
     for (const win of this.state.windows) {
-      for (const ws of Object.values(win.spaces)) {
-        const visibleSplit = ws.activeTabId && ws.split?.includes(ws.activeTabId) ? ws.split : undefined;
+      for (const [spaceId, ws] of Object.entries(win.spaces)) {
+        const visibleSplit = spaceId === win.activeSpaceId && ws.activeTabId && ws.split?.includes(ws.activeTabId) ? ws.split : undefined;
         ws.today = ws.today.filter((id) => {
           const tab = this.state.tabs[id];
           if (!tab || id === ws.activeTabId || visibleSplit?.includes(id) || tab.lastActive >= cutoff) return true;
-          this.archive(tab);
+          if (tab.device !== 'mobile') this.archive(tab);
           delete this.state.tabs[id];
           removed.push(id);
           return false;
         });
+        if (ws.split?.some((id) => !this.state.tabs[id])) {
+          const phone = ws.splitMode === 'responsive' ? ws.split[1] : undefined;
+          if (phone && this.state.tabs[phone]?.device === 'mobile') {
+            this.discardResponsiveMirror(ws);
+            removed.push(phone);
+          }
+          delete ws.split;
+          delete ws.splitMode;
+        }
       }
     }
     if (removed.length) {

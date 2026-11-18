@@ -288,11 +288,12 @@ export function registerNativeHost(ctx: NativeHostContext) {
 
   type UseTab = {
     signal: AbortSignal;
-    tab(chromeId: number): Promise<void>;
+    tab(chromeId: number, signal?: AbortSignal): Promise<void>;
     command(method: string, params?: object, signal?: AbortSignal): Promise<unknown>;
   };
   const tabOperations = new Map<number, Promise<void>>();
   const pendingNavigations = new Map<number, Promise<void>>();
+  const pendingDebuggerResets = new Map<number, Promise<void>>();
   const tabClosures = new WeakMap<TabInfo, symbol>();
 
   async function runTool(name: AgentToolName, args: Record<string, any>): Promise<AgentResult> {
@@ -304,18 +305,19 @@ export function registerNativeHost(ctx: NativeHostContext) {
     try {
       return await withDeadline(timeout, (signal) => (work = tools[name](args, {
         signal,
-        async tab(chromeId) {
-          signal.throwIfAborted();
+        async tab(chromeId, deadline = signal) {
+          deadline.throwIfAborted();
           const previous = tabOperations.get(chromeId) ?? Promise.resolve();
           const finished = new Promise<void>((resolve) => { unlock = resolve; });
           const tail = previous.then(() => finished);
           tabOperations.set(chromeId, tail);
           void tail.then(() => { if (tabOperations.get(chromeId) === tail) tabOperations.delete(chromeId); });
-          await untilAborted(previous, signal);
-          signal.throwIfAborted();
+          await untilAborted(previous, deadline);
+          deadline.throwIfAborted();
           if (pendingNavigations.has(chromeId)) {
             throw new Error('Chrome is still finishing a previous navigation on this tab. Try again after it finishes or use another tab.');
           }
+          checkDebuggerRecovery(chromeId);
           runningTab = chromeId;
           working.add(chromeId);
           if (attached.has(chromeId)) keepAttached(chromeId);
@@ -357,7 +359,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     showActivity(tabId, action);
     const chromeId = await untilAborted(ctx.tabs.chromeTab(tabId), use.signal);
     if (chromeId === undefined) throw new Error(`Tab ${tabId} couldn’t be opened`);
-    await use.tab(chromeId);
+    await use.tab(chromeId, use.signal);
     if (!store.state.tabs[tabId] || tabClosures.get(tab) !== closure || (ctx.tabs.liveId && ctx.tabs.liveId(tabId) !== chromeId)) {
       throw new Error(`Tab ${tabId} closed before the tool could run`);
     }
@@ -489,17 +491,30 @@ export function registerNativeHost(ctx: NativeHostContext) {
       return text(result === undefined ? 'undefined' : result);
     },
     wait_for: async ({ tabId, selector, timeoutMs = 10000 }, use) => {
-      const t = await target(tabId, `waiting for ${selector ?? 'the page'}`, use);
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        use.signal.throwIfAborted();
-        const ready = selector
-          ? await evaluate(t.chromeId, `!!document.querySelector(${JSON.stringify(selector)})`, use).catch(() => false)
-          : (await untilAborted(chrome.tabs.get(t.chromeId), use.signal)).status !== 'loading';
-        if (ready) return text('ready');
-        await wait(200);
+      const timedOut = () => fail(`Timed out after ${timeoutMs}ms`);
+      if (timeoutMs === 0) return timedOut();
+      try {
+        return await withDeadline(timeoutMs, async (deadline) => {
+          const signal = AbortSignal.any([use.signal, deadline]);
+          const probe = { ...use, signal };
+          const t = await target(tabId, `waiting for ${selector ?? 'the page'}`, probe);
+          while (true) {
+            signal.throwIfAborted();
+            const ready = selector
+              ? await evaluate(t.chromeId, `!!document.querySelector(${JSON.stringify(selector)})`, probe).catch((error: unknown) => {
+                if (error instanceof Error && /Execution context was destroyed|Cannot find context with specified id/.test(error.message)) return false;
+                throw error;
+              })
+              : (await untilAborted(chrome.tabs.get(t.chromeId), signal)).status !== 'loading';
+            signal.throwIfAborted();
+            if (ready) return text('ready');
+            await untilAborted(wait(200), signal);
+          }
+        });
+      } catch (error) {
+        if (error instanceof AgentTimeout && !use.signal.aborted) return timedOut();
+        throw error;
       }
-      return fail(`Timed out after ${timeoutMs}ms`);
     },
   };
 
@@ -596,6 +611,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     const cleanup = releasing.get(chromeId);
     if (cleanup) await untilAborted(cleanup, use.signal);
     use.signal.throwIfAborted();
+    checkDebuggerRecovery(chromeId);
     if (attached.has(chromeId)) {
       keepAttached(chromeId);
       return;
@@ -634,7 +650,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
   async function debug(chromeId: number, method: string, params: object, use: UseTab) {
     await attach(chromeId, use);
     // Chromium also lets go of a tab when another extension's frame loads in it mid-command.
-    return untilAborted(use.command(method, params), use.signal).catch(async (error: unknown) => {
+    return untilAborted(use.command(method, params, use.signal), use.signal).catch(async (error: unknown) => {
       throw await attachRefused(chromeId, error, use.signal);
     });
   }
@@ -656,7 +672,22 @@ export function registerNativeHost(ctx: NativeHostContext) {
       await withDeadline(TOOL_TIMEOUT, () => command);
     } catch (error) {
       if (!(error instanceof AgentTimeout)) throw error;
-      await resetDebugger(chromeId, DEBUG_HOLDER);
+      const previous = pendingDebuggerResets.get(chromeId);
+      const reset = previous ?? resetDebugger(chromeId, DEBUG_HOLDER).finally(() => {
+        if (pendingDebuggerResets.get(chromeId) === reset) pendingDebuggerResets.delete(chromeId);
+      });
+      pendingDebuggerResets.set(chromeId, reset);
+      try {
+        await withDeadline(TOOL_TIMEOUT, () => reset);
+      } catch (resetError) {
+        if (!(resetError instanceof AgentTimeout)) throw resetError;
+      }
+    }
+  }
+
+  function checkDebuggerRecovery(chromeId: number) {
+    if (pendingDebuggerResets.has(chromeId)) {
+      throw new Error('Chrome has not confirmed the debugger reset for this tab. Try again after it finishes or use another tab.');
     }
   }
 
@@ -697,17 +728,24 @@ export function registerNativeHost(ctx: NativeHostContext) {
   onDebuggerDetach(forget);
   chrome.tabs.onRemoved.addListener((chromeId) => {
     pendingNavigations.delete(chromeId);
+    pendingDebuggerResets.delete(chromeId);
     forget(chromeId);
   });
 
   async function dispatchInput(chromeId: number, method: string, down: object, up: object, use: UseTab) {
     await attach(chromeId, use);
     const pressed = use.command(method, down);
+    let pressSucceeded = false;
     try {
       await untilAborted(pressed, use.signal);
+      pressSucceeded = true;
     } finally {
       if (isHeld(chromeId, DEBUG_HOLDER)) {
-        await withDeadline(TOOL_TIMEOUT, (signal) => use.command(method, up, signal));
+        try {
+          await withDeadline(TOOL_TIMEOUT, (signal) => use.command(method, up, signal));
+        } catch (error) {
+          if (pressSucceeded) throw error;
+        }
       }
     }
   }

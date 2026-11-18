@@ -12,11 +12,12 @@ const { Store } = await loadModule('chromium/shared/store.ts');
 const { suggestable } = await loadModule('chromium/shell/lib/suggest.ts');
 const { devSuggestions } = await loadModule('chromium/shell/ui/devCommands.ts');
 
-test('typed development addresses open directly and environment badges follow explicit labels', () => {
+test('typed addresses open directly with encoded paths and queries', () => {
   for (const address of ['192.168.0.10:3000/docs', 'app.localhost:3030', '0.0.0.0:8000', '[::1]:8080']) {
     assert.equal(resolveInput(address), `http://${address}`);
   }
   assert.equal(webAddress('mailto:dev@example.com'), 'mailto:dev@example.com');
+  assert.equal(new URL(resolveInput('%65xample.com/docs')).href, 'https://example.com/docs');
   assert.equal(resolveInput('localhost:3000/my notes'), 'http://localhost:3000/my%20notes');
   assert.equal(resolveInput('localhost:443/my notes'), 'http://localhost:443/my%20notes');
   assert.equal(resolveInput('[0:0:0:0:0:0:0:1]:8080'), 'http://[0:0:0:0:0:0:0:1]:8080');
@@ -24,7 +25,13 @@ test('typed development addresses open directly and environment badges follow ex
   assert.equal(resolveInput('[fd00::1]:8443'), 'https://[fd00::1]:8443');
   assert.equal(resolveInput('example.com/my notes'), 'https://example.com/my%20notes');
   assert.equal(resolveInput('[fd00::1]/my notes'), 'https://[fd00::1]/my%20notes');
+  const query = 'example.com? section=release notes&token=fixture';
+  assert.equal(new URL(resolveInput(query)).searchParams.get('token'), 'fixture');
+  assert.equal(suggestable(query), false);
   for (const address of ['例子.中国', 'xn--fsqu00a.xn--fiqs8s']) assert.equal(resolveInput(address), `https://${address}`);
+});
+
+test('rejected addresses keep credentials and private paths out of search', () => {
   for (const credentialed of [
     'test-user:fixture-password@example.com/private',
     'test-user:two words@example.com',
@@ -77,7 +84,13 @@ test('typed development addresses open directly and environment badges follow ex
     assert.equal(resolveInput(malformed), 'about:blank');
     assert.equal(suggestable(malformed), false);
   }
+});
+
+test('prose still searches when its topic looks like a host', () => {
   assert.equal(suggestable('re: meet @ noon'), true);
+  const question = 'example.com? What is this';
+  assert.equal(new URL(resolveInput(question)).searchParams.get('q'), question);
+  assert.equal(suggestable(question), true);
   assert.equal(resolveInput('contact fixture@example.com'), 'https://www.google.com/search?q=contact%20fixture%40example.com');
   for (const prose of ['email: alice@example.com', 'contact: alice@example.com', 'work email: alice@example.com']) {
     assert.equal(new URL(resolveInput(prose)).searchParams.get('q'), prose);
@@ -94,7 +107,9 @@ test('typed development addresses open directly and environment badges follow ex
   assert.equal(resolveInput('node.js : 2024 tutorial? Where next'), 'https://www.google.com/search?q=node.js%20%3A%202024%20tutorial%3F%20Where%20next');
   assert.match(resolveInput('mailto: vs tel: links'), /[?&]q=mailto%3A%20vs%20tel%3A%20links/);
   assert.equal(resolveInput('mailto:?subject=Hello'), 'mailto:?subject=Hello');
-  assert.equal(new URL(resolveInput('%65xample.com/docs')).href, 'https://example.com/docs');
+});
+
+test('environment classification follows explicit labels', () => {
   const targets = parseTargets('prod https://staging.example.com\napp.localhost:3030\nflecha.dev\nlatest.example.com\n[::1]:8080\n0.0.0.0:8000\nstaging2.example.com\nqa01.example.com');
   const envs = [{ id: 'project', name: 'Project', targets }];
   assert.deepEqual(targets.map(({ origin }) => origin), ['https://staging.example.com', 'http://app.localhost:3030', 'https://flecha.dev', 'https://latest.example.com', 'http://[::1]:8080', 'http://0.0.0.0:8000', 'https://staging2.example.com', 'https://qa01.example.com']);

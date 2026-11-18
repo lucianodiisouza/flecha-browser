@@ -24,15 +24,15 @@ export interface ResponsiveContext {
 export function responsive(ctx: ResponsiveContext) {
   const { store } = ctx;
   /** Chromium tabs that are emulating, and those whose emulation the user cancelled (left alone). */
-  const emulating = new Set<number>();
+  const emulating = new Map<number, symbol>();
   const refused = new Set<number>();
   /** The desktop side's address each mirror last followed. */
   const followed = new Map<string, string>();
 
   onDebuggerDetach((tabId, reason) => {
-    const wasEmulating = emulating.delete(tabId);
+    emulating.delete(tabId);
     if (reason === 'canceled_by_user') refused.add(tabId);
-    if (reason === 'reset' && wasEmulating && Object.entries(store.state.tabs).some(
+    if (reason === 'reset' && !refused.has(tabId) && Object.entries(store.state.tabs).some(
       ([id, tab]) => tab.device === 'mobile' && ctx.liveTabId(id) === tabId,
     )) void emulate(tabId, false);
   });
@@ -42,8 +42,12 @@ export function responsive(ctx: ResponsiveContext) {
   });
 
   async function emulate(chromeId: number, reload = true) {
-    emulating.add(chromeId);
-    if (!(await hold(chromeId, HOLDER))) return void emulating.delete(chromeId);
+    const generation = Symbol();
+    emulating.set(chromeId, generation);
+    const current = () => emulating.get(chromeId) === generation;
+    const attached = await hold(chromeId, HOLDER);
+    if (!current()) return;
+    if (!attached) return void emulating.delete(chromeId);
     await Promise.all([
       send(chromeId, 'Emulation.setUserAgentOverride', { userAgent: PHONE_USER_AGENT, platform: 'Android' }),
       // Height 0 keeps the tab's real height.
@@ -51,10 +55,10 @@ export function responsive(ctx: ResponsiveContext) {
       send(chromeId, 'Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }),
       send(chromeId, 'Emulation.setEmitTouchEventsForMouse', { enabled: true, configuration: 'mobile' }),
     ]);
-    if (!reload) return;
+    if (!reload || !current()) return;
     // The first load went out as a desktop; load it again as the phone (Electron emulated before loading).
     const tab = await chrome.tabs.get(chromeId).catch(() => undefined);
-    if (tab?.url && /^https?:/.test(tab.url)) await send(chromeId, 'Page.reload', { ignoreCache: false });
+    if (current() && tab?.url && /^https?:/.test(tab.url)) await send(chromeId, 'Page.reload', { ignoreCache: false });
   }
 
   /** Brings Chromium in line with the Store: mirrors emulate, other tabs let go, mirrors follow. */
@@ -67,10 +71,10 @@ export function responsive(ctx: ResponsiveContext) {
       mirrors.add(chromeId);
       if (!emulating.has(chromeId) && !refused.has(chromeId)) void emulate(chromeId);
     }
-    for (const chromeId of emulating) {
-      if (!mirrors.has(chromeId) && isHeld(chromeId, HOLDER)) {
+    for (const chromeId of emulating.keys()) {
+      if (!mirrors.has(chromeId)) {
         emulating.delete(chromeId);
-        void release(chromeId, HOLDER);
+        if (isHeld(chromeId, HOLDER)) void release(chromeId, HOLDER);
       }
     }
     // The phone follows the desktop side. Only that way: sites often send phones to an m.

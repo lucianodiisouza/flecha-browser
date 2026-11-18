@@ -20,11 +20,8 @@ async function showExtensionActions() {
     return { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) };
   };
   // A browser without patch 0071 has no extensions menu to show.
-  const hasMenu = typeof chrome.flechaPrivate.showExtensionsMenu === 'function';
+  let hasMenu = typeof chrome.flechaPrivate.showExtensionsMenu === 'function';
   menuButton.hidden = !hasMenu;
-  if (hasMenu) menuButton.addEventListener('click', () => {
-    void chrome.flechaPrivate.showExtensionsMenu(windowId, anchor(menuButton)).catch(() => toast('Couldn’t open the Extensions menu.'));
-  });
   let collapsed = false;
   toggle.addEventListener('click', () => {
     collapsed = !collapsed;
@@ -84,6 +81,17 @@ async function showExtensionActions() {
         }
       });
   };
+  if (hasMenu) menuButton.addEventListener('click', () => {
+    void chrome.flechaPrivate.showExtensionsMenu(windowId, anchor(menuButton)).catch(() => {
+      hasMenu = false;
+      menuButton.hidden = true;
+      collapsed = false;
+      pins.hidden = false;
+      toggle.setAttribute('aria-expanded', 'true');
+      refresh();
+      toast('Couldn’t open the Extensions menu. Extensions are shown in the sidebar.');
+    });
+  });
   chrome.flechaPrivate.onExtensionActionsChanged.addListener((id) => id === windowId && refresh());
   // Icons and badges are per tab.
   chrome.tabs.onActivated.addListener((info) => info.windowId === windowId && refresh());

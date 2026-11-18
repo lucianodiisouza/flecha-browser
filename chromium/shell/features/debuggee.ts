@@ -10,6 +10,7 @@ type Holder = string | symbol;
 const holders = new Map<number, Map<Holder, symbol>>();
 const attaching = new Map<number, Promise<void>>();
 const detaching = new Map<number, Promise<void>>();
+const resetting = new Map<symbol, Promise<void>>();
 const detachListeners: Array<(tabId: number, reason: string) => void> = [];
 
 chrome.debugger.onDetach.addListener((source, reason) => {
@@ -26,6 +27,12 @@ export function onDebuggerDetach(fn: (tabId: number, reason: string) => void) {
 /** Shares the attachment and preserves Chromium's error for callers that explain refusals. */
 export async function acquire(tabId: number, holder: Holder): Promise<void> {
   let owners = holders.get(tabId);
+  const existing = owners?.get(holder);
+  const cleanup = existing && resetting.get(existing);
+  if (cleanup) {
+    await cleanup.catch(() => undefined);
+    return acquire(tabId, holder);
+  }
   if (!owners) {
     const queued = new Map<Holder, symbol>();
     holders.set(tabId, queued);
@@ -65,11 +72,17 @@ export async function release(tabId: number, holder: Holder, resetShared?: () =>
   const set = holders.get(tabId);
   const claim = set?.get(holder);
   if (resetShared && set && claim && set.size > 1) {
-    try { await resetShared(); }
-    finally {
-      if (holders.get(tabId) === set && set.get(holder) === claim) await release(tabId, holder);
-    }
-    return;
+    const pending = resetting.get(claim);
+    if (pending) return pending;
+    const cleanup = Promise.resolve().then(resetShared).then(() => undefined).finally(async () => {
+      try {
+        if (holders.get(tabId) === set && set.get(holder) === claim) await release(tabId, holder);
+      } finally {
+        resetting.delete(claim);
+      }
+    });
+    resetting.set(claim, cleanup);
+    return cleanup;
   }
   if (!set?.delete(holder) || set.size) return;
   const attach = attaching.get(tabId);

@@ -33,10 +33,13 @@ const surface = document.documentElement.dataset.surface;
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const DRAG_TYPE = 'application/x-flecha-tab';
 const SPACE_DRAG_TYPE = 'application/x-flecha-space';
+// Allow one missed dragover cycle. HTML schedules each cycle at 350 ms with up to 200 ms jitter.
+const INCOMING_DROP_IDLE_MS = 2 * (350 + 200);
 /** The Space whose button is being dragged: drag events only say what kind of thing it is. */
 let draggedSpace: string | undefined;
 let draggedTab: { id: string; spaceId: string } | undefined;
 let incomingDrop: { element: HTMLElement; spaceId: string } | undefined;
+let incomingDropTimer: ReturnType<typeof setTimeout> | undefined;
 let clearDropTarget: (() => void) | undefined;
 let deferredRows = false;
 let externalPinnedDrag = false;
@@ -674,6 +677,14 @@ function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget | undefined) 
   if (target) acceptDrops(el, target, 'drop-before', el.classList.contains('row') && tab.device !== 'mobile' ? tab.id : undefined);
 }
 
+function refreshIncomingDrop() {
+  clearTimeout(incomingDropTimer);
+  incomingDropTimer = setTimeout(() => {
+    if (incomingDrop) clearDropTarget?.();
+    externalPinExpansion(false);
+  }, INCOMING_DROP_IDLE_MS);
+}
+
 function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-over', splitTarget?: string) {
   let hoveredSpaceId: string | undefined;
   let hoveredSide: 'left' | 'right' | undefined;
@@ -706,7 +717,10 @@ function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-ove
     if (!currentTarget()) return;
     e.preventDefault();
     hoveredSpaceId = state?.activeSpaceId;
-    if (!draggedTab && hoveredSpaceId) incomingDrop = { element: el, spaceId: hoveredSpaceId };
+    if (!draggedTab && hoveredSpaceId) {
+      incomingDrop = { element: el, spaceId: hoveredSpaceId };
+      refreshIncomingDrop();
+    }
     hoveredSide = splitSide(e);
     clearDropTarget = endHover;
     el.classList.add(hoveredSide ? `drop-split-${hoveredSide}` : hoverClass);
@@ -1831,7 +1845,10 @@ function externalPinExpansion(expanded: boolean) {
   if (space) updatePinnedVisibility(space);
 }
 pinnedSection.addEventListener('dragenter', (event) => {
-  if (!draggedTab && event.dataTransfer?.types.includes(DRAG_TYPE)) externalPinExpansion(true);
+  if (!draggedTab && event.dataTransfer?.types.includes(DRAG_TYPE)) {
+    externalPinExpansion(true);
+    refreshIncomingDrop();
+  }
 });
 pinnedSection.addEventListener('dragleave', (event) => {
   if (!(event.relatedTarget instanceof Node) || !pinnedSection.contains(event.relatedTarget)) externalPinExpansion(false);

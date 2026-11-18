@@ -137,6 +137,72 @@ test('an unserializable reply fails only its own invoke', async (t) => {
   ]);
 });
 
+test('failed startup closes the port and stops buffering invokes', async (t) => {
+  const connecting = event();
+  globalThis.chrome = { runtime: { onConnect: connecting } };
+  t.after(() => delete globalThis.chrome);
+  t.mock.method(console, 'error', () => {});
+  const { handle, listen } = await loadModule('chromium/shell/hub.ts');
+  const startup = Promise.withResolvers();
+  const invoked = t.mock.fn();
+  handle({ startupProbe: invoked });
+  listen(startup.promise);
+  const port = {
+    name: 'flecha', onMessage: event(), onDisconnect: event(),
+    disconnect: t.mock.fn(() => port.onDisconnect.emit()),
+  };
+  const removed = t.mock.method(port.onMessage, 'removeListener');
+  connecting.emit(port);
+  port.onMessage.emit({ type: 'invoke', name: 'startupProbe', id: 1, args: [] });
+  startup.reject(new Error('Failed to load preferences'));
+  await nextTurn();
+  assert.equal(port.disconnect.mock.callCount(), 1);
+  assert.equal(removed.mock.callCount(), 1);
+  assert.equal(invoked.mock.callCount(), 0);
+});
+
+test('a reconnect reads the committed Boost when deletion is delayed or rejected', async (t) => {
+  const saved = { boosts: { 'kept.example.css': 'body {}' } };
+  let write = Promise.withResolvers();
+  const setting = t.mock.fn(async (items) => {
+    await write.promise;
+    Object.assign(saved, structuredClone(items));
+  });
+  globalThis.chrome = {
+    extension: { inIncognitoContext: false },
+    storage: { local: { get: async () => structuredClone(saved), set: setting } },
+    tabs: { query: async () => [], onRemoved: event() },
+    webNavigation: { onCommitted: event(), onDOMContentLoaded: event() },
+    debugger: { onDetach: event() },
+  };
+  t.after(() => delete globalThis.chrome);
+  const boosts = await loadModule('chromium/shell/features/boosts.ts');
+  await boosts.ready();
+  const name = 'kept.example.css';
+  const deleting = boosts.remove(name);
+  const failed = assert.rejects(deleting, /Storage write failed/);
+  await nextTurn();
+  assert.equal(setting.mock.callCount(), 1);
+  const read = t.mock.fn();
+  const reconnect = boosts.getCommitted(name).then(read);
+  await nextTurn();
+  assert.equal(read.mock.callCount(), 0);
+  assert.equal(boosts.list()[0].name, name);
+  write.reject(new Error('Storage write failed'));
+  await failed;
+  await reconnect;
+  assert.equal(read.mock.calls[0].arguments[0].name, name);
+  assert.equal(saved.boosts[name], 'body {}');
+
+  write = Promise.withResolvers();
+  const retry = boosts.remove(name);
+  const confirming = boosts.getCommitted(name);
+  write.resolve();
+  await retry;
+  assert.equal(await confirming, undefined);
+  assert.equal(saved.boosts[name], undefined);
+});
+
 test('agent wait validation leaves room for the transport watchdog', async () => {
   const { AGENT_TOOLS } = await loadModule('chromium/shared/agentTools.ts');
   const { MAX_TOOL_WAIT, toolTimeout, toolWatchdog } = await loadModule('chromium/native-host/protocol.ts');
@@ -152,7 +218,10 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
   const port = { onDisconnect: event(), onMessage: event(), postMessage: (message) => messages.push(message) };
   const nodes = new Map();
   const element = () => ({
-    value: '', classList: { add() {}, toggle() {} }, addEventListener() {}, append() {}, replaceChildren() {}, focus() {},
+    value: '', dataset: {}, children: [], classList: { add() {}, toggle() {} }, addEventListener() {}, focus() {},
+    append(...children) { this.children.push(...children); },
+    replaceChildren(...children) { this.children = children; },
+    querySelectorAll() { return this.children.flatMap((child) => child.children); },
   });
   const node = (id) => {
     if (!nodes.has(id)) nodes.set(id, element());
@@ -192,6 +261,11 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
   location.hash = '#first.css';
   handlers.get('hashchange')();
   await nextTurn();
+  const deepLinkList = messages.filter(({ name }) => name === 'boosts:list').at(-1);
+  assert.notEqual(deepLinkList.id, listRetry.id);
+  reply(deepLinkList, [file]);
+  await nextTurn();
+  assert.equal(node('list').children.length, 1, 'the list renders while the editor read is still pending');
   reply(messages.find(({ name }) => name === 'boosts:get'), file);
   await nextTurn();
   const code = node('code');
@@ -360,6 +434,9 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   let waitingForTabRead = false;
   let refusedEvaluation = false;
   let diagnosingRefusal = false;
+  let detachPending;
+  let evaluationError;
+  const inputFailures = new Map();
   let pendingNavigation = Promise.withResolvers();
   const idleMessage = { type: 'error', args: [{ value: 'Logged while idle' }] };
   globalThis.chrome = {
@@ -384,7 +461,10 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
       onDetach: event(),
       onEvent: event(),
       attach: async ({ tabId }) => calls.push(['attach', tabId]),
-      detach: async ({ tabId }) => calls.push(['detach', tabId]),
+      detach: async ({ tabId }) => {
+        calls.push(['detach', tabId]);
+        await detachPending?.promise;
+      },
       async sendCommand(_tab, method, params) {
         if (method === 'Emulation.setFocusEmulationEnabled') emulatedFocus = params.enabled;
         if (method === 'Runtime.enable') {
@@ -410,10 +490,12 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
         if (method === 'Runtime.evaluate') {
           if (refusedEvaluation) throw new Error('Cannot attach to this target');
           await readPending?.promise;
+          if (evaluationError) return { exceptionDetails: { text: evaluationError } };
           return { result: { value: 'fixture body' } };
         }
         if (method === 'Input.dispatchKeyEvent') {
           calls.push([params.type]);
+          if (inputFailures.has(params.type)) throw new Error(inputFailures.get(params.type));
           if (params.type === 'rawKeyDown') await keyDown?.promise;
           if (params.type === 'keyUp') await keyUp?.promise;
         }
@@ -676,6 +758,58 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   await nextTurn();
   assert.match(results.find(({ id }) => id === 53)?.result.content[0].text ?? '', /\/late-navigation/);
 
+  pendingTabRead = new Promise(() => {});
+  port.onMessage.emit({ type: 'tool', id: 54, name: 'wait_for', args: { tabId: phone, timeoutMs: 100 } });
+  await nextTurn();
+  t.mock.timers.tick(99);
+  await nextTurn();
+  assert.equal(results.some(({ id }) => id === 54), false);
+  t.mock.timers.tick(1);
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 54).result.content[0].text, /Timed out after 100ms/);
+  pendingTabRead = undefined;
+  evaluationError = 'Invalid selector';
+  port.onMessage.emit({ type: 'tool', id: 55, name: 'wait_for', args: { tabId: phone, selector: '[', timeoutMs: 100 } });
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 55).result.content[0].text, /Invalid selector/);
+  evaluationError = undefined;
+
+  keyUp = undefined;
+  inputFailures.set('rawKeyDown', 'Press failed');
+  inputFailures.set('keyUp', 'Release failed');
+  port.onMessage.emit({ type: 'tool', id: 56, name: 'press_key', args: { tabId: phone, key: 'Escape' } });
+  await nextTurn();
+  assert.deepEqual(calls.slice(-2), [['rawKeyDown'], ['keyUp']]);
+  assert.match(results.find(({ id }) => id === 56).result.content[0].text, /Press failed/);
+  inputFailures.delete('rawKeyDown');
+  port.onMessage.emit({ type: 'tool', id: 57, name: 'press_key', args: { tabId: phone, key: 'Escape' } });
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 57).result.content[0].text, /Release failed/);
+  inputFailures.clear();
+
+  readPending = Promise.withResolvers();
+  detachPending = Promise.withResolvers();
+  port.onMessage.emit({ type: 'tool', id: 58, name: 'evaluate', args: { tabId: phone, expression: 'fixture' } });
+  await nextTurn();
+  for (const _ of [1, 2, 3]) {
+    t.mock.timers.tick(60_000);
+    await nextTurn();
+  }
+  assert.match(results.find(({ id }) => id === 58).result.content[0].text, /didn’t answer evaluate within 60s/);
+  assert.deepEqual(calls.at(-1), ['detach', tab.id]);
+  port.onMessage.emit({ type: 'tool', id: 59, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 59)?.result.content[0].text ?? '', /has not confirmed the debugger reset/);
+  assert.deepEqual(calls.at(-1), ['detach', tab.id], 'the agent cannot reattach before reset is confirmed');
+  detachPending.resolve();
+  readPending = undefined;
+  await nextTurn();
+  port.onMessage.emit({ type: 'tool', id: 60, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  t.mock.timers.tick(100);
+  await nextTurn();
+  assert.ok(results.some(({ id, result }) => id === 60 && !result.isError), 'a later tool can use a confirmed replacement session');
+
   store.togglePin(phone);
   readPending = Promise.withResolvers();
   port.onMessage.emit({ type: 'tool', id: 43, name: 'read_page', args: { tabId: phone } });
@@ -743,14 +877,29 @@ test('debugger cleanup keeps a replacement holder and waits for an incomplete at
   await release(12, 'agent');
   assert.deepEqual(detached, [12]);
 
+  assert.equal(await hold(14, 'agent'), true);
+  assert.equal(await hold(14, 'responsive'), true);
+  const renewalCleanup = Promise.withResolvers();
+  const leaving = release(14, 'agent', () => renewalCleanup.promise);
+  const renewed = t.mock.fn();
+  const renewing = hold(14, 'agent').then(renewed);
+  await nextTurn();
+  assert.equal(renewed.mock.callCount(), 0);
+  renewalCleanup.resolve();
+  await Promise.all([leaving, renewing]);
+  await release(14, 'responsive');
+  assert.deepEqual(detached, [12], 'releasing the other owner does not detach the renewed claim');
+  await release(14, 'agent');
+  assert.deepEqual(detached, [12, 14]);
+
   const attaching = hold(13, 'agent');
   await nextTurn();
   const reset = resetDebugger(13, 'agent');
   await nextTurn();
-  assert.deepEqual(detached, [12]);
+  assert.deepEqual(detached, [12, 14]);
   setup.resolve();
   await Promise.all([attaching, reset]);
-  assert.deepEqual(detached, [12, 13], 'the reset closes the session created by the pending attach');
+  assert.deepEqual(detached, [12, 14, 13], 'the reset closes the session created by the pending attach');
 });
 
 test('the responsive split keeps the phone viewport width when the window grows', async () => {
@@ -761,6 +910,30 @@ test('the responsive split keeps the phone viewport width when the window grows'
   }
 });
 
+test('resetting responsive emulation does not reload the new debugger session', async (t) => {
+  const onDetach = event();
+  const oldTab = Promise.withResolvers();
+  const get = t.mock.fn(() => oldTab.promise);
+  const methods = [];
+  globalThis.chrome = {
+    debugger: {
+      onDetach, attach: async () => {}, detach: async () => {},
+      sendCommand: async (_target, method) => { methods.push(method); },
+    },
+    tabs: { get, onRemoved: event() },
+  };
+  t.after(() => delete globalThis.chrome);
+  const { responsive } = await loadModule('chromium/shell/features/responsive.ts');
+  responsive({ store: { state: { tabs: { phone: { device: 'mobile' } }, windows: [] } }, liveTabId: () => 12 }).sync();
+  await nextTurn();
+  assert.equal(get.mock.callCount(), 1);
+  onDetach.emit({ tabId: 12 }, 'reset');
+  await nextTurn();
+  oldTab.resolve({ url: 'https://example.com/phone' });
+  await nextTurn();
+  assert.equal(methods.filter((method) => method === 'Emulation.setDeviceMetricsOverride').length, 2);
+  assert.equal(methods.includes('Page.reload'), false);
+});
 test('responsive sizing waits for the native split, discards stale widths, and corrects divider drags', async (t) => {
   const boundsChanged = event();
   const tabsUpdated = event();

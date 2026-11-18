@@ -428,6 +428,34 @@ test('loading a moved legacy phone tab preserves its history and its destination
   assert.deepEqual(loaded.state.tabs[phone].history, history);
 });
 
+test('the saved-state decoder drops a responsive mirror whose source no longer exists', () => {
+  const { store, first, personal } = twoWindows();
+  const desktop = store.addTab('https://example.com/desktop', { windowId: first });
+  const phone = store.openResponsive(first);
+  store.activate(phone, { windowId: first });
+  const snapshot = JSON.parse(store.serialize());
+  delete snapshot.tabs[desktop.id];
+  const loaded = decodeState(JSON.stringify(snapshot));
+  const space = loaded.windows.find((win) => win.id === first).spaces[personal];
+  assert.equal(loaded.tabs[phone], undefined);
+  assert.equal(space.activeTabId, undefined);
+  assert.equal(space.split, undefined);
+  assert.deepEqual(space.today, []);
+});
+
+test('a hidden Space does not protect the unselected half of a split from auto-archive', () => {
+  const { store, first, personal, work } = twoWindows();
+  const left = store.addTab('https://example.com/left', { windowId: first });
+  const right = store.addTab('https://example.com/right', { windowId: first });
+  store.splitWith(right.id, 'right', first, left.id);
+  store.activate(left.id, { windowId: first });
+  store.switchSpace(work, first);
+  right.lastActive = 1;
+  assert.deepEqual(store.archiveStale(), [right.id]);
+  assert.equal(store.state.archive[0].url, right.url);
+  assert.equal(store.windowView(first).spaces.find((space) => space.id === personal).split, undefined);
+});
+
 test('auto-archive keeps both visible panes when the phone is selected', () => {
   const { store, first } = twoWindows();
   const desktop = store.addTab('https://example.com/desktop', { windowId: first });

@@ -101,6 +101,7 @@ server.listen(0, '127.0.0.1');
 await once(server, 'listening');
 const base = `http://127.0.0.1:${server.address().port}`;
 let browser;
+let browserConnectionError;
 let debugSession;
 let id = 0;
 const pending = new Map();
@@ -111,40 +112,65 @@ const deadline = Number(process.env.FLECHA_HARNESS_TIMEOUT_MS) || 10 * 60 * 1000
 let finished = false;
 /** What the current step waits for, when it says; the deadline's failure names it. */
 let waitingFor;
+const STEP_TIMEOUT = 10_000;
 /** Keep individual browser waits on the same budget as the native host's wait_for command. */
 async function withinStep(operation, expected) {
   let timer;
   try {
     return await Promise.race([operation, new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`Timed out waiting for ${expected}`)), 10_000);
+      timer = setTimeout(() => reject(new Error(`Timed out waiting for ${expected}`)), STEP_TIMEOUT);
     })]);
   } finally {
     clearTimeout(timer);
   }
 }
-async function cleanUp() {
-  if (browser && browser.exitCode === null) { browser.kill('SIGTERM'); await once(browser, 'exit'); }
-  if (display.exitCode === null) { display.kill('SIGTERM'); await once(display, 'exit'); }
-  server.close();
-  await fs.rm(profile, { recursive: true, force: true });
+async function stopChild(child, name) {
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+  const exited = once(child, 'exit');
+  child.kill('SIGTERM');
+  try {
+    await withinStep(exited, `${name} to exit`);
+  } catch {
+    child.kill('SIGKILL');
+    await withinStep(exited, `${name} to exit after SIGKILL`);
+  }
+}
+let cleaning;
+function cleanUp() {
+  return cleaning ??= (async () => {
+    const stopped = await Promise.allSettled([stopChild(browser, 'Chromium'), stopChild(display, 'Xvfb')]);
+    server.close();
+    server.closeAllConnections();
+    await withinStep(fs.rm(profile, { recursive: true, force: true }), 'the temporary profile to be removed');
+    for (const result of stopped) if (result.status === 'rejected') throw result.reason;
+  })();
 }
 const watchdog = setTimeout(async () => {
   if (finished) return;
   const capture = path.join(os.tmpdir(), 'flecha-harness-timeout.png');
-  try { execFileSync('import', ['-display', env.DISPLAY, '-window', 'root', capture]); } catch {}
-  console.error(`FAIL the run took longer than ${deadline} ms (FLECHA_HARNESS_TIMEOUT_MS); last step is the last PASS above${waitingFor ? `, waiting for ${waitingFor}` : ''}; the harness display is in ${capture}`);
+  console.error(`FAIL the run took longer than ${deadline} ms (FLECHA_HARNESS_TIMEOUT_MS); last step is the last PASS above${waitingFor ? `, waiting for ${waitingFor}` : ''}`);
+  try {
+    execFileSync('import', ['-display', env.DISPLAY, '-window', 'root', capture], { timeout: STEP_TIMEOUT, killSignal: 'SIGKILL' });
+    console.error(`Harness screenshot: ${capture}`);
+  } catch (error) {
+    console.error(`Could not capture harness screenshot: ${error.code ?? error.signal ?? error.message}`);
+  }
   if (debugSession) {
     const diagnostic = evaluate(debugSession, "Promise.all([chrome.downloads.search({}), typeof chrome.flechaPrivate.getDownloadWarnings === 'function' ? chrome.flechaPrivate.getDownloadWarnings() : []]).then(([d, w]) => JSON.stringify({ downloads: d.map(x => [x.id, x.filename.split('/').pop(), x.state, x.error, x.canResume, x.bytesReceived]), warnings: w, rows: [...document.querySelectorAll('#downloads-list .download')].map(li => li.textContent), active: testState?.spaces.find(sp => sp.id === testState.activeSpaceId)?.activeTabId && testState.tabs[testState.spaces.find(sp => sp.id === testState.activeSpaceId).activeTabId]?.url }))");
     await withinStep(diagnostic, 'the browser diagnostic').then((data) => console.error('DIAGNOSTIC', data), (error) => console.error(error.message));
   }
-  await cleanUp();
+  await cleanUp().catch((error) => console.error(error.message));
   process.exit(1);
 }, deadline);
-for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => { await cleanUp(); process.exit(1); });
+for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => {
+  await cleanUp().catch((error) => console.error(error.message));
+  process.exit(1);
+});
 process.on('SIGUSR2', () => {
   if (debugSession) void evaluate(debugSession, "({paletteHidden:document.querySelector('#palette').hidden,active:document.activeElement.id,shortcuts:globalThis.testShortcuts,state:globalThis.testState?.activeSpaceId})").then(value => console.log('DIAGNOSTIC', value));
 });
 function send(method, params = {}, sessionId) {
+  if (browserConnectionError) return Promise.reject(browserConnectionError);
   return new Promise((resolve, reject) => {
     const callId = ++id;
     pending.set(callId, { resolve, reject });
@@ -187,11 +213,21 @@ async function loaded(session, urlPrefix) {
   });
 }
 function startBrowser(...addresses) {
+  browserConnectionError = undefined;
   browser = spawn(binary, [`--user-data-dir=${profile}`, `--flecha-shell-dir=${shellDir}`, '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--ozone-platform=x11', '--password-store=basic', '--remote-debugging-pipe', // Google, the default search engine, is out of reach: its suggestions come from this test's server.
     '--host-resolver-rules=MAP *.flecha.test 127.0.0.1, MAP www.google.com ~NOTFOUND',`--load-extension=${testExtension},${quietExtension}`, '--disable-features=DisableLoadExtensionCommandLineSwitch',
     // Chromium doesn't freeze a page for 5 minutes after it was on screen; 3 s for this run.
     '--enable-features=CPUMeasurementInFreezingPolicy:freezing_visible_protection_time/3s', ...addresses], { env, stdio: ['ignore', 'ignore', 'inherit', 'pipe', 'pipe'] });
-  browser.once('exit', (code) => { for (const call of pending.values()) call.reject(new Error(`Browser exited ${code}`)); pending.clear(); });
+  const failConnection = (error) => {
+    browserConnectionError ??= error;
+    for (const call of pending.values()) call.reject(browserConnectionError);
+    pending.clear();
+  };
+  browser.once('error', failConnection);
+  browser.once('exit', (code, signal) => failConnection(new Error(`Browser exited ${code ?? signal}`)));
+  for (const pipe of [browser.stdio[3], browser.stdio[4]]) {
+    pipe.on('error', (error) => failConnection(new Error(`Browser debugging pipe failed: ${error.message}`, { cause: error })));
+  }
   let buffer = '';
   browser.stdio[4].on('data', (data) => {
     buffer += data.toString();

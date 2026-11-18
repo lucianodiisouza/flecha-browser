@@ -47,15 +47,21 @@ const has = <K extends keyof typeof chrome.flechaPrivate>(name: K) => typeof api
  */
 const PEEKS_KEY = sessionKey('peeks');
 const peeks = new Map<number, chrome.flechaPrivate.PeekState>();
+const legacyPeeks = new Set<number>();
+const savePeeks = () => chrome.storage.session.set({ [PEEKS_KEY]: [...legacyPeeks, ...peeks] })
+  .catch((error) => console.warn('Flecha shell: couldn’t save Peek state', error));
 const peeksLoaded = has('openPeek')
   ? chrome.storage.session.get(PEEKS_KEY).then(async (saved) => {
     const entries = saved[PEEKS_KEY];
     if (!Array.isArray(entries)) return;
     for (const entry of entries) {
-      if (typeof entry === 'number') await chrome.flechaPrivate.closePeek(entry).catch(() => undefined);
+      if (typeof entry === 'number') {
+        try { await chrome.flechaPrivate.closePeek(entry); }
+        catch { legacyPeeks.add(entry); }
+      }
       else if (Array.isArray(entry) && typeof entry[0] === 'number' && entry[1]) peeks.set(entry[0], entry[1]);
     }
-    if (entries.some((entry) => typeof entry === 'number')) await chrome.storage.session.set({ [PEEKS_KEY]: [...peeks] });
+    if (entries.some((entry) => typeof entry === 'number')) await savePeeks();
   }).catch((error) => console.warn('Flecha shell: couldn’t recover saved Peek state', error))
   : Promise.resolve();
 
@@ -124,10 +130,14 @@ function registerDevToolsAndDefaultBrowser() {
  * tab behind it. Returns whether `command` was the Peek's.
  */
 export function runInPeek(command: string, windowId: number | undefined) {
-  if (windowId === undefined || !peeks.has(windowId)) return false;
-  if (command === 'closeTab') void chrome.flechaPrivate.closePeek(windowId);
-  else if (command === 'openInFlecha') void chrome.flechaPrivate.promotePeek(windowId);
+  if (windowId === undefined || (!peeks.has(windowId) && !legacyPeeks.has(windowId))) return false;
+  let action: Promise<unknown>;
+  if (command === 'closeTab') action = chrome.flechaPrivate.closePeek(windowId);
+  else if (command === 'openInFlecha') action = chrome.flechaPrivate.promotePeek(windowId);
   else return false;
+  void action.then(() => {
+    if (legacyPeeks.delete(windowId)) return savePeeks();
+  }).catch((error) => console.warn('Flecha shell: couldn’t finish Peek action', error));
   return true;
 }
 
@@ -139,9 +149,10 @@ export function currentPeek(windowId: number, send: (peek: chrome.flechaPrivate.
 // sendPeek(); while a Peek is open the browser keeps the frame over the whole window.
 if (has('openPeek')) {
   const rememberPeek = (windowId: number, peek?: chrome.flechaPrivate.PeekState) => {
+    const wasLegacy = legacyPeeks.delete(windowId);
     if (peek) peeks.set(windowId, peek);
-    else if (!peeks.delete(windowId)) return;
-    void chrome.storage.session.set({ [PEEKS_KEY]: [...peeks] });
+    else if (!peeks.delete(windowId) && !wasLegacy) return;
+    void savePeeks();
   };
   chrome.flechaPrivate.onPeekChanged.addListener(
     when((_ctx, windowId: number, peek?: chrome.flechaPrivate.PeekState) => {

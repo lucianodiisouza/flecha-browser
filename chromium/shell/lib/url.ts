@@ -37,6 +37,9 @@ function hasAddressCredentials(input: string): boolean {
   return destinationHasTail || !/^\s/.test(password) || /\s/.test(password.trim());
 }
 
+const QUERY_PARAMETER = /[?&#]\s*[^=\s&#/?]+=/;
+export const spacedQuestion = (tail: string) => /^\?\s+\S+\s+\S/.test(tail) && !QUERY_PARAMETER.test(tail);
+
 export function looksLikeRejectedAddress(input: string): boolean {
   if (hasAddressCredentials(input)) return true;
   const [typed] = input.split(/[/?#\\]/, 1);
@@ -50,10 +53,10 @@ export function looksLikeRejectedAddress(input: string): boolean {
   const host = (colon < 0 ? authority : authority.slice(0, colon)).trim();
   const port = colon < 0 ? '' : authority.slice(colon + 1).trim();
   // A separated question in prose is different from a path or query attached to the authority.
-  const addressTail = /^[/?#\\]\S/.test(tail) || /[?#]\s*[^=\s&#/?]+=/.test(tail);
+  const addressTail = /^[/?#\\]\S/.test(tail) || QUERY_PARAMETER.test(tail);
   const numericPort = /^[+-]?\d/.test(port) && !/\s/.test(port);
   if (/^localhost$|^[^\s.@]+\.[^\s@]+$/i.test(host)) {
-    return colon < 0 ? !!tail : !/\s/.test(typed) || addressTail || numericPort;
+    return colon < 0 ? !!tail && !spacedQuestion(tail) : !/\s/.test(typed) || addressTail || numericPort;
   }
   return colon >= 0 && !!tail && (addressTail || numericPort) && /^[a-z\d-]*[a-z][a-z\d-]*$/i.test(host);
 }
@@ -75,6 +78,7 @@ export function webAddress(raw: string, { allowBareHost = false } = {}): string 
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input) || /^(about|data|file):/i.test(input)) return input;
   if (/^mailto:/i.test(input)) return /\s/.test(input.slice(7).split('?', 1)[0]) ? undefined : input;
   const [authority] = input.split(/[/?#]/, 1);
+  if (spacedQuestion(input.slice(authority.length))) return undefined;
   const bare = /^(\[[\da-f:.]+\]|[^:\s\\@\[\]]+)(?::(\d+))?$/i.exec(authority);
   if (!bare) return undefined;
   const [, host, port] = bare;

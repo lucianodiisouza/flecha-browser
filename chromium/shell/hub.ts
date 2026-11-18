@@ -114,6 +114,10 @@ export function onConnect(fn: (port: chrome.runtime.Port, windowId: number | und
 
 /** Starts taking connections; messages wait until `ready` (handlers registered) resolves. */
 export function listen(ready: Promise<unknown>) {
+  const startup = ready.then(() => true, (error) => {
+    console.error('Flecha shell: background startup failed', error);
+    return false;
+  });
   chrome.runtime.onConnect.addListener(async (port) => {
     if (port.name !== 'flecha') return;
     let connected = true;
@@ -123,11 +127,15 @@ export function listen(ready: Promise<unknown>) {
     });
     // Buffer what arrives while the background is still loading.
     const early: Message[] = [];
-    const buffer = (m: Message) => void early.push(m);
+    const buffer = (m: Message) => { if (m.type !== 'ping') early.push(m); };
     port.onMessage.addListener(buffer);
-    await ready;
+    const started = await startup;
     port.onMessage.removeListener(buffer);
     if (!connected) return;
+    if (!started) {
+      port.disconnect();
+      return;
+    }
     const windowId = windowOf(port);
     ports.set(port, windowId);
     const dispatch = async (message: Message) => {

@@ -59,6 +59,13 @@ function clearEditor() {
   savedCode = code.value = '';
   main.classList.add('empty');
   document.title = 'Boosts';
+  highlightListSelection();
+}
+
+function highlightListSelection() {
+  for (const button of list.querySelectorAll<HTMLButtonElement>('button[data-boost-name]')) {
+    button.classList.toggle('current', button.dataset.boostName === current?.name);
+  }
 }
 
 async function renderList() {
@@ -71,10 +78,14 @@ async function renderList() {
   listError.textContent = boosts ? '' : 'Couldn’t load Boosts.';
   $('empty').hidden = !boosts || boosts.length > 0;
   if (!boosts) return;
+  const shown = list.querySelectorAll<HTMLButtonElement>('button[data-boost-name]');
+  if (shown.length === boosts.length &&
+    boosts.every((boost, index) => shown[index].dataset.boostName === boost.name && shown[index].title === (boost.error ?? ''))) return;
   list.replaceChildren(
     ...boosts.map((b) => {
       const li = document.createElement('li');
       const button = document.createElement('button');
+      button.dataset.boostName = b.name;
       button.className = `${b.name === current?.name ? 'current' : ''} ${b.error ? 'broken' : ''}`;
       button.title = b.error ?? '';
       const host = Object.assign(document.createElement('span'), { textContent: b.host });
@@ -137,6 +148,7 @@ async function open(name: string, reload = false) {
   retryOpen.hidden = true;
   if (!reload || current?.name !== file?.name) editorSession = Symbol();
   current = file;
+  highlightListSelection();
   updateEditorActions();
   main.classList.toggle('empty', !current);
   document.title = current ? `${current.name} · Boosts` : 'Boosts';
@@ -262,9 +274,10 @@ window.addEventListener('beforeunload', (e) => {
 });
 async function refresh(reload = false) {
   const name = selected();
+  const listing = renderList();
   const keepEditor = reload && name === current?.name && (dirty() || unconfirmedDeletes.has(name));
-  if (!keepEditor && await open(name, reload) === false) return;
-  await renderList();
+  if (!keepEditor) await open(name, reload);
+  await listing;
 }
 retryOpen.onclick = () => void refresh();
 retryList.onclick = () => void renderList();
