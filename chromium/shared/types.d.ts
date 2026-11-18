@@ -219,6 +219,7 @@ export interface PeekState {
 export type DropTarget =
   | { zone: 'favorites'; beforeTabId?: string }
   | { zone: 'today'; beforeTabId?: string }
+  /** In pinned, `beforeTabId` may also be a folder's id. */
   | { zone: 'pinned'; folderId?: string; beforeTabId?: string };
 
 /**
@@ -449,6 +450,12 @@ export interface FlechaApi {
   updateSpace(spaceId: string, patch: { name?: string; emoji?: string; color?: string }): void;
   setPinnedCollapsed(spaceId: string, collapsed: boolean): void;
   setLocalServersCollapsed(collapsed: boolean): void;
+  /** A streaming site that needs Widevine DRM came up in the active tab (lib/drm.ts). */
+  onDrmSite(cb: (info: { site: string; url: string }) => void): void;
+  /** Opens a page in Safari, or copies its link where Flecha can't. */
+  openInSafari(url: string): void;
+  /** Tabs ⌘- or ⇧-clicked in the sidebar, in sidebar order; ⌘⇧C and ⌥⌘C copy all of them. */
+  setTabSelection(tabIds: string[]): void;
   /** A folder at the end of the active Space's pinned tabs. */
   newFolder(): void;
   /** A new folder in the tab's Space, with the tab (pinned first, if it wasn't) inside. */
@@ -459,6 +466,9 @@ export interface FlechaApi {
   deleteSpace(spaceId: string): void;
   tabMenu(tabId: string): void;
   spaceMenu(spaceId: string): void;
+  folderMenu(folderId: string): void;
+  /** Moves a folder within the active Space's pinned tabs: into `folderId`, before `beforeId` (a tab or folder). */
+  moveFolder(folderId: string, to: { folderId?: string; beforeId?: string }): void;
   toggleFolder(folderId: string): void;
   renameFolder(folderId: string, name: string): void;
   moveTab(tabId: string, target: DropTarget): void;

@@ -8,7 +8,7 @@
  * a question is up it covers the whole window (an "overlay", like the command bar): clicks
  * on the page dismiss the menu, and the dialog has room.
  */
-import type { UiState } from '../shared/types';
+import type { PinnedNode, UiState } from '../shared/types';
 import { cmd, invoke, on } from './client';
 import type { MenuRun } from './protocol';
 import { askDialog, popupMenu, type MenuEntry } from './settingsUi';
@@ -46,7 +46,7 @@ async function overWindow<T>(name: string, fn: () => Promise<T>): Promise<T> {
 }
 
 export interface WindowUiHooks {
-  /** Starts the sidebar's inline rename of a tab. */
+  /** Starts the sidebar's inline rename of a tab or folder. */
   rename(tabId: string): void;
   state(): UiState | undefined;
 }
@@ -57,7 +57,7 @@ export function setupWindowUi(h: WindowUiHooks) {
 }
 
 /** Asks for the background's menu `name` about `id`, shows it at the pointer and runs the pick. */
-export async function showMenu(name: 'tabMenu' | 'spaceMenu' | 'extensionMenu', id: string) {
+export async function showMenu(name: 'tabMenu' | 'spaceMenu' | 'folderMenu' | 'extensionMenu', id: string) {
   const items = await invoke<MenuEntry<MenuRun>[] | undefined>(name, id);
   if (!items?.length) return;
   const picked = await overWindow('menu', () => popupMenu(items));
@@ -73,6 +73,7 @@ async function runMenuItem(run: MenuRun) {
     hooks?.rename(run.rename);
   }
   else if ('deleteSpace' in run) await confirmDeleteSpace(run.deleteSpace);
+  else if ('deleteFolder' in run) await confirmDeleteFolder(run.deleteFolder);
   else if ('clearSpaceData' in run) await confirmClearSpaceData(run.clearSpaceData);
   else if ('uninstallExtension' in run) await chrome.management.uninstall(run.uninstallExtension, { showConfirmDialog: true }).catch(() => undefined);
 }
@@ -91,6 +92,34 @@ async function confirmClearSpaceData(spaceId: string) {
     }),
   );
   if (response === 0) cmd('clearSpaceData')(spaceId);
+}
+
+/** "Delete “Folder” and its tabs?", in the page. */
+async function confirmDeleteFolder(folderId: string) {
+  const find = (nodes: PinnedNode[]): Extract<PinnedNode, { kind: 'folder' }> | undefined => {
+    for (const n of nodes) {
+      if (n.kind !== 'folder') continue;
+      if (n.id === folderId) return n;
+      const inner = find(n.children);
+      if (inner) return inner;
+    }
+    return undefined;
+  };
+  const folder = hooks
+    ?.state()
+    ?.spaces.map((s) => find(s.pinned))
+    .find(Boolean);
+  if (!folder) return;
+  const response = await overWindow('dialog', () =>
+    askDialog({
+      message: `Delete “${folder.name}” and its tabs?`,
+      detail: 'Its tabs go to the archive.',
+      buttons: ['Delete', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+    }),
+  );
+  if (response === 0) cmd('deleteFolder')(folderId, false);
 }
 
 /** Electron's "Delete “Space”?" message box, in the page. */

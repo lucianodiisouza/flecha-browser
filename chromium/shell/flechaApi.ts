@@ -106,6 +106,9 @@ const api: FlechaApi = {
   updateSpace: cmd('updateSpace'),
   setPinnedCollapsed: cmd('setPinnedCollapsed'),
   setLocalServersCollapsed: cmd('setLocalServersCollapsed'),
+  setTabSelection: cmd('setTabSelection'),
+  onDrmSite: (cb) => on('drm-site', cb),
+  openInSafari: cmd('openInSafari'),
   newFolder: cmd('newFolder'),
   moveToNewFolder: cmd('moveToNewFolder'),
   ignoreLocalPort: cmd('ignoreLocalPort'),
@@ -115,6 +118,8 @@ const api: FlechaApi = {
   // Electron pops native menus; the page draws them, from items the background builds.
   tabMenu: (id) => void showMenu('tabMenu', id),
   spaceMenu: (id) => void showMenu('spaceMenu', id),
+  folderMenu: (id) => void showMenu('folderMenu', id),
+  moveFolder: cmd('moveFolder'),
   toggleFolder: cmd('toggleFolder'),
   renameFolder: cmd('renameFolder'),
   moveTab: cmd('moveTab'),

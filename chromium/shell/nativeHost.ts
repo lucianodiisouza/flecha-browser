@@ -562,6 +562,8 @@ export function registerNativeHost(ctx: NativeHostContext) {
   }
 
   return {
+    /** A page Flecha can't play (Widevine DRM), in Safari. */
+    openInSafari: (url: string) => call('openInSafari', url),
     /** For UiState.agent: what a coding agent is doing, for the sidebar. */
     agentActivity(): UiState['agent'] {
       return (

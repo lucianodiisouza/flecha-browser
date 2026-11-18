@@ -623,6 +623,10 @@ body {
   height: 14px;
 }
 
+.pinned-badge[hidden] {
+  display: none;
+}
+
 .pinned-badge {
   display: inline-flex;
   align-items: center;
@@ -675,6 +679,12 @@ body {
 
 .row:hover {
   background: var(--fill-hover);
+}
+
+.row.selected,
+.fav.selected {
+  background: color-mix(in srgb, var(--blue) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 45%, transparent);
 }
 
 .row.active {
@@ -1027,6 +1037,35 @@ body {
 
 #local-server-list[hidden] {
   display: none;
+}
+
+/* ---- notices (a site that needs DRM) -------------------------------------- */
+
+.sidebar-notice {
+  display: grid;
+  gap: 4px;
+  margin: var(--space-2) 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--fill-subtle);
+  box-shadow: inset 0 0 0 0.5px var(--line);
+  font-size: var(--text-xs);
+}
+
+.sidebar-notice[hidden] {
+  display: none;
+}
+
+.sidebar-notice small {
+  color: var(--text-3);
+  line-height: 1.4;
+}
+
+.sidebar-notice-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
 }
 
 /* ---- footer ------------------------------------------------------------- */

@@ -18,6 +18,8 @@ const api = window.flecha;
 const surface = document.documentElement.dataset.surface as 'panel' | 'newtab' | undefined;
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const DRAG_TYPE = 'application/x-flecha-tab';
+/** A pinned folder being dragged (its id); it lands among the pinned tabs only. */
+const FOLDER_DRAG_TYPE = 'application/x-flecha-folder';
 
 let state: UiState | undefined;
 
@@ -356,8 +358,15 @@ function renderNode(node: PinnedNode, space: Space, folderId: string | undefined
   const header = h(
     'button',
     {
-      class: 'row',
+      class: 'row folder-row',
+      draggable: 'true',
+      'data-folder-id': node.id,
       onclick: () => api.toggleFolder(node.id),
+      oncontextmenu: (e: Event) => {
+        e.preventDefault();
+        keepPeek();
+        api.folderMenu(node.id);
+      },
       ondblclick: (e: Event) => {
         e.stopPropagation();
         editInline(name, node.name, (value) => api.renameFolder(node.id, value));
@@ -367,10 +376,17 @@ function renderNode(node: PinnedNode, space: Space, folderId: string | undefined
     name,
     h('span', { class: 'chevron' }, icon('chevron')),
   );
-  acceptDrops(header, { zone: 'pinned', folderId: node.id });
+  acceptFolderDrops(header, node, folderId);
+  header.addEventListener('dragstart', (e) => {
+    e.stopPropagation();
+    keepPeek();
+    e.dataTransfer!.setData(FOLDER_DRAG_TYPE, node.id);
+    e.dataTransfer!.effectAllowed = 'move';
+  });
+  header.addEventListener('dragend', clearDropMarks);
   return h(
     'div',
-    { class: `folder${node.open ? ' open' : ''}` },
+    { class: `folder${node.open ? ' open' : ''}`, 'data-node-id': node.id },
     header,
     h('div', { class: 'folder-children' }, ...node.children.map((child) => renderNode(child, space, node.id))),
   );
@@ -495,6 +511,8 @@ function tabTitle(tab: TabInfo) {
 
 /** Inline rename of a tab row, started from the tab's context menu. */
 function renameTab(tabId: string) {
+  const folderName = document.querySelector<HTMLElement>(`.row[data-folder-id="${CSS.escape(tabId)}"] .folder-name`);
+  if (folderName) return editInline(folderName, folderName.textContent ?? '', (name) => api.renameFolder(tabId, name));
   const row = document.querySelector<HTMLElement>(`.row[data-tab-id="${CSS.escape(tabId)}"] .title`);
   const tab = state?.tabs[tabId];
   if (!row || !tab) return;
@@ -506,7 +524,14 @@ let activeDraggedTabId: string | undefined;
 function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget) {
   el.dataset.tabId = tab.id;
   el.draggable = true;
-  el.addEventListener('click', () => api.activate(tab.id));
+  el.classList.toggle('selected', selectedTabIds.has(tab.id));
+  el.addEventListener('click', (e) => {
+    // ⌘-click picks tabs one by one, ⇧-click a run of them; ⌘⇧C then copies all their links.
+    if (e.metaKey || e.ctrlKey) return toggleTabSelection(tab.id);
+    if (e.shiftKey) return selectTabRange(tab.id);
+    clearTabSelection();
+    api.activate(tab.id);
+  });
   el.addEventListener('auxclick', (e) => e.button === 1 && api.close(tab.id));
   el.addEventListener('contextmenu', (e) => {
     e.preventDefault();
@@ -525,22 +550,75 @@ function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget) {
     activeDraggedTabId = undefined;
     $('favorites').classList.remove('show-empty');
     hideSplitDrop();
-    for (const item of document.querySelectorAll<HTMLElement>('.drop-before, .drop-after, .drop-split-left, .drop-split-right, .drag-over')) {
-      item.classList.remove('drop-before', 'drop-after', 'drop-split-left', 'drop-split-right', 'drag-over');
-    }
-    if (document.body.dataset.sidebar === 'floating') {
-      const hovering = peekSidebar.matches(':hover') || peekEdge.matches(':hover');
-      if (!hovering) leavePeek();
-    }
+    clearDropMarks();
   });
   acceptTabDrops(el, tab, target);
 }
 
+/** Drag over: drop marks off, and a peeking sidebar slides away unless the pointer is on it. */
+function clearDropMarks() {
+  for (const item of document.querySelectorAll<HTMLElement>('.drop-before, .drop-after, .drop-split-left, .drop-split-right, .drag-over')) {
+    item.classList.remove('drop-before', 'drop-after', 'drop-split-left', 'drop-split-right', 'drag-over');
+  }
+  if (document.body.dataset.sidebar === 'floating') {
+    const hovering = peekSidebar.matches(':hover') || peekEdge.matches(':hover');
+    if (!hovering) leavePeek();
+  }
+}
+
+// ---- selecting several tabs -------------------------------------------------------
+
+const selectedTabIds = new Set<string>();
+let selectionAnchor: string | undefined;
+
+/** The sidebar's tabs, top to bottom (favorites, pinned, today). */
+function sidebarTabIds() {
+  return [...document.querySelectorAll<HTMLElement>('#sidebar [data-tab-id]')].map((el) => el.dataset.tabId!);
+}
+
+function syncTabSelection() {
+  for (const el of document.querySelectorAll<HTMLElement>('#sidebar [data-tab-id]')) el.classList.toggle('selected', selectedTabIds.has(el.dataset.tabId!));
+  api.setTabSelection(sidebarTabIds().filter((id) => selectedTabIds.has(id)));
+}
+
+function toggleTabSelection(id: string) {
+  // The tab you're on counts as picked, so ⌘-clicking a second one selects two.
+  const active = activeSpace()?.activeTabId;
+  if (!selectedTabIds.size && active && active !== id) selectedTabIds.add(active);
+  if (selectedTabIds.has(id)) selectedTabIds.delete(id);
+  else selectedTabIds.add(id);
+  selectionAnchor = id;
+  syncTabSelection();
+}
+
+function selectTabRange(id: string) {
+  const ids = sidebarTabIds();
+  const from = ids.indexOf(selectionAnchor ?? activeSpace()?.activeTabId ?? id);
+  const to = ids.indexOf(id);
+  if (from < 0 || to < 0) return toggleTabSelection(id);
+  selectedTabIds.clear();
+  for (const tabId of ids.slice(Math.min(from, to), Math.max(from, to) + 1)) selectedTabIds.add(tabId);
+  syncTabSelection();
+}
+
+function clearTabSelection() {
+  selectionAnchor = undefined;
+  if (!selectedTabIds.size) return;
+  selectedTabIds.clear();
+  syncTabSelection();
+}
+
+document.addEventListener('keydown', (e) => e.key === 'Escape' && clearTabSelection());
+
 function acceptTabDrops(el: HTMLElement, tab: TabInfo, target: DropTarget) {
   const clearHover = () => el.classList.remove('drop-before', 'drop-after', 'drop-split-left', 'drop-split-right', 'drag-over');
+  // A folder can go before or after a pinned tab, never next to a favorite or a Today tab.
+  const takesFolders = target.zone === 'pinned';
 
   el.addEventListener('dragover', (e) => {
-    if (!e.dataTransfer?.types.includes(DRAG_TYPE)) return;
+    const types = e.dataTransfer?.types ?? [];
+    const folder = types.includes(FOLDER_DRAG_TYPE);
+    if (folder ? !takesFolders : !types.includes(DRAG_TYPE)) return;
     if (activeDraggedTabId === tab.id) return;
     e.preventDefault();
     e.stopPropagation();
@@ -548,15 +626,16 @@ function acceptTabDrops(el: HTMLElement, tab: TabInfo, target: DropTarget) {
     const rect = el.getBoundingClientRect();
     const relX = (e.clientX - rect.left) / rect.width;
     const relY = (e.clientY - rect.top) / rect.height;
-    // Reordering gets the outer thirds; dropping onto the middle of a tab splits with it, as in Arc.
-    // Rows reorder up and down; favorites sit in a grid, so they reorder left and right.
-    const isFavorite = el.classList.contains('fav');
-    const along = isFavorite ? relX : relY;
     clearHover();
-    if (along < 0.3) el.classList.add('drop-before');
-    else if (along > 0.7) el.classList.add('drop-after');
-    else el.classList.add(!isFavorite && relX < 0.5 ? 'drop-split-left' : 'drop-split-right');
-    e.dataTransfer.dropEffect = 'move';
+    // Favorites sit in a grid and only reorder, left and right, as in Arc: their tiles are too
+    // small for a middle that splits. Folders only reorder too.
+    const isFavorite = el.classList.contains('fav');
+    if (isFavorite || folder) el.classList.add((isFavorite ? relX : relY) < 0.5 ? 'drop-before' : 'drop-after');
+    // Rows reorder from their outer thirds; dropping onto the middle of a tab splits with it, as in Arc.
+    else if (relY < 0.3) el.classList.add('drop-before');
+    else if (relY > 0.7) el.classList.add('drop-after');
+    else el.classList.add(relX < 0.5 ? 'drop-split-left' : 'drop-split-right');
+    e.dataTransfer!.dropEffect = 'move';
   });
 
   el.addEventListener('dragleave', (e) => {
@@ -565,8 +644,9 @@ function acceptTabDrops(el: HTMLElement, tab: TabInfo, target: DropTarget) {
   });
 
   el.addEventListener('drop', (e) => {
+    const folderId = takesFolders ? e.dataTransfer?.getData(FOLDER_DRAG_TYPE) : undefined;
     const id = e.dataTransfer?.getData(DRAG_TYPE);
-    if (!id || id === tab.id) return;
+    if (!folderId && (!id || id === tab.id)) return;
     e.preventDefault();
     e.stopPropagation();
 
@@ -575,24 +655,63 @@ function acceptTabDrops(el: HTMLElement, tab: TabInfo, target: DropTarget) {
     const isAfter = el.classList.contains('drop-after');
     clearHover();
     hideSplitDrop();
+    // After this row is before whatever comes next in its list: a tab, or a folder.
+    const next = el.nextElementSibling as HTMLElement | null;
+    const beforeTabId = isAfter ? (next?.dataset.tabId ?? next?.dataset.nodeId) : tab.id;
 
-    if (isSplitLeft) {
-      api.splitWith(id, 'left', tab.id);
+    if (folderId) {
+      api.moveFolder(folderId, { folderId: target.zone === 'pinned' ? target.folderId : undefined, beforeId: beforeTabId });
+    } else if (isSplitLeft) {
+      api.splitWith(id!, 'left', tab.id);
     } else if (isSplitRight) {
-      api.splitWith(id, 'right', tab.id);
-    } else if (isAfter) {
-      const next = el.nextElementSibling as HTMLElement | null;
-      const nextId = next?.dataset.tabId;
-      api.moveTab(id, { ...target, beforeTabId: nextId });
+      api.splitWith(id!, 'right', tab.id);
     } else {
-      api.moveTab(id, target);
+      api.moveTab(id!, { ...target, beforeTabId });
     }
   });
 }
 
-function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-over') {
+/**
+ * A folder's row takes tabs and folders: dropped on its top part they go before it, anywhere
+ * else into it (a folder never into itself or its own subfolders; the store refuses that).
+ */
+function acceptFolderDrops(el: HTMLElement, node: Extract<PinnedNode, { kind: 'folder' }>, parentId: string | undefined) {
+  const clearHover = () => el.classList.remove('drop-before', 'drag-over');
   el.addEventListener('dragover', (e) => {
-    if (!e.dataTransfer?.types.includes(DRAG_TYPE)) return;
+    const types = e.dataTransfer?.types ?? [];
+    if (!types.includes(DRAG_TYPE) && !types.includes(FOLDER_DRAG_TYPE)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = el.getBoundingClientRect();
+    clearHover();
+    el.classList.add((e.clientY - rect.top) / rect.height < 0.3 ? 'drop-before' : 'drag-over');
+    e.dataTransfer!.dropEffect = 'move';
+  });
+  el.addEventListener('dragleave', (e) => {
+    if (e.relatedTarget && el.contains(e.relatedTarget as Node)) return;
+    clearHover();
+  });
+  el.addEventListener('drop', (e) => {
+    const folderId = e.dataTransfer?.getData(FOLDER_DRAG_TYPE);
+    const tabId = e.dataTransfer?.getData(DRAG_TYPE);
+    if (!folderId && !tabId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const before = el.classList.contains('drop-before');
+    clearHover();
+    hideSplitDrop();
+    const place = before ? { folderId: parentId, beforeId: node.id } : { folderId: node.id };
+    if (folderId) {
+      if (folderId !== node.id) api.moveFolder(folderId, place);
+    } else api.moveTab(tabId!, { zone: 'pinned', folderId: place.folderId, beforeTabId: place.beforeId });
+  });
+}
+
+function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-over') {
+  // Folders only land among the pinned tabs.
+  const accepts = (types: readonly string[]) => types.includes(DRAG_TYPE) || (target.zone === 'pinned' && types.includes(FOLDER_DRAG_TYPE));
+  el.addEventListener('dragover', (e) => {
+    if (!accepts(e.dataTransfer?.types ?? [])) return;
     e.preventDefault();
     e.stopPropagation();
     el.classList.add(hoverClass);
@@ -600,11 +719,13 @@ function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-ove
   el.addEventListener('dragleave', () => el.classList.remove(hoverClass));
   el.addEventListener('drop', (e) => {
     el.classList.remove(hoverClass);
+    const folderId = target.zone === 'pinned' ? e.dataTransfer?.getData(FOLDER_DRAG_TYPE) : undefined;
     const id = e.dataTransfer?.getData(DRAG_TYPE);
-    if (!id) return;
+    if (!folderId && !id) return;
     e.preventDefault();
     e.stopPropagation();
-    api.moveTab(id, target);
+    if (folderId) api.moveFolder(folderId, {});
+    else api.moveTab(id!, target);
   });
 }
 
@@ -827,6 +948,20 @@ api.onFlash((message) => {
   clearTimeout(flashTimer);
   flashTimer = window.setTimeout(() => wrap.classList.remove('flashing'), 1400);
 });
+
+// ---- sites that need DRM ----------------------------------------------------------------
+
+let drmUrl = '';
+api.onDrmSite(({ site, url }) => {
+  drmUrl = url;
+  $('drm-notice-text').textContent = `${site} plays only with Widevine DRM, which Flecha doesn’t include (it needs a paid certification). Watch it in Safari instead.`;
+  $('drm-notice').hidden = false;
+});
+$('drm-dismiss').onclick = () => ($('drm-notice').hidden = true);
+$('drm-safari').onclick = () => {
+  $('drm-notice').hidden = true;
+  api.openInSafari(drmUrl);
+};
 
 // ---- Space editor -------------------------------------------------------------------
 

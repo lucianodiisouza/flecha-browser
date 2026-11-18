@@ -11,6 +11,7 @@
  * Chromium starts it when the shell calls chrome.runtime.connectNative and stops it (closes
  * stdin) when the port closes. stdout carries only messages; logs go to stderr.
  */
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -79,6 +80,13 @@ const methods: { [K in keyof HostMethods]: (...args: any[]) => Promise<ReturnTyp
   detectBrowsers: () => detectBrowsers(),
   readBrowser: (id: string, cookiesOnly?: boolean) => readBrowser(String(id), !!cookiesOnly),
   readBookmarksHtml: (html: string, fileName?: string) => readBookmarksHtml(String(html), fileName ? String(fileName) : undefined),
+  openInSafari: (url: string) =>
+    new Promise<void>((resolve, reject) => {
+      const page = new URL(String(url));
+      if (page.protocol !== 'https:' && page.protocol !== 'http:') return reject(new Error('Only web pages open in Safari'));
+      if (process.platform !== 'darwin') return reject(new Error('Safari is only on macOS'));
+      execFile('open', ['-a', 'Safari', page.href], (err) => (err ? reject(err) : resolve()));
+    }),
   readFlechaState: () => {
     const file = path.join(appSupport('Flecha'), 'flecha-state.json');
     try {

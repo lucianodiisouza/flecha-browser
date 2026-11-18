@@ -15,6 +15,8 @@ export interface HostMethods {
   readBookmarksHtml(html: string, fileName?: string): import('../shared/importApply').BrowserImportData;
   /** The Electron spike's saved state (its flecha-state.json), if it has one. */
   readFlechaState(): string | undefined;
+  /** Opens a web page in Safari: for sites Flecha can't play (Widevine DRM). macOS only. */
+  openInSafari(url: string): void;
 }
 
 export type ToShell =

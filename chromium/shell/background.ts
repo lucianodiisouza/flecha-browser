@@ -6,12 +6,13 @@
  * pinned tabs costs nothing until you use them. Chromium tabs that pages open themselves
  * (links to a new tab, window.open) become Flecha tabs.
  */
-import { Store, type StatePersistence } from '../shared/store';
+import { Store, findFolder, pinnedTabIds, type StatePersistence } from '../shared/store';
 import { resolveInput, searchEngine } from './lib/url';
 import { shortcutHints, type ShortcutId } from './lib/shortcuts';
 import { describe as describeEnvironment } from './lib/environments';
-import type { BrowserState, DropTarget, SearchEngineId, UiState } from '../shared/types';
+import type { BrowserState, DropTarget, SearchEngineId, TabInfo, UiState } from '../shared/types';
 import { broadcast, call, handle, listen, onConnect } from './hub';
+import { drmSite } from './lib/drm';
 import type { MenuRun } from './protocol';
 import type { MenuEntry } from './settingsUi';
 import { openSettings, registerSettings } from './settingsHandlers';
@@ -124,6 +125,17 @@ async function start() {
 
   // Icons fetched from the sites themselves, for those Chromium has none of yet.
   const siteIcons = new SiteIcons((icons) => broadcast('site-icons', icons));
+  // Widevine streaming sites can't play here: the sidebar says so, once per site and session.
+  const drmNoted = new Set<string>();
+  chrome.webNavigation.onCommitted.addListener(({ tabId, frameId, url }) => {
+    const site = frameId === 0 ? drmSite(url) : undefined;
+    if (!site || drmNoted.has(site)) return;
+    drmNoted.add(site);
+    void chrome.tabs.get(tabId).then(
+      (tab) => tab.active && broadcast('drm-site', { site, url }),
+      () => undefined,
+    );
+  });
   const favicons = new Favicons(
     () => sendStateSoon(),
     (hosts) => void siteIcons.want(hosts),
@@ -572,6 +584,29 @@ async function start() {
     ];
   }
 
+  function folderMenu(folderId: string): MenuEntry<MenuRun>[] | undefined {
+    if (incognito) return undefined;
+    const folder = findFolder(store.activeSpace.pinned, folderId);
+    if (!folder) return undefined;
+    const tabs = pinnedTabIds(folder.children)
+      .map((id) => store.state.tabs[id])
+      .filter(Boolean);
+    const links = tabs.map((t) => t.url);
+    const markdown = tabs.map((t) => `- [${t.customTitle ?? t.title}](${t.url})`);
+    return [
+      { label: 'Rename…', run: { rename: folderId } },
+      { label: 'New Folder Inside', run: does('newFolderIn', folderId) },
+      { label: folder.open ? 'Collapse' : 'Expand', run: does('toggleFolder', folderId) },
+      SEPARATOR,
+      { label: 'Copy Links', enabled: links.length > 0, run: { copy: links.join('\n'), message: links.length === 1 ? 'Link copied' : `${links.length} links copied` } },
+      { label: 'Copy as Markdown List', enabled: links.length > 0, run: { copy: markdown.join('\n'), message: 'Markdown list copied' } },
+      { label: 'Close Its Tabs', enabled: tabs.some((t) => live.has(t.id)), run: does('unloadFolder', folderId) },
+      SEPARATOR,
+      { label: 'Ungroup', run: does('deleteFolder', folderId, true) },
+      { label: 'Delete Folder and Tabs…', enabled: links.length > 0, run: { deleteFolder: folderId } },
+    ];
+  }
+
   /** Opens the sidebar's Space editor (name, emoji, colour), in that Space. */
   function editSpace(spaceId: string) {
     if (store.state.activeSpaceId !== spaceId) store.switchSpace(spaceId);
@@ -624,6 +659,17 @@ async function start() {
     }),
     tabMenu: (id: string) => tabMenu(String(id)),
     spaceMenu: (id: string) => spaceMenu(String(id)),
+    folderMenu: (id: string) => folderMenu(String(id)),
+    moveFolder: spacesOnly((id: string, to: { folderId?: string; beforeId?: string }) =>
+      store.moveFolder(String(id), { spaceId: store.activeSpace.id, folderId: to?.folderId, beforeId: to?.beforeId }),
+    ),
+    newFolderIn: spacesOnly((parentId: string) => store.newFolder('New Folder', { parentId: String(parentId) })),
+    // Ungroup keeps its tabs where the folder was; otherwise they go to the archive.
+    deleteFolder: spacesOnly((id: string, keepTabs: boolean) => void unload(store.deleteFolder(String(id), !!keepTabs))),
+    unloadFolder: spacesOnly((id: string) => {
+      const folder = findFolder(store.activeSpace.pinned, String(id));
+      if (folder) void unload(pinnedTabIds(folder.children));
+    }),
     setOverlay: (name: string, on: boolean) => {
       if (on) frame.overlays.add(String(name));
       else frame.overlays.delete(String(name));
@@ -648,6 +694,15 @@ async function start() {
     closeTabs: (id: string, which: string) => void unload(store.closeTodayTabs(id, which === 'others' ? 'others' : 'below')),
     updateSpace: (id: string, patch: { name?: string; emoji?: string; color?: string }) => store.updateSpace(id, patch ?? {}),
     setPinnedCollapsed: (id: string, collapsed: boolean) => store.setPinnedCollapsed(String(id), !!collapsed),
+    openInSafari: (url: string) => {
+      const open = nativeHost?.openInSafari(String(url));
+      // No helper (incognito, or it isn't installed): the link, to paste into another browser.
+      if (!open) return copyToClipboard(String(url), 'Link copied: paste it into Safari or Chrome');
+      return open.catch(() => copyToClipboard(String(url), 'Link copied: paste it into Safari or Chrome'));
+    },
+    setTabSelection: (ids: string[]) => {
+      selectedTabIds = Array.isArray(ids) ? ids.map(String).filter((id) => store.state.tabs[id]) : [];
+    },
     setLocalServersCollapsed: (collapsed: boolean) => store.setLocalServers({ collapsed: !!collapsed }),
     ignoreLocalPort: (port: number) => store.setLocalServers({ ignoredPorts: [...(store.state.ignoredLocalPorts ?? []), Number(port)] }),
     // Its open tabs reopen in the other partition (sync() finds them in the wrong one).
@@ -785,6 +840,18 @@ async function start() {
     if (tab) return fn(tab);
   };
 
+  /** Tabs selected in the sidebar (⌘- or ⇧-click), in sidebar order. Not saved. */
+  let selectedTabIds: string[] = [];
+  const selectedTabs = () => selectedTabIds.map((id) => store.state.tabs[id]).filter((t): t is NonNullable<typeof t> => !!t);
+  /** ⌘⇧C and ⌥⌘C: every selected tab when more than one is, else the active tab. */
+  const copyTabs = (one: (tab: TabInfo) => string, many: (tabs: TabInfo[]) => string, noun: string) => () => {
+    const tabs = selectedTabs();
+    if (tabs.length > 1) return copyToClipboard(many(tabs), `${tabs.length} ${noun}s copied`);
+    const tab = store.activeTab;
+    if (tab) return copyToClipboard(one(tab), `${noun[0].toUpperCase()}${noun.slice(1)} copied`);
+  };
+  const markdownLink = (tab: TabInfo) => `[${tab.customTitle ?? tab.title}](${tab.url})`;
+
   const commands: Record<ShortcutId | 'closePeek', () => unknown> = {
     newTab: () => openPalette('new-tab'),
     openLocation: () => openPalette('navigate'),
@@ -809,8 +876,8 @@ async function start() {
     duplicateTab: withTab((tab) => openTab(tab.url)),
     muteTab: withTab((tab) => toggleMute(tab.id)),
     clearToday: () => call('clearToday'),
-    copyLink: withTab((tab) => copyToClipboard(tab.url, 'Link copied')),
-    copyMarkdown: withTab((tab) => copyToClipboard(`[${tab.customTitle ?? tab.title}](${tab.url})`, 'Markdown link copied')),
+    copyLink: copyTabs((tab) => tab.url, (tabs) => tabs.map((t) => t.url).join('\n'), 'link'),
+    copyMarkdown: copyTabs(markdownLink, (tabs) => tabs.map((t) => `- ${markdownLink(t)}`).join('\n'), 'Markdown link'),
     screenshot: () => call('capturePage'),
     nextSpace: () => cycleSpace(1),
     previousSpace: () => cycleSpace(-1),
