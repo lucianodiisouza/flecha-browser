@@ -1,0 +1,56 @@
+--- a/chrome/app/chrome_main_delegate.cc
++++ b/chrome/app/chrome_main_delegate.cc
+@@ -32,6 +32,7 @@
+ #include "base/process/process_handle.h"
+ #include "base/profiler/thread_group_profiler.h"
+ #include "base/rand_util.h"
++#include "base/strings/strcat.h"
+ #include "base/strings/string_util.h"
+ #include "base/strings/sys_string_conversions.h"
+ #include "base/strings/utf_string_conversions.h"
+@@ -1240,6 +1241,31 @@
+       !command_line.HasSwitch(switches::kNoFirstRun)) {
+     base::CommandLine::ForCurrentProcess()->AppendSwitch(
+         switches::kNoFirstRun);
++  }
++#endif  // !defined(BUILDING_CHROME_RENDERER)
++
++#if !defined(BUILDING_CHROME_RENDERER)
++  // Flecha: a video that's playing goes picture-in-picture when you switch to
++  // another tab or Space, as in Arc, on any site (Chromium's own automatic
++  // picture-in-picture only covers sites that ask for it). Turned on through
++  // the command line, so the renderers get it too; --disable-features=
++  // BrowserInitiatedAutomaticPictureInPicture turns it off.
++  if (!command_line.HasSwitch(switches::kProcessType)) {
++    constexpr char kFlechaAutoPip[] =
++        "BrowserInitiatedAutomaticPictureInPicture";
++    base::CommandLine* flecha_command_line =
++        base::CommandLine::ForCurrentProcess();
++    const std::string disabled =
++        flecha_command_line->GetSwitchValueASCII(switches::kDisableFeatures);
++    std::string enabled =
++        flecha_command_line->GetSwitchValueASCII(switches::kEnableFeatures);
++    if (disabled.find(kFlechaAutoPip) == std::string::npos &&
++        enabled.find(kFlechaAutoPip) == std::string::npos) {
++      enabled = enabled.empty() ? kFlechaAutoPip
++                                : base::StrCat({enabled, ",", kFlechaAutoPip});
++      flecha_command_line->AppendSwitchASCII(switches::kEnableFeatures,
++                                             enabled);
++    }
+   }
+ #endif  // !defined(BUILDING_CHROME_RENDERER)
+ 
+--- a/components/content_settings/core/browser/content_settings_registry.cc
++++ b/components/content_settings/core/browser/content_settings_registry.cc
+@@ -640,8 +640,10 @@
+            ContentSettingsInfo::INHERIT_IN_INCOGNITO,
+            PermissionSettingsInfo::EXCEPTIONS_ON_SECURE_ORIGINS_ONLY);
+ 
++  // Flecha: allowed unless a site is blocked, as in Arc (see
++  // chrome_main_delegate.cc), so switching tabs doesn't ask first.
+   Register(ContentSettingsType::AUTO_PICTURE_IN_PICTURE,
+-           "auto-picture-in-picture", CONTENT_SETTING_ASK,
++           "auto-picture-in-picture", CONTENT_SETTING_ALLOW,
+            WebsiteSettingsInfo::UNSYNCABLE, /*allowlisted_primary_schemes=*/{},
+            /*valid_settings=*/
+            {CONTENT_SETTING_ALLOW, CONTENT_SETTING_BLOCK, CONTENT_SETTING_ASK},

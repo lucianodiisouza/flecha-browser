@@ -1134,6 +1134,7 @@ const ACTIONS: Array<{ label: string; keywords: string; icon: IconName; shortcut
   { label: 'New Flechinha Window', keywords: 'flechinha little mini small window quick lookup', icon: 'miniWindow', shortcut: 'newFlechinha', run: () => api.newFlechinha() },
   { label: 'Settings', keywords: 'preferences settings config options', icon: 'settings', shortcut: 'settings', run: () => api.openSettings() },
   { label: 'Responsive View', keywords: 'mobile phone responsive device split', icon: 'phone', shortcut: 'responsive', run: () => api.toggleResponsive() },
+  { label: 'Stay On Top', keywords: 'stay on top float always above window pin', icon: 'miniWindow', run: () => api.toggleStayOnTop() },
   { label: 'Swap Split Sides', keywords: 'split swap sides flip switch left right', icon: 'columns', run: () => api.swapSplit() },
   { label: 'Toggle Sidebar', keywords: 'sidebar hide show', icon: 'sidebar', shortcut: 'toggleSidebar', run: () => api.toggleSidebar() },
   { label: 'Clear Today Tabs', keywords: 'clear archive today close', icon: 'archive', shortcut: 'clearToday', run: () => api.clearToday() },
