@@ -22,12 +22,16 @@ test('typed development addresses open directly and environment badges follow ex
   assert.equal(resolveInput('[0:0:0:0:0:0:0:1]:8080'), 'http://[0:0:0:0:0:0:0:1]:8080');
   assert.equal(resolveInput('203.0.113.9:3000'), 'https://203.0.113.9:3000');
   assert.equal(resolveInput('[fd00::1]:8443'), 'https://[fd00::1]:8443');
+  assert.equal(resolveInput('example.com/my notes'), 'https://example.com/my%20notes');
+  assert.equal(resolveInput('[fd00::1]/my notes'), 'https://[fd00::1]/my%20notes');
   for (const address of ['例子.中国', 'xn--fsqu00a.xn--fiqs8s']) assert.equal(resolveInput(address), `https://${address}`);
   for (const credentialed of [
     'test-user:fixture-password@example.com/private',
     'test-user:two words@example.com',
     'test-token@example.com/private',
     'test-token@example.com',
+    ':fixture-password@example.com/private',
+    ':two words@example.com/private',
   ]) {
     assert.equal(resolveInput(credentialed), 'about:blank');
     assert.equal(suggestable(credentialed), false);
@@ -43,6 +47,10 @@ test('typed development addresses open directly and environment badges follow ex
     'example.com: -1/api?token=fixture',
     'example.com:65 536/api?token=fixture',
     'example.com:%20bad/api?token=fixture',
+    'example.com: bad/api?token=fixture',
+    'example.com: bad?token=fixture',
+    'example.com: bad? token=fixture',
+    'example.com: /api?token=fixture',
     '%65xample%2ecom:65536/api?token=fixture',
     '%ZZxample%2ecom:65536/api?token=fixture',
     '[::gg]:80/api?token=fixture',
@@ -57,6 +65,7 @@ test('typed development addresses open directly and environment badges follow ex
   assert.equal(suggestable('node.js: tutorial'), true);
   assert.equal(resolveInput('node.js: 2024 tutorial'), 'https://www.google.com/search?q=node.js%3A%202024%20tutorial');
   assert.equal(resolveInput('node.js: 2024 tutorial?'), 'https://www.google.com/search?q=node.js%3A%202024%20tutorial%3F');
+  assert.equal(resolveInput('node.js: 2024 tutorial? Where next'), 'https://www.google.com/search?q=node.js%3A%202024%20tutorial%3F%20Where%20next');
   assert.match(resolveInput('mailto: vs tel: links'), /[?&]q=mailto%3A%20vs%20tel%3A%20links/);
   assert.equal(resolveInput('mailto:?subject=Hello'), 'mailto:?subject=Hello');
   assert.equal(new URL(resolveInput('%65xample.com/docs')).href, 'https://example.com/docs');

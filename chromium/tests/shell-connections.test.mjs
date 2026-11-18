@@ -159,7 +159,7 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
     return nodes.get(id);
   };
   const handlers = new Map();
-  const location = { hash: '#first.css', pathname: '/boosts.html', search: '' };
+  const location = { hash: '', pathname: '/boosts.html', search: '' };
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   const globals = {
     chrome: { runtime: { connect: () => port } },
@@ -177,18 +177,23 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
   await nextTurn();
   const file = { name: 'first.css', host: 'first', kind: 'styles', code: 'original' };
   const reply = (message, value) => port.onMessage.emit({ type: 'result', id: message.id, value });
-  reply(messages.find(({ name }) => name === 'boosts:get'), file);
-  await nextTurn();
   const listRead = messages.find(({ name }) => name === 'boosts:list');
-  const editorStatus = node('status').textContent;
   port.onMessage.emit({ type: 'result', id: listRead.id, error: 'Couldn’t read the list' });
   await nextTurn();
   assert.match(node('list-error').textContent, /Couldn’t load Boosts/);
-  assert.equal(node('status').textContent, editorStatus);
-  port.onMessage.emit({ type: 'event', name: 'boosts:changed', args: [] });
-  reply(messages.filter(({ name }) => name === 'boosts:list').at(-1), [file]);
+  assert.equal(node('retry-list').hidden, false);
+  node('retry-list').onclick();
+  const listRetry = messages.filter(({ name }) => name === 'boosts:list').at(-1);
+  assert.notEqual(listRetry.id, listRead.id);
+  reply(listRetry, [file]);
   await nextTurn();
   assert.equal(node('list-error').textContent, '');
+  assert.equal(node('retry-list').hidden, true);
+  location.hash = '#first.css';
+  handlers.get('hashchange')();
+  await nextTurn();
+  reply(messages.find(({ name }) => name === 'boosts:get'), file);
+  await nextTurn();
   const code = node('code');
   const button = node('save');
   const sentSaves = () => messages.filter(({ name }) => name === 'boosts:save');
@@ -355,14 +360,22 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   let waitingForTabRead = false;
   let refusedEvaluation = false;
   let diagnosingRefusal = false;
+  const pendingNavigation = Promise.withResolvers();
   const idleMessage = { type: 'error', args: [{ value: 'Logged while idle' }] };
   globalThis.chrome = {
     runtime: { connectNative: () => port },
-    tabs: { onRemoved: event(), get: () => {
-      if (!pendingTabRead) return Promise.resolve(tab);
-      waitingForTabRead = true;
-      return pendingTabRead;
-    } },
+    tabs: {
+      onRemoved: event(),
+      get: () => {
+        if (!pendingTabRead) return Promise.resolve(tab);
+        waitingForTabRead = true;
+        return pendingTabRead;
+      },
+      async update(_id, { url }) {
+        await pendingNavigation.promise;
+        tab.url = url;
+      },
+    },
     scripting: { executeScript: () => {
       diagnosingRefusal = true;
       return new Promise(() => {});
@@ -623,6 +636,19 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   await nextTurn();
   assert.ok(results.some(({ id, result }) => id === 48 && !result.isError), 'stalled non-debugger reads release the tab queue');
   pendingTabRead = undefined;
+
+  const destination = 'https://example.com/after-navigation';
+  port.onMessage.emit({ type: 'tool', id: 49, name: 'navigate', args: { tabId: phone, url: destination } });
+  await nextTurn();
+  t.mock.timers.tick(60_000);
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 49).result.content[0].text, /didn’t answer navigate within 60s/);
+  port.onMessage.emit({ type: 'tool', id: 50, name: 'read_page', args: { tabId: phone } });
+  await nextTurn();
+  assert.equal(results.some(({ id }) => id === 50), false, 'the next tool waits for the underlying navigation');
+  pendingNavigation.resolve();
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 50).result.content[0].text, /\/after-navigation/);
 
   store.togglePin(phone);
   readPending = Promise.withResolvers();

@@ -25,25 +25,28 @@ export function searchUrl(terms: string, engine?: SearchEngineId): string {
   return searchEngine(engine).url.replace('%s', encodeURIComponent(terms));
 }
 
-export function hasAddressCredentials(input: string): boolean {
-  return /^[^:\s/?#@]+(?::[^@]*)?@(?=\S|$)/.test(input.trim());
+function hasAddressCredentials(input: string): boolean {
+  return /^(?:[^:\s/?#@]+(?::[^@]*)?|:[^@]*)@(?=\S|$)/.test(input.trim());
 }
 
-function looksLikeRejectedAddress(input: string): boolean {
+export function looksLikeRejectedAddress(input: string): boolean {
+  if (hasAddressCredentials(input)) return true;
   const [typed] = input.split(/[/?#\\]/, 1);
-  const hasTail = typed.length < input.length;
+  const tail = input.slice(typed.length);
   let authority = typed.replace(/%2e|[。．｡]/gi, '.');
   try { authority = decodeURIComponent(authority); } catch { /* A bad escape can still follow a host. */ }
   if (hasAddressCredentials(authority) || /^\[[^\s\[\]]*:[^\s\[\]]*(?:\]|$)/.test(authority)) return true;
-  const [host, port] = authority.split(':', 2);
-  const compactPort = port !== undefined && !/\s/.test(typed);
-  const portText = port?.trim() ?? '';
-  const hasAddressTail = input.length > typed.length + 1;
-  const numericPort = /^[+-]?\d/.test(portText) && (hasAddressTail || !/\s/.test(portText));
+  const colon = authority.indexOf(':');
+  const host = colon < 0 ? authority : authority.slice(0, colon);
+  const port = colon < 0 ? '' : authority.slice(colon + 1).trim();
+  // A separated question in prose is different from a path or query attached to the authority.
+  const addressTail = /^[/?#\\]\S/.test(tail) || /[?#]\s*[^=\s&#/?]+=/.test(tail);
+  const startsWithPortNumber = /^[+-]?\d/.test(port);
+  const numericPort = startsWithPortNumber && !/\s/.test(port);
   if (/^localhost$|^[^\s.@]+\.[^\s@]+$/i.test(host)) {
-    return compactPort || numericPort || (hasTail && port === undefined);
+    return colon < 0 ? !!tail : !/\s/.test(typed) || addressTail || numericPort;
   }
-  return hasTail && numericPort && /^[a-z\d-]*[a-z][a-z\d-]*$/i.test(host);
+  return !!tail && (numericPort || (addressTail && startsWithPortNumber)) && /^[a-z\d-]*[a-z][a-z\d-]*$/i.test(host);
 }
 
 /** Turns whatever was typed in the command bar into a URL to load. */
@@ -53,7 +56,7 @@ export function resolveInput(raw: string, engine?: SearchEngineId): string {
   const address = webAddress(input);
   if (address) return address;
   // Broken addresses can still contain credentials or tokens in the path and query.
-  if (hasAddressCredentials(input) || looksLikeRejectedAddress(input)) return 'about:blank';
+  if (looksLikeRejectedAddress(input)) return 'about:blank';
   return searchUrl(input, engine);
 }
 
@@ -78,7 +81,7 @@ export function webAddress(raw: string, { allowBareHost = false } = {}): string 
     const localHost = hostname === '[::1]' || /^(?:[a-z0-9.-]+\.)?localhost$/i.test(hostname);
     const idn = /\.xn--[a-z0-9-]+$/i.test(hostname) && /[.。．｡][\p{L}\p{M}\p{N}-]+[.。．｡]?$/u.test(host);
     const domain = /\.[a-z]{2,}$/i.test(hostname) || idn;
-    if (!localHost && !ipv4 && (/\s/.test(input) || (!domain && !ipv6 && !allowBareHost))) return undefined;
+    if (!localHost && !ipv4 && !domain && !ipv6 && !allowBareHost) return undefined;
     const [first, second] = ipv4 ? hostname.split('.').map(Number) : [];
     // Implicit HTTP is for loopback, the wildcard bind address and RFC 1918 networks.
     const localIp = ipv4 && (first === 127 || first === 10 || (first === 172 && second >= 16 && second <= 31) ||

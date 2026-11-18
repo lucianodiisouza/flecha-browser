@@ -15,6 +15,7 @@ const main = document.querySelector('main')!;
 const code = $<HTMLTextAreaElement>('code');
 const status = $('status');
 const listError = $('list-error');
+const retryList = $<HTMLButtonElement>('retry-list');
 const openError = $('open-error');
 const retryOpen = $('retry-open');
 const deleteCheckStatus = $('delete-check-status');
@@ -26,6 +27,7 @@ let current: BoostFile | undefined;
 let savedCode = '';
 let editorSession = Symbol();
 let navigation: symbol | undefined;
+let listRead: symbol | undefined;
 let discard: { name: string; draft: string } | undefined;
 let reconnectSelection: { name: string; fallback: string } | undefined;
 const writes = new Map<string, Promise<void>>();
@@ -60,13 +62,15 @@ function clearEditor() {
 }
 
 async function renderList() {
-  const boosts = await invoke<BoostFile[]>('boosts:list').catch(() => {
-    listError.textContent = 'Couldn’t load Boosts.';
-    $('empty').hidden = true;
-    return undefined;
-  });
+  const request = listRead = Symbol();
+  retryList.disabled = true;
+  const boosts = await invoke<BoostFile[]>('boosts:list').catch(() => undefined);
+  if (listRead !== request) return;
+  retryList.disabled = false;
+  retryList.hidden = !!boosts;
+  listError.textContent = boosts ? '' : 'Couldn’t load Boosts.';
+  $('empty').hidden = !boosts || boosts.length > 0;
   if (!boosts) return;
-  listError.textContent = '';
   list.replaceChildren(
     ...boosts.map((b) => {
       const li = document.createElement('li');
@@ -84,7 +88,6 @@ async function renderList() {
       return li;
     }),
   );
-  $('empty').hidden = boosts.length > 0;
 }
 
 async function open(name: string, reload = false) {
@@ -264,6 +267,7 @@ async function refresh(reload = false) {
   await renderList();
 }
 retryOpen.onclick = () => void refresh();
+retryList.onclick = () => void renderList();
 retryDeleteCheck.onclick = () => void verifyDeletes().then(() => refresh(true));
 window.addEventListener('hashchange', () => {
   reconnectSelection = undefined;

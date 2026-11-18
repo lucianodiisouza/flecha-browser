@@ -392,10 +392,11 @@ export function registerNativeHost(ctx: NativeHostContext) {
     },
     navigate: async ({ tabId, url, action }, use) => {
       const t = await target(tabId, url ? `opening ${url}` : (action ?? 'navigating'), use);
-      if (url) await untilAborted(chrome.tabs.update(t.chromeId, { url: String(url) }), use.signal);
-      else if (action === 'back') await untilAborted(chrome.tabs.goBack(t.chromeId).catch(() => undefined), use.signal);
-      else if (action === 'forward') await untilAborted(chrome.tabs.goForward(t.chromeId).catch(() => undefined), use.signal);
-      else if (action === 'reload') await untilAborted(chrome.tabs.reload(t.chromeId), use.signal);
+      // The caller can time out while Chrome still applies the navigation. Keep the tab locked until it settles.
+      if (url) await chrome.tabs.update(t.chromeId, { url: String(url) });
+      else if (action === 'back') await chrome.tabs.goBack(t.chromeId).catch(() => undefined);
+      else if (action === 'forward') await chrome.tabs.goForward(t.chromeId).catch(() => undefined);
+      else if (action === 'reload') await chrome.tabs.reload(t.chromeId);
       await settle(t.chromeId, use.signal);
       const tab = await untilAborted(chrome.tabs.get(t.chromeId), use.signal);
       return text({ url: tab.url, title: tab.title });
