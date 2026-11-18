@@ -449,13 +449,15 @@ test('a rejected injection reports the script and still attempts the next matchi
     };
     const boosts = await loadModule('chromium/shell/features/boosts.ts', { fresh: true });
     await boosts.ready();
+    warn.mock.resetCalls();
     navigation.emit({ tabId: 1, frameId: 0, url: 'https://old.example/', documentId: 'matching-document' });
     await nextTurn();
     assert.deepEqual(inject.mock.calls.map(({ arguments: [arg] }) => arg.target.documentIds), [['matching-document'], ['matching-document']]);
     const [first, second] = inject.mock.calls.map(({ arguments: [arg] }) => native ? arg.js[0].code : arg.args[0]);
     assert.match(first, /flecha\.boost\/all\.ts/);
     assert.match(second, /flecha\.boost\/old\.example\.ts/);
-    assert.match(warn.mock.calls.at(-1).arguments[0], /all\.ts.*matching-document/);
+    assert.equal(warn.mock.callCount(), 1);
+    assert.match(warn.mock.calls[0].arguments[0], /all\.ts.*matching-document/);
   }
 });
 
