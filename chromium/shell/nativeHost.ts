@@ -330,7 +330,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
       if (err instanceof AgentTimeout) return fail(`Flecha didn’t answer ${name} within ${timeout / 1000}s`);
       return fail(err instanceof Error ? err.message : String(err));
     } finally {
-      // A timeout stops the caller's wait. Chrome may still be running a command.
+      // Let input cleanup finish before waiting for outstanding debugger commands.
       void Promise.allSettled([work]).then(async () => {
         await Promise.allSettled(commands);
         if (runningTab !== undefined) {
@@ -351,7 +351,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     if (!tab) throw new Error(`No tab with id ${tabId}`);
     const closure = tabClosures.get(tab);
     showActivity(tabId, action);
-    const chromeId = await ctx.tabs.chromeTab(tabId);
+    const chromeId = await untilAborted(ctx.tabs.chromeTab(tabId), use.signal);
     if (chromeId === undefined) throw new Error(`Tab ${tabId} couldn’t be opened`);
     await use.tab(chromeId);
     if (!store.state.tabs[tabId] || tabClosures.get(tab) !== closure || (ctx.tabs.liveId && ctx.tabs.liveId(tabId) !== chromeId)) {
@@ -368,12 +368,12 @@ export function registerNativeHost(ctx: NativeHostContext) {
       showActivity(undefined, 'listing tabs');
       return text(listTabs());
     },
-    open_tab: async ({ url }) => {
+    open_tab: async ({ url }, { signal }) => {
       const tabId = ctx.tabs.open(String(url));
       showActivity(tabId, 'opening a tab');
-      const chromeId = await ctx.tabs.chromeTab(tabId);
-      if (chromeId !== undefined) await settle(chromeId);
-      const tab = chromeId !== undefined ? await chrome.tabs.get(chromeId).catch(() => undefined) : undefined;
+      const chromeId = await untilAborted(ctx.tabs.chromeTab(tabId), signal);
+      if (chromeId !== undefined) await settle(chromeId, signal);
+      const tab = chromeId !== undefined ? await untilAborted(chrome.tabs.get(chromeId).catch(() => undefined), signal) : undefined;
       return text({ tabId, url: tab?.pendingUrl || tab?.url || url });
     },
     activate_tab: async ({ tabId }) => {
@@ -392,12 +392,12 @@ export function registerNativeHost(ctx: NativeHostContext) {
     },
     navigate: async ({ tabId, url, action }, use) => {
       const t = await target(tabId, url ? `opening ${url}` : (action ?? 'navigating'), use);
-      if (url) await chrome.tabs.update(t.chromeId, { url: String(url) });
-      else if (action === 'back') await chrome.tabs.goBack(t.chromeId).catch(() => undefined);
-      else if (action === 'forward') await chrome.tabs.goForward(t.chromeId).catch(() => undefined);
-      else if (action === 'reload') await chrome.tabs.reload(t.chromeId);
-      await settle(t.chromeId);
-      const tab = await chrome.tabs.get(t.chromeId);
+      if (url) await untilAborted(chrome.tabs.update(t.chromeId, { url: String(url) }), use.signal);
+      else if (action === 'back') await untilAborted(chrome.tabs.goBack(t.chromeId).catch(() => undefined), use.signal);
+      else if (action === 'forward') await untilAborted(chrome.tabs.goForward(t.chromeId).catch(() => undefined), use.signal);
+      else if (action === 'reload') await untilAborted(chrome.tabs.reload(t.chromeId), use.signal);
+      await settle(t.chromeId, use.signal);
+      const tab = await untilAborted(chrome.tabs.get(t.chromeId), use.signal);
       return text({ url: tab.url, title: tab.title });
     },
     read_page: async ({ tabId, format = 'text', maxChars = 40000 }, use) => {
@@ -409,14 +409,15 @@ export function registerNativeHost(ctx: NativeHostContext) {
       }[format as 'text' | 'html' | 'links'];
       if (!code) return fail(`Unknown format ${format}`);
       const content = String(await evaluate(t.chromeId, code, use));
-      const tab = await chrome.tabs.get(t.chromeId);
+      const tab = await untilAborted(chrome.tabs.get(t.chromeId), use.signal);
       return text(`# ${tab.title}\n${tab.url}\n\n${content.slice(0, maxChars)}`);
     },
     screenshot: async ({ tabId }, use) => {
       const t = await target(tabId, 'taking a screenshot', use);
       // Chromium has a tab that isn't on screen draw a frame for this (page_handler.cc).
       const shot = (await debug(t.chromeId, 'Page.captureScreenshot', { format: 'png' }, use)) as { data: string };
-      return { content: [{ type: 'image', data: await shrink(shot.data, 1280), mimeType: 'image/png' }] };
+      const data = await untilAborted(shrink(shot.data, 1280), use.signal);
+      return { content: [{ type: 'image', data, mimeType: 'image/png' }] };
     },
     console_logs: async ({ tabId, level, limit = 50 }, use) => {
       const t = await target(tabId, 'reading the console', use);
@@ -430,8 +431,9 @@ export function registerNativeHost(ctx: NativeHostContext) {
       if (!point) return fail(`No visible element matches ${selector}`);
       const button = { x: point.x, y: point.y, button: 'left', clickCount: 1 };
       await dispatchInput(t.chromeId, 'Input.dispatchMouseEvent', { ...button, type: 'mousePressed' }, { ...button, type: 'mouseReleased' }, use);
-      await settle(t.chromeId);
-      return text({ clicked: selector, url: (await chrome.tabs.get(t.chromeId)).url });
+      await settle(t.chromeId, use.signal);
+      const tab = await untilAborted(chrome.tabs.get(t.chromeId), use.signal);
+      return text({ clicked: selector, url: tab.url });
     },
     type: async ({ tabId, selector, text: value, clear, submit }, use) => {
       const t = await target(tabId, `typing into ${selector ?? 'the page'}`, use);
@@ -451,13 +453,13 @@ export function registerNativeHost(ctx: NativeHostContext) {
       }
       await debug(t.chromeId, 'Input.insertText', { text: String(value) }, use);
       if (submit) await pressKey(t.chromeId, 'Enter', use);
-      await settle(t.chromeId);
+      await settle(t.chromeId, use.signal);
       return text('ok');
     },
     press_key: async ({ tabId, key }, use) => {
       const t = await target(tabId, `pressing ${key}`, use);
       await pressKey(t.chromeId, String(key), use);
-      await settle(t.chromeId);
+      await settle(t.chromeId, use.signal);
       return text('ok');
     },
     evaluate: async ({ tabId, expression }, use) => {
@@ -472,7 +474,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
         use.signal.throwIfAborted();
         const ready = selector
           ? await evaluate(t.chromeId, `!!document.querySelector(${JSON.stringify(selector)})`, use).catch(() => false)
-          : (await chrome.tabs.get(t.chromeId)).status !== 'loading';
+          : (await untilAborted(chrome.tabs.get(t.chromeId), use.signal)).status !== 'loading';
         if (ready) return text('ready');
         await wait(200);
       }
@@ -525,7 +527,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
    * such as the frames a password manager adds to sign-in forms. Agent tabs keep other
    * extensions out (patch 0080), but your own tabs don't: this names the extension in the way.
    */
-  async function attachRefused(chromeId: number, error: unknown): Promise<unknown> {
+  async function attachRefused(chromeId: number, error: unknown, signal: AbortSignal): Promise<unknown> {
     // Only Chromium's refusals and detaches: other errors say what went wrong themselves.
     const message = error instanceof Error ? error.message : String(error);
     if (!/Cannot access a chrome-extension:\/\/ URL of different extension|Cannot attach to this target|Detached while handling command/.test(message)) {
@@ -533,7 +535,8 @@ export function registerNativeHost(ctx: NativeHostContext) {
     }
     // webNavigation leaves other extensions' frames out, so they are read from the page: the
     // frame elements, in closed shadow roots too, where password managers put theirs.
-    const results = await chrome.scripting
+    signal.throwIfAborted();
+    const results = await untilAborted(chrome.scripting
       .executeScript({
         target: { tabId: chromeId, allFrames: true },
         func: () => {
@@ -549,17 +552,17 @@ export function registerNativeHost(ctx: NativeHostContext) {
           return sources;
         },
       })
-      .catch(() => []);
+      .catch(() => []), signal);
     const others = new Set<string>();
     for (const url of results.flatMap((frame) => (frame.result as string[] | undefined) ?? [])) {
       const id = /^chrome-extension:\/\/([a-p]{32})\//.exec(url)?.[1];
       if (id && id !== chrome.runtime.id) others.add(id);
     }
     if (!others.size) return error;
-    const tab = await chrome.tabs.get(chromeId).catch(() => undefined);
+    const tab = await untilAborted(chrome.tabs.get(chromeId).catch(() => undefined), signal);
     const actions =
       tab && typeof chrome.flechaPrivate?.getExtensionActions === 'function'
-        ? await chrome.flechaPrivate.getExtensionActions(tab.windowId).catch(() => [])
+        ? await untilAborted(chrome.flechaPrivate.getExtensionActions(tab.windowId).catch(() => []), signal)
         : [];
     const names = [...others].map((id) => actions.find((action) => action.id === id)?.name ?? id);
     return new Error(
@@ -603,7 +606,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
       };
       if (settingUp) void settingUp.then(releaseWhenSafe, releaseWhenSafe);
       else void releaseWhenSafe();
-      throw await attachRefused(chromeId, error);
+      throw await attachRefused(chromeId, error, use.signal);
     }
   }
 
@@ -611,7 +614,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     await attach(chromeId, use);
     // Chromium also lets go of a tab when another extension's frame loads in it mid-command.
     return untilAborted(use.command(method, params), use.signal).catch(async (error: unknown) => {
-      throw await attachRefused(chromeId, error);
+      throw await attachRefused(chromeId, error, use.signal);
     });
   }
 
@@ -769,11 +772,13 @@ const text = (value: unknown): AgentResult => ({
 const fail = (message: string): AgentResult => ({ content: [{ type: 'text', text: message }], isError: true });
 
 /** Waits for navigation the last action may have started, up to a few seconds. */
-async function settle(chromeId: number) {
+async function settle(chromeId: number, signal: AbortSignal) {
+  signal.throwIfAborted();
   await wait(150);
   const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
-    const tab = await chrome.tabs.get(chromeId).catch(() => undefined);
+    signal.throwIfAborted();
+    const tab = await untilAborted(chrome.tabs.get(chromeId).catch(() => undefined), signal);
     if (!tab || tab.status !== 'loading') return;
     await wait(100);
   }

@@ -17,6 +17,8 @@ const status = $('status');
 const listError = $('list-error');
 const openError = $('open-error');
 const retryOpen = $('retry-open');
+const deleteCheckStatus = $('delete-check-status');
+const retryDeleteCheck = $<HTMLButtonElement>('retry-delete-check');
 const saveButton = $<HTMLButtonElement>('save');
 const deleteButton = $<HTMLButtonElement>('delete');
 
@@ -30,6 +32,7 @@ const writes = new Map<string, Promise<void>>();
 const writeRevisions = new Map<string, symbol>();
 const deleting = new Set<string>();
 const unconfirmedDeletes = new Map<string, symbol>();
+let checkingDeletes: Promise<void> | undefined;
 let deletedDraft: symbol | undefined;
 
 const dirty = () => !!current && code.value !== savedCode;
@@ -195,19 +198,32 @@ deleteButton.onclick = () => {
   });
 };
 
-async function verifyDeletes() {
-  await Promise.allSettled([...unconfirmedDeletes].map(async ([name, session]) => {
-    const file = await invoke<BoostFile | undefined>('boosts:get', name);
-    unconfirmedDeletes.delete(name);
-    deleting.delete(name);
-    if (editorSession === session) {
-      if (!file && dirty()) {
-        deletedDraft = session;
-        setStatus('This Boost was deleted. You can still copy your draft.', true);
-      } else if (file) setStatus('This Boost is still here.');
-    }
-    updateEditorActions();
-  }));
+function verifyDeletes() {
+  if (checkingDeletes) return checkingDeletes;
+  if (!unconfirmedDeletes.size) return Promise.resolve();
+  retryDeleteCheck.disabled = true;
+  checkingDeletes = Promise.all([...unconfirmedDeletes].map(([name, session]) =>
+    invoke<BoostFile | undefined>('boosts:get', name).then((file) => {
+      unconfirmedDeletes.delete(name);
+      deleting.delete(name);
+      if (editorSession === session) {
+        if (!file && dirty()) {
+          deletedDraft = session;
+          setStatus('This Boost was deleted. You can still copy your draft.', true);
+        } else if (file) setStatus('This Boost is still here.');
+      }
+      updateEditorActions();
+      return true;
+    }, () => false),
+  )).then((results) => {
+    const failed = results.includes(false);
+    deleteCheckStatus.textContent = failed ? 'Couldn’t check whether the Boost was deleted.' : '';
+    retryDeleteCheck.hidden = !failed;
+  }).finally(() => {
+    checkingDeletes = undefined;
+    retryDeleteCheck.disabled = false;
+  });
+  return checkingDeletes;
 }
 
 $<HTMLFormElement>('new').onsubmit = async (e) => {
@@ -236,10 +252,12 @@ window.addEventListener('beforeunload', (e) => {
 });
 async function refresh(reload = false) {
   const name = selected();
-  if ((!reload || !dirty() || name !== current?.name) && await open(name, reload) === false) return;
+  const keepEditor = reload && name === current?.name && (dirty() || unconfirmedDeletes.has(name));
+  if (!keepEditor && await open(name, reload) === false) return;
   await renderList();
 }
 retryOpen.onclick = () => void refresh();
+retryDeleteCheck.onclick = () => void verifyDeletes().then(() => refresh(true));
 window.addEventListener('hashchange', () => {
   reconnectSelection = undefined;
   void refresh();

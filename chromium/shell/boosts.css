@@ -130,7 +130,7 @@ main header {
   font-family: var(--mono);
 }
 
-#status.error, #list-error, #open-error {
+#status.error, #list-error, #open-error, #delete-check-status {
   color: var(--red);
   white-space: pre-wrap;
 }
@@ -157,7 +157,7 @@ main header {
 }
 
 #nothing p,
-#list-error:empty {
+#list-error:empty, #delete-check-status:empty {
   margin: 0;
 }
 

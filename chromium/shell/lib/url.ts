@@ -36,9 +36,11 @@ function looksLikeRejectedAddress(input: string): boolean {
   try { authority = decodeURIComponent(authority); } catch { /* A bad escape can still follow a host. */ }
   if (hasAddressCredentials(authority) || /^\[[^\s\[\]]*:[^\s\[\]]*(?:\]|$)/.test(authority)) return true;
   const [host, port] = authority.split(':', 2);
-  if (!hasTail && port === undefined) return false;
-  if (/^localhost$|^[^\s.@]+\.[^\s@]+$/i.test(host)) return true;
-  return hasTail && /^[a-z\d-]*[a-z][a-z\d-]*$/i.test(host) && /^\s*\d/.test(port ?? '');
+  const numericPort = /^\s*\d/.test(port ?? '');
+  if (/^localhost$|^[^\s.@]+\.[^\s@]+$/i.test(host)) {
+    return numericPort || (hasTail && !/\s/.test(port ?? ''));
+  }
+  return hasTail && numericPort && /^[a-z\d-]*[a-z][a-z\d-]*$/i.test(host);
 }
 
 /** Turns whatever was typed in the command bar into a URL to load. */

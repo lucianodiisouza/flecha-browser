@@ -171,8 +171,9 @@ const makeDefault = document.getElementById('makeDefault') as HTMLButtonElement;
 const defaultStatus = document.getElementById('defaultBrowserStatus')!;
 
 type EnvironmentDraft = SettingsView['environments'][number];
-type EnvironmentField = 'name' | 'targetsText';
-type FieldEdit = { value: string };
+const environmentFields = ['name', 'targetsText'] as const;
+type EnvironmentField = typeof environmentFields[number];
+type FieldEdit = { value: string; failed?: boolean };
 let environments: EnvironmentDraft[] = [];
 let savedEnvironments: EnvironmentDraft[] = [];
 const environmentDrafts = new Map<string, Partial<Record<EnvironmentField, FieldEdit>>>();
@@ -209,11 +210,15 @@ function renderEnvironments() {
       controls = environmentCard(env.id);
       environmentCards.set(env.id, controls);
     }
-    const { card, name, targets, status } = controls;
+    const { card, name, targets, status, retry } = controls;
     if (name.value !== env.name) name.value = env.name;
     if (targets.value !== env.targetsText) targets.value = env.targetsText;
-    const error = environmentErrors.get(env.id) ?? '';
-    if (status.textContent !== error) status.textContent = error;
+    const edits = environmentDrafts.get(env.id);
+    const failed = environmentFields.some((field) => edits?.[field]?.failed);
+    const error = environmentErrors.get(env.id);
+    const message = [failed && 'Couldn’t confirm these changes were saved.', error].filter(Boolean).join(' ');
+    if (status.textContent !== message) status.textContent = message;
+    retry.hidden = !failed;
     if (card !== position) {
       if (card.isConnected) environmentList.moveBefore(card, position);
       else environmentList.insertBefore(card, position);
@@ -240,44 +245,69 @@ function environmentCard(id: string) {
   header.append(name, remove);
   const status = Object.assign(document.createElement('div'), { className: 'env-error' });
   status.setAttribute('role', 'status');
-  card.append(header, targets, status);
-  return { card, name, targets, status };
+  const retry = Object.assign(document.createElement('button'), {
+    type: 'button', className: 'button env-retry', textContent: 'Retry save', hidden: true,
+  });
+  retry.addEventListener('click', async () => {
+    retry.disabled = true;
+    const edits = environmentDrafts.get(id);
+    for (const field of environmentFields) {
+      const edit = edits?.[field];
+      if (edit?.failed) saveEnvironmentField(id, field, edit, true);
+    }
+    await environmentWrites;
+    retry.disabled = false;
+  });
+  card.append(header, targets, status, retry);
+  return { card, name, targets, status, retry };
 }
 
 function wireEnvironmentField(id: string, field: EnvironmentField, input: HTMLInputElement | HTMLTextAreaElement) {
   function draftField() {
-    const edit = { value: input.value };
-    environmentDrafts.set(id, { ...environmentDrafts.get(id), [field]: edit });
+    const edits = environmentDrafts.get(id);
+    const edit = { value: input.value, failed: edits?.[field]?.failed };
+    environmentDrafts.set(id, { ...edits, [field]: edit });
     const visible = environments.find((env) => env.id === id);
     if (visible) visible[field] = edit.value;
     return edit;
   }
   input.addEventListener('input', draftField);
-  input.addEventListener('change', () => {
-    const edit = draftField();
-    const local = { ...environments.find((env) => env.id === id) };
-    const edits = environmentDrafts.get(id);
-    queueEnvironmentWrite(async () => {
-      if (removingEnvironments.has(id)) return;
-      const previous = savedEnvironments.find((env) => env.id === id);
-      const creating = !previous && incompleteEnvironments.has(id);
-      const view = await api.set({ environment: creating
+  input.addEventListener('change', () => saveEnvironmentField(id, field, draftField()));
+}
+
+function saveEnvironmentField(id: string, field: EnvironmentField, edit: FieldEdit, retry = false) {
+  const local = { ...environments.find((env) => env.id === id) };
+  const edits = environmentDrafts.get(id);
+  queueEnvironmentWrite(async () => {
+    if (removingEnvironments.has(id) || (retry && environmentDrafts.get(id)?.[field] !== edit)) return;
+    const previous = savedEnvironments.find((env) => env.id === id);
+    const creating = !previous && incompleteEnvironments.has(id);
+    const submitted = creating ? edits : { [field]: edit };
+    let view: SettingsView;
+    try {
+      view = await api.set({ environment: creating
         ? { op: 'create', id, name: local.name ?? '', targetsText: local.targetsText ?? '' }
         : { op: 'edit', id, field, value: edit.value } });
-      if (view.notice) {
-        if (view.environments.some((env) => env.id === id) || incompleteEnvironments.has(id)) environmentErrors.set(id, view.notice);
-        else if (!removingEnvironments.has(id)) toast(view.notice);
-      } else {
-        environmentErrors.delete(id);
-        const current = environmentDrafts.get(id);
-        if (current) {
-          const accepted = creating ? edits : { [field]: edit };
-          for (const key of ['name', 'targetsText'] as const) if (current[key] === accepted?.[key]) delete current[key];
-          if (!current.name && !current.targetsText) environmentDrafts.delete(id);
-        }
+    } catch (error) {
+      const current = environmentDrafts.get(id);
+      for (const key of environmentFields) {
+        const draft = current?.[key];
+        if (draft && submitted?.[key]) draft.failed = true;
       }
-      render(view);
-    });
+      throw error;
+    }
+    if (view.notice) {
+      if (view.environments.some((env) => env.id === id) || incompleteEnvironments.has(id)) environmentErrors.set(id, view.notice);
+      else if (!removingEnvironments.has(id)) toast(view.notice);
+    } else {
+      environmentErrors.delete(id);
+      const current = environmentDrafts.get(id);
+      if (current) {
+        for (const key of environmentFields) if (current[key] === submitted?.[key]) delete current[key];
+        if (!current.name && !current.targetsText) environmentDrafts.delete(id);
+      }
+    }
+    render(view);
   });
 }
 

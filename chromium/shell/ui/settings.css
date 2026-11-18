@@ -425,6 +425,10 @@ code {
   font-size: var(--text-sm);
 }
 
+.env-retry {
+  margin-top: 6px;
+}
+
 .nav-icon.pink {
   background: linear-gradient(#f27aa8, #d94a83);
 }

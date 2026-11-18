@@ -47,6 +47,8 @@ test('typed development addresses open directly and environment badges follow ex
   }
   assert.equal(suggestable('re: meet @ noon'), true);
   assert.match(resolveInput('re: meet @ noon'), /[?&]q=re%3A%20meet%20%40%20noon/);
+  assert.equal(resolveInput('node.js: tutorial'), 'https://www.google.com/search?q=node.js%3A%20tutorial');
+  assert.equal(suggestable('node.js: tutorial'), true);
   assert.match(resolveInput('mailto: vs tel: links'), /[?&]q=mailto%3A%20vs%20tel%3A%20links/);
   assert.equal(resolveInput('mailto:?subject=Hello'), 'mailto:?subject=Hello');
   assert.equal(new URL(resolveInput('%65xample.com/docs')).href, 'https://example.com/docs');

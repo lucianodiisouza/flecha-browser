@@ -298,8 +298,16 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
   assert.match(node('status').textContent, /Couldn’t confirm deletion/);
   t.mock.timers.tick(5_000);
   await nextTurn();
+  const verification = messages.filter(({ name }) => name === 'boosts:get').at(-1);
+  port.onMessage.emit({ type: 'result', id: verification.id, error: 'Fixture verification failure' });
+  await nextTurn();
+  assert.match(node('delete-check-status').textContent, /Couldn’t check/);
+  assert.equal(node('retry-delete-check').hidden, false);
+  assert.equal(code.readOnly, true);
+  node('retry-delete-check').onclick();
   reply(messages.filter(({ name }) => name === 'boosts:get').at(-1), undefined);
   await nextTurn();
+  assert.equal(node('retry-delete-check').hidden, true);
   assert.match(node('status').textContent, /deleted.*copy your draft/);
   assert.equal(code.value, 'unsaved draft');
   assert.equal(button.disabled, true);
@@ -320,10 +328,22 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   let keyDown;
   let keyUp;
   let setupPending;
+  let pendingTabRead;
+  let waitingForTabRead = false;
+  let refusedEvaluation = false;
+  let diagnosingRefusal = false;
   const idleMessage = { type: 'error', args: [{ value: 'Logged while idle' }] };
   globalThis.chrome = {
     runtime: { connectNative: () => port },
-    tabs: { onRemoved: event(), get: async () => tab },
+    tabs: { onRemoved: event(), get: () => {
+      if (!pendingTabRead) return Promise.resolve(tab);
+      waitingForTabRead = true;
+      return pendingTabRead;
+    } },
+    scripting: { executeScript: () => {
+      diagnosingRefusal = true;
+      return new Promise(() => {});
+    } },
     debugger: {
       onDetach: event(),
       onEvent: event(),
@@ -352,6 +372,7 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
         }
         if (method === 'Log.disable') logEnabled = false;
         if (method === 'Runtime.evaluate') {
+          if (refusedEvaluation) throw new Error('Cannot attach to this target');
           await readPending?.promise;
           return { result: { value: 'fixture body' } };
         }
@@ -558,6 +579,27 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   t.mock.timers.tick(100);
   await nextTurn();
   assert.ok(results.some(({ id, result }) => id === 42 && !result.isError), 'the next tool recovers without resolving debugger setup');
+
+  refusedEvaluation = true;
+  port.onMessage.emit({ type: 'tool', id: 46, name: 'read_page', args: { tabId: phone } });
+  await nextTurn();
+  assert.equal(diagnosingRefusal, true);
+  t.mock.timers.tick(60_000);
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 46).result.content[0].text, /didn’t answer read_page within 60s/);
+  refusedEvaluation = false;
+  readPending = undefined;
+  pendingTabRead = new Promise(() => {});
+  port.onMessage.emit({ type: 'tool', id: 47, name: 'read_page', args: { tabId: phone } });
+  await nextTurn();
+  assert.equal(waitingForTabRead, true, 'diagnosis released the queue while its Chrome request was still pending');
+  t.mock.timers.tick(60_000);
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 47).result.content[0].text, /didn’t answer read_page within 60s/);
+  port.onMessage.emit({ type: 'tool', id: 48, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  assert.ok(results.some(({ id, result }) => id === 48 && !result.isError), 'stalled non-debugger reads release the tab queue');
+  pendingTabRead = undefined;
 
   store.togglePin(phone);
   readPending = Promise.withResolvers();
