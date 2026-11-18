@@ -186,10 +186,12 @@ export function registerNativeHost(ctx: NativeHostContext) {
       const urls = [...new Set(entries.filter((e) => /^https?:/.test(e.url)).map((e) => e.url))];
       // Oldest first, so the most recent visit ends up newest.
       urls.reverse();
+      let added = 0;
       for (let i = 0; i < urls.length; i += 50) {
-        await Promise.all(urls.slice(i, i + 50).map((url) => chrome.history.addUrl({ url }).catch(() => undefined)));
+        const writes = await Promise.allSettled(urls.slice(i, i + 50).map(async (url) => chrome.history.addUrl({ url })));
+        added += writes.filter((write) => write.status === 'fulfilled').length;
       }
-      return urls.length;
+      return { added, failed: urls.length - added };
     },
   };
 
@@ -206,7 +208,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     try {
       return await applyBrowserImport(await read(), importOptions(options, ctx.canIsolate), store, history);
     } catch (err) {
-      return { changed: false, spaces: 0, merged: 0, bookmarks: 0, history: 0, archived: 0, warnings: [helperProblem(err)], details: [] };
+      return { changed: false, spaces: 0, merged: 0, bookmarks: 0, folders: 0, splits: 0, history: 0, archived: 0, warnings: [helperProblem(err)], details: [] };
     }
   }
 

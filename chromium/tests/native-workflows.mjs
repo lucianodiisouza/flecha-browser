@@ -111,6 +111,17 @@ const deadline = Number(process.env.FLECHA_HARNESS_TIMEOUT_MS) || 10 * 60 * 1000
 let finished = false;
 /** What the current step waits for, when it says; the deadline's failure names it. */
 let waitingFor;
+/** Keep individual browser waits on the same budget as the native host's wait_for command. */
+async function withinStep(operation, expected) {
+  let timer;
+  try {
+    return await Promise.race([operation, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Timed out waiting for ${expected}`)), 10_000);
+    })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 async function cleanUp() {
   if (browser && browser.exitCode === null) { browser.kill('SIGTERM'); await once(browser, 'exit'); }
   if (display.exitCode === null) { display.kill('SIGTERM'); await once(display, 'exit'); }
@@ -121,8 +132,11 @@ const watchdog = setTimeout(async () => {
   if (finished) return;
   const capture = path.join(os.tmpdir(), 'flecha-harness-timeout.png');
   try { execFileSync('import', ['-display', env.DISPLAY, '-window', 'root', capture]); } catch {}
-  if (debugSession) void evaluate(debugSession, "Promise.all([chrome.downloads.search({}), typeof chrome.flechaPrivate.getDownloadWarnings === 'function' ? chrome.flechaPrivate.getDownloadWarnings() : []]).then(([d, w]) => JSON.stringify({ downloads: d.map(x => [x.id, x.filename.split('/').pop(), x.state, x.error, x.canResume, x.bytesReceived]), warnings: w, rows: [...document.querySelectorAll('#downloads-list .download')].map(li => li.textContent), active: testState?.spaces.find(sp => sp.id === testState.activeSpaceId)?.activeTabId && testState.tabs[testState.spaces.find(sp => sp.id === testState.activeSpaceId).activeTabId]?.url }))").then((data) => console.error('DIAGNOSTIC', data), () => undefined);
   console.error(`FAIL the run took longer than ${deadline} ms (FLECHA_HARNESS_TIMEOUT_MS); last step is the last PASS above${waitingFor ? `, waiting for ${waitingFor}` : ''}; the harness display is in ${capture}`);
+  if (debugSession) {
+    const diagnostic = evaluate(debugSession, "Promise.all([chrome.downloads.search({}), typeof chrome.flechaPrivate.getDownloadWarnings === 'function' ? chrome.flechaPrivate.getDownloadWarnings() : []]).then(([d, w]) => JSON.stringify({ downloads: d.map(x => [x.id, x.filename.split('/').pop(), x.state, x.error, x.canResume, x.bytesReceived]), warnings: w, rows: [...document.querySelectorAll('#downloads-list .download')].map(li => li.textContent), active: testState?.spaces.find(sp => sp.id === testState.activeSpaceId)?.activeTabId && testState.tabs[testState.spaces.find(sp => sp.id === testState.activeSpaceId).activeTabId]?.url }))");
+    await withinStep(diagnostic, 'the browser diagnostic').then((data) => console.error('DIAGNOSTIC', data), (error) => console.error(error.message));
+  }
   await cleanUp();
   process.exit(1);
 }, deadline);
@@ -227,9 +241,7 @@ try {
   const rpc = (name, ...args) => evaluate(session, `testInvoke(${JSON.stringify(name)}, ...${JSON.stringify(args)})`);
   const stateWhere = (predicate) => evaluate(session, `testWait(${predicate})`);
   const until = async (ready, expected) => {
-    // Use the native host's wait_for budget for an individual UI condition.
     let stop = false;
-    let timer;
     const poll = async () => {
       while (!stop) {
         const result = await ready();
@@ -240,12 +252,9 @@ try {
     };
     if (!expected) return poll();
     try {
-      return await Promise.race([poll(), new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Timed out waiting for ${expected}`)), 10_000);
-      })]);
+      return await withinStep(poll(), expected);
     } finally {
       stop = true;
-      clearTimeout(timer);
     }
   };
   const domWhere = (predicate) => evaluate(session, `new Promise(resolve => { const check = () => { if ((${predicate})()) { observer.disconnect(); document.removeEventListener('focusin',check); resolve(true); } }; const observer = new MutationObserver(check); observer.observe(document.body, {subtree:true,childList:true,attributes:true}); document.addEventListener('focusin',check); check(); })`);
@@ -824,6 +833,18 @@ try {
   await rpc('toggleResponsive');
   const hiddenPair = await stateWhere("s => s.spaces.find(sp => sp.id === s.activeSpaceId).splitMode === 'responsive'");
   const hiddenMirror = hiddenPair.spaces.find(sp => sp.id === hiddenPair.activeSpaceId).split[1];
+  await rpc('activate', unrelated);
+  await active(unrelated);
+  await rpc('toggleSidebar');
+  await until(() => evaluate(session, "document.body.dataset.sidebar === 'hidden'"), 'the sidebar to hide while the split is in the background');
+  await rpc('activate', a);
+  await active(a);
+  await until(async () => {
+    const now = await responsivePanes();
+    return now && now.desktop > panes.desktop && Math.abs(now.phone - 393) <= 1;
+  }, 'the returning phone pane to have its correct width after the layout changed');
+  await rpc('toggleSidebar');
+  await until(() => evaluate(session, "document.body.dataset.sidebar === 'docked'"), 'the sidebar to dock again');
   await rpc('activate', unrelated);
   await active(unrelated);
   assert.equal(await evaluate(session, `(() => {
@@ -1641,6 +1662,25 @@ try {
   console.log('PASS a new window shows the same Space with Today tabs of its own');
   await rpc('updateSpace', firstState.activeSpaceId, { pinnedCollapsed: true });
   await domWhere("() => document.querySelector('#pinned').hidden");
+  const otherSpace = secondState.spaces.find(sp => sp.id !== secondState.activeSpaceId).id;
+  await evaluate(session, `(() => {
+    const header = document.querySelector('#pinned-header');
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData('application/x-flecha-tab', ${JSON.stringify(secondTab)});
+    const event = { dataTransfer, bubbles: true, cancelable: true };
+    header.dispatchEvent(new DragEvent('dragenter', event));
+    if (header.dispatchEvent(new DragEvent('dragover', event))) throw new Error('The first Space did not accept the drag');
+    globalThis.staleHeaderDrop = event;
+  })()`);
+  await rpc('switchSpace', otherSpace);
+  await until(() => evaluate(session, `document.querySelector('#space-title').dataset.spaceId === ${JSON.stringify(otherSpace)}`), 'the destination window to switch Spaces');
+  await evaluate(session, "document.querySelector('#pinned-header').dispatchEvent(new DragEvent('drop', staleHeaderDrop)); delete globalThis.staleHeaderDrop");
+  await rpc('ready');
+  assert.ok(todayOf(await otherWindow.state('s => true')).includes(secondTab));
+  assert.equal(await evaluate(session, `testState.spaces.find(sp => sp.id === ${JSON.stringify(otherSpace)}).pinned.some(item => item.tabId === ${JSON.stringify(secondTab)})`), false);
+  await rpc('switchSpace', firstState.activeSpaceId);
+  await until(() => evaluate(session, `document.querySelector('#space-title').dataset.spaceId === ${JSON.stringify(firstState.activeSpaceId)}`), 'the original destination Space to return');
+  console.log('PASS a reused drop zone rejects a stale cross-window hover after a Space switch');
   const droppedOnHeader = await evaluate(session, `(() => {
     const dataTransfer = new DataTransfer();
     dataTransfer.setData('application/x-flecha-tab', ${JSON.stringify(secondTab)});
@@ -1663,7 +1703,6 @@ try {
   await rpc('updateSpace', firstState.activeSpaceId, { pinnedCollapsed: false });
   await domWhere("() => !document.querySelector('#pinned').hidden");
   console.log('PASS a tab from another window drops on the folded Pinned header');
-  const otherSpace = secondState.spaces.find(sp => sp.id !== secondState.activeSpaceId).id;
   await otherWindow.rpc('switchSpace', otherSpace);
   await otherWindow.state(`s => s.activeSpaceId === ${JSON.stringify(otherSpace)} && !s.spaces.find(sp => sp.id === s.activeSpaceId).activeTabId`);
   assert.equal((await stateWhere('s => true')).activeSpaceId, firstState.activeSpaceId);

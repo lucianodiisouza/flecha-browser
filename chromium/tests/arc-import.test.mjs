@@ -14,7 +14,7 @@ const arcData = () => {
   arc.archive = parseArcArchive(arcArchive());
   return { name: 'Arc', arc, bookmarkCount: 0, history: [{ url: 'https://seen.example.com/', title: 'Seen', visits: 1, lastVisit: 1 }], warnings: [] };
 };
-const noHistory = { merge: (entries) => entries.length };
+const noHistory = { merge: (entries) => ({ added: entries.length, failed: 0 }) };
 
 test('the preview lists each Space with its tabs, whether Merge joins it, its Profile, and what stays behind', () => {
   const store = new Store({ load: () => undefined, save: () => {} });
@@ -74,6 +74,15 @@ test('bookmarks from other browsers merge into the Space named after the browser
   const again = await applyBrowserImport(data, { mode: 'merge', isolate: [] }, store, noHistory);
   assert.deepEqual({ spaces: again.spaces, merged: again.merged, bookmarks: again.bookmarks, details: again.details }, { spaces: 0, merged: 1, bookmarks: 0, details: [] });
   assert.equal(again.changed, false);
+});
+
+test('a history-only import reports failed writes without counting them as imports', async () => {
+  const store = new Store({ load: () => undefined, save: () => {} });
+  const data = { name: 'Chrome', bookmarkCount: 0, history: [{ url: 'https://example.com/' }], warnings: [] };
+  const result = await applyBrowserImport(data, { mode: 'merge', isolate: [] }, store, { merge: () => ({ added: 0, failed: 1 }) });
+  assert.equal(result.changed, false);
+  assert.equal(result.history, 0);
+  assert.deepEqual(result.warnings, ['Couldn’t import 1 page from history.']);
 });
 
 /** A one-Space sidebar whose Today holds `items` (id/object pairs) listed by `today`. */

@@ -15,6 +15,8 @@ test('typed development addresses open directly and environment badges follow ex
   }
   assert.equal(webAddress('mailto:dev@example.com'), 'mailto:dev@example.com');
   assert.equal(resolveInput('localhost:3000/my notes'), 'http://localhost:3000/my%20notes');
+  assert.equal(resolveInput('localhost:443/my notes'), 'http://localhost:443/my%20notes');
+  assert.equal(resolveInput('[0:0:0:0:0:0:0:1]:8080'), 'http://[0:0:0:0:0:0:0:1]:8080');
   assert.equal(resolveInput('203.0.113.9:3000'), 'https://203.0.113.9:3000');
   for (const broken of ['300.10.0.1', '192.168.1.010:3000', 'localhost: 3000', 'localhost:65536', 'localhost:3000@example.com']) {
     assert.equal(webAddress(broken), undefined, broken);
@@ -33,6 +35,13 @@ test('typed development addresses open directly and environment badges follow ex
   ]);
   assert.deepEqual(extra.map(({ origin }) => describe(origin, [{ id: 'extra', name: 'Extra', targets: extra }]).tone),
     ['production', 'staging', 'production', 'production', 'local']);
+  const qualified = parseTargets('3d-staging:8443\nbuild.internal.:8443\nstaging.example.com.\nhttp://localhost.:3000\nwww.qa.co.uk\n[0:0:0:0:0:0:0:1]:8080');
+  assert.deepEqual(qualified.map(({ origin }) => origin), [
+    'https://3d-staging:8443', 'https://build.internal.:8443', 'https://staging.example.com.',
+    'http://localhost.:3000', 'https://www.qa.co.uk', 'http://[::1]:8080',
+  ]);
+  assert.deepEqual(qualified.map(({ origin }) => describe(origin, [{ id: 'qualified', name: 'Qualified', targets: qualified }]).tone),
+    ['staging', 'production', 'staging', 'local', 'production', 'local']);
 });
 
 test('developer command lookup ignores inherited properties and decodes UTF-8 JWTs', () => {

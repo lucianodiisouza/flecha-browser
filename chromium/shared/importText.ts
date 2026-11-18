@@ -32,6 +32,8 @@ export function resultLine(r: ImportResult): string {
     r.spaces && plural(r.spaces, 'new Space'),
     r.merged && `${plural(r.merged, 'Space')} merged`,
     r.bookmarks && plural(r.bookmarks, 'bookmark'),
+    r.folders && plural(r.folders, 'folder'),
+    r.splits && plural(r.splits, 'split view'),
     r.archived && plural(r.archived, 'archived tab'),
     r.history && plural(r.history, 'page'),
   ].filter(Boolean).join(' · ');

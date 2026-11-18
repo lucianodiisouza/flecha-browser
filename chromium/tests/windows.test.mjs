@@ -293,12 +293,42 @@ test('closing a responsive source selects the next Today tab, and reopening a wi
   assert.equal(store.activeTabIn(second)?.id, alternate.id);
   assert.equal(store.state.tabs[mirror], undefined);
   const nextMirror = store.openResponsive(second);
+  const newer = store.addTab('https://example.com/newer', { windowId: second, activate: false });
+  store.state.tabs[alternate.id].lastActive = 1;
   store.activate(nextMirror, { windowId: second });
   store.closeWindow(second);
   assert.equal(store.state.tabs[nextMirror], undefined);
   assert.equal(store.reopenWindow().id, second);
-  assert.deepEqual(store.activeSpaceIn(second).today, [alternate.id]);
+  assert.deepEqual(new Set(store.activeSpaceIn(second).today), new Set([alternate.id, newer.id]));
   assert.equal(store.activeTabIn(second)?.id, alternate.id);
+});
+
+test('loading older state preserves saved links and skips a closed window containing only a mirror', () => {
+  const { store, first, second, personal } = twoWindows();
+  const olderWindowTab = store.addTab('https://example.com/restorable', { windowId: second });
+  store.closeWindow(second);
+  const pinned = store.addTab('https://example.com/pinned', { windowId: first });
+  const favorite = store.addTab('https://example.com/favorite', { windowId: first });
+  store.togglePin(pinned.id, first);
+  store.toggleFavorite(favorite.id, first);
+  const legacy = JSON.parse(store.serialize());
+  legacy.tabs[pinned.id].device = 'mobile';
+  legacy.tabs[favorite.id].device = 'mobile';
+  legacy.tabs.phone = { ...legacy.tabs[pinned.id], id: 'phone' };
+  const realWindowClosedAt = legacy.closedWindows[0].closedAt;
+  legacy.closedWindows.unshift({ id: 'only-phone', activeSpaceId: personal, closedAt: realWindowClosedAt + 1,
+    spaces: { [personal]: { today: ['phone'], activeTabId: 'phone' } } });
+  const restored = new Store({ load: () => legacy, save: () => {} });
+  assert.equal(restored.state.tabs.phone, undefined);
+  assert.equal(restored.lastClosedWindowAt(), realWindowClosedAt);
+  assert.equal(restored.reopenWindow().id, second);
+  assert.equal(restored.activeTabIn(second)?.id, olderWindowTab.id);
+  assert.equal(restored.state.tabs[pinned.id].url, pinned.url);
+  assert.equal(restored.state.tabs[favorite.id].url, favorite.url);
+  restored.togglePin(pinned.id, first);
+  restored.toggleFavorite(favorite.id, first);
+  assert.equal(restored.locate(pinned.id).zone, 'today');
+  assert.equal(restored.locate(favorite.id).zone, 'today');
 });
 
 test('undo restores a phone mirror only with its responsive pair', () => {

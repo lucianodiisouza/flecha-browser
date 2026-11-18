@@ -52,8 +52,10 @@ function tone(target: EnvironmentTarget): ActiveEnvironment['tone'] {
   if (/\bprod(uction)?\b/.test(label)) return 'production';
   if (/\blocal\b/.test(label)) return 'local';
   if (staging.test(label)) return 'staging';
-  const hostname = address.replace(/:\d+$/, '');
+  const hostname = address.replace(/:\d+$/, '').replace(/\.$/, '');
   if (/^(localhost|\[::1\]|0\.0\.0\.0|127(?:\.\d+){3})$|\.(localhost|test|local)$/i.test(hostname)) return 'local';
+  // Country-code registries can delegate below more than one suffix label. Use explicit labels there.
+  if (/\.[a-z]{2}$/.test(hostname)) return 'production';
   const subdomains = hostname.includes('.') ? hostname.split('.').slice(0, -2).join('.') : hostname;
   if (staging.test(subdomains)) return 'staging';
   return 'production';

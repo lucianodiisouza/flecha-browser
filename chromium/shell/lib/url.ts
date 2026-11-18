@@ -40,23 +40,23 @@ export function webAddress(raw: string, { allowBareHost = false } = {}): string 
   const bare = /^(\[[\da-f:.]+\]|[^:\s\\@%\[\]]+)(?::(\d+))?$/i.exec(authority);
   if (!bare) return undefined;
   const [, host, port] = bare;
-  const ipv4 = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(host);
-  const localHost = /^(localhost|[a-z0-9.-]+\.localhost|\[::1\])$/i.test(host);
-  const domain = /\.[a-z]{2,}$/i.test(host);
-  // Settings already expects an address. Reserve recognized URI schemes when a single label has a port.
-  const settingsHost = allowBareHost && (host.startsWith('[') ||
-    (/^[a-z][a-z0-9-]*$/i.test(host) && !(port && /^(blob|ftp|http|https|news|sms|tel|urn)$/i.test(host))));
-  if (!localHost && !ipv4 && (/\s/.test(input) || (!domain && !settingsHost))) return undefined;
-  const [first, second] = ipv4 ? host.split('.').map(Number) : [];
-  // Implicit HTTP is for loopback, the wildcard bind address and RFC 1918 networks.
-  const localIp = ipv4 && (first === 127 || first === 10 || (first === 172 && second >= 16 && second <= 31) ||
-    (first === 192 && second === 168) || host === '0.0.0.0');
-  const address = `${localHost || localIp ? 'http' : 'https'}://${input}`;
+  // In Settings the input is an address. Reserve recognized URI schemes when a single label has a port.
+  if (port && /^(blob|ftp|http|https|news|sms|tel|urn)$/i.test(host)) return undefined;
   try {
-    const url = new URL(address);
-    // WHATWG URL interprets a zero-padded IPv4 octet as octal.
-    if (ipv4 && url.hostname !== host) return undefined;
-    return /\s/.test(input) ? url.href : address;
+    const url = new URL(`https://${input}`);
+    const hostname = url.hostname.replace(/\.$/, '');
+    const ipv4 = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(hostname);
+    // WHATWG URL also accepts numeric shorthand and octal IPv4. Keep the typed endpoint unambiguous.
+    if (ipv4 && hostname !== host.replace(/\.$/, '')) return undefined;
+    const localHost = hostname === '[::1]' || /^(?:[a-z0-9.-]+\.)?localhost$/i.test(hostname);
+    const domain = /\.[a-z]{2,}$/i.test(hostname);
+    if (!localHost && !ipv4 && (/\s/.test(input) || (!domain && !allowBareHost))) return undefined;
+    const [first, second] = ipv4 ? hostname.split('.').map(Number) : [];
+    // Implicit HTTP is for loopback, the wildcard bind address and RFC 1918 networks.
+    const localIp = ipv4 && (first === 127 || first === 10 || (first === 172 && second >= 16 && second <= 31) ||
+      (first === 192 && second === 168) || hostname === '0.0.0.0');
+    const address = `${localHost || localIp ? 'http' : 'https'}://${input}`;
+    return /\s/.test(input) ? new URL(address).href : address;
   } catch {
     return undefined;
   }

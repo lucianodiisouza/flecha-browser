@@ -94,9 +94,9 @@ const api: SettingsApi = {
     const picked = await popupMenu(items);
     return picked ? invoke<TabsMenuAction | undefined>('settings:tabs-menu-run', picked.run) : undefined;
   },
-  onTabs: (cb) => {
+  onTabs: (cb, onError) => {
     on('settings:tabs', cb);
-    onReconnect(() => void api.tabs().then(cb, console.error));
+    onReconnect(() => void api.tabs().then(cb, onError));
   },
   showTab: (tabId) => invoke('settings:show-tab', tabId).then(() => undefined),
   showEmojiPanel: () => invoke('settings:emoji-panel').then(tellNotYet).then(() => undefined),

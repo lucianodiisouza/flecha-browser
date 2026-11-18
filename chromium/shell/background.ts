@@ -707,12 +707,12 @@ async function start() {
     const id = flechaIdFor(chromeId);
     const windowId = windowOf(chromeWindowId);
     if (!id || !windowId) return;
-    const space = store.activeSpaceIn(windowId);
-    const pair = space.split;
+    const pair = store.activeSpaceIn(windowId).split;
+    // An old pane can report removal before its replacement exists in Chromium.
+    if (splitViewId < 0 && (!pair?.includes(id) || !nativePairs.has(pair))) return;
     const tabs = await chrome.tabs.query({ windowId: chromeWindowId }).catch(() => undefined);
     if (!tabs || !store.hasWindow(windowId) || store.activeSpaceIn(windowId).split !== pair) return;
-    if (splitViewId < 0) {
-      if (!pair?.includes(id) || !nativePairs.has(pair)) return;
+    if (splitViewId < 0 && pair) {
       const [left, right] = pair.map((id) => tabs.find((tab) => tab.id === live.get(id)));
       if (left?.splitViewId !== undefined && left.splitViewId >= 0 && left.splitViewId === right?.splitViewId) return;
       exitSplit(windowId);
@@ -722,7 +722,7 @@ async function start() {
       .filter((t) => t.splitViewId === splitViewId)
       .sort((a, b) => a.index - b.index)
       .map((t) => flechaIdFor(t.id!));
-    const active = space.activeTabId;
+    const active = store.activeSpaceIn(windowId).activeTabId;
     if (members.length !== 2 || !members.every(Boolean) || !active || !members.includes(active)) return;
     if (pair && members.every((m) => pair.includes(m!))) {
       nativePairs.add(pair);
@@ -730,7 +730,7 @@ async function start() {
     }
     if (pair && !nativePairs.has(pair)) return;
     const other = members.find((m) => m !== active)!;
-    store.splitWith(other, members[0] === other ? 'left' : 'right', windowId);
+    store.splitWith(other, members[0] === other ? 'left' : 'right', windowId, active);
   }
 
   function exitSplit(windowId = here()) {
@@ -835,11 +835,13 @@ async function start() {
   function onActivated({ tabId, windowId: chromeWindowId }: { tabId: number; windowId: number }) {
     // Any tab switch (Control-Tab, a click, Flecha's own) closes the window's command bar, as in Arc.
     closePaletteIn(chromeWindowId);
-    if (ourActivations.delete(tabId)) return;
+    const ours = ourActivations.delete(tabId);
     const id = flechaIdFor(tabId);
     const windowId = windowOf(chromeWindowId);
     if (!id || !windowId || movingFrom.has(chromeWindowId)) return;
-    if (store.activeSpaceIn(windowId).activeTabId !== id) store.activate(id, { windowId });
+    if (!ours && store.activeSpaceIn(windowId).activeTabId !== id) store.activate(id, { windowId });
+    const space = store.activeSpaceIn(windowId);
+    if (space.splitMode === 'responsive' && space.split?.includes(id)) broadcastTo(chromeWindowId, 'split-layout');
   }
 
   function onRemoved(chromeId: number, info: { isWindowClosing: boolean }) {
@@ -1123,6 +1125,14 @@ async function start() {
       const frame = frameOf(chromeWindowId);
       if (on) frame.overlays.add(String(name));
       else frame.overlays.delete(String(name));
+      sendFrame(chromeWindowId);
+    },
+    'frame:reconnect': (overlays: unknown) => {
+      const chromeWindowId = callerWindow();
+      if (chromeWindowId === undefined || !windowOf(chromeWindowId) || !Array.isArray(overlays)) return;
+      const frame = frameOf(chromeWindowId);
+      frame.overlays = new Set(overlays.filter((name): name is string => typeof name === 'string'));
+      frame.paletteOpen = false;
       sendFrame(chromeWindowId);
     },
     togglePin: spacesOnly((id: string) => store.togglePin(id, here())),

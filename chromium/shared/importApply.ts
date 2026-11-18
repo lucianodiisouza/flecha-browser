@@ -139,9 +139,9 @@ export async function applyBrowserImport(
   data: BrowserImportData,
   options: ImportOptions,
   store: Pick<Store, 'importSpaces'>,
-  history: { merge(entries: HistoryEntry[]): number | Promise<number> },
+  history: { merge(entries: HistoryEntry[]): Promise<{ added: number; failed: number }> | { added: number; failed: number } },
 ): Promise<ImportResult> {
-  const result: ImportResult = { changed: false, spaces: 0, merged: 0, bookmarks: 0, history: 0, archived: 0, warnings: [...data.warnings], details: [] };
+  const result: ImportResult = { changed: false, spaces: 0, merged: 0, bookmarks: 0, folders: 0, splits: 0, history: 0, archived: 0, warnings: [...data.warnings], details: [] };
   if (options.spacesKey !== undefined && options.spacesKey !== spacesKey(data)) {
     result.warnings.push(`${data.name}’s Spaces changed since the preview, so nothing was imported. Look at the preview again.`);
     return result;
@@ -149,11 +149,15 @@ export async function applyBrowserImport(
   const spaces = spacesOf(data).map((s, i): ImportSpace => ({ ...s, isolated: options.isolate.includes(i) }));
   if (spaces.length || data.arc) {
     const out = store.importSpaces(spaces, { mode: options.mode, favorites: data.arc?.favorites, archive: data.arc?.archive });
-    Object.assign(result, { spaces: out.spaces, merged: out.merged, bookmarks: out.tabs, archived: out.archived });
+    Object.assign(result, { spaces: out.spaces, merged: out.merged, bookmarks: out.tabs, folders: out.folders, splits: out.splits, archived: out.archived });
     result.changed = out.spaces + out.tabs + out.folders + out.splits + out.archived > 0;
     result.details = skippedLines(data, out.pairs, out.archiveDropped);
   }
-  if (data.history.length) result.history = await history.merge(data.history);
+  if (data.history.length) {
+    const { added, failed } = await history.merge(data.history);
+    result.history = added;
+    if (failed) result.warnings.push(`Couldn’t import ${plural(failed, 'page')} from history.`);
+  }
   result.changed ||= result.history > 0;
   return result;
 }

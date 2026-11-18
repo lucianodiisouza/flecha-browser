@@ -109,6 +109,8 @@ export interface DetectedBrowser {
 export interface ImportResult {
   /** Whether anything was added, including an empty folder or a split. */
   changed: boolean;
+  folders: number;
+  splits: number;
   /** New Spaces. */
   spaces: number;
   /** Existing Spaces that imported tabs were merged into. */
@@ -494,7 +496,7 @@ export interface SettingsApi {
   /** The native menu for tabs (`tabIds`) or one folder: Move to…, Delete and, with `context`, Rename and Edit Address. */
   tabsMenu(request: { tabIds?: string[]; folderId?: string; context?: boolean }): Promise<TabsMenuAction | undefined>;
   /** The pane redraws whenever the sidebar changes something. */
-  onTabs(cb: (view: TabsView) => void): void;
+  onTabs(cb: (view: TabsView) => void, onError: () => void): void;
   /** Opens a tab in the browser window. */
   showTab(tabId: string): Promise<void>;
   /** The macOS emoji picker, for a Space's icon. */

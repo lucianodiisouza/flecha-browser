@@ -85,6 +85,9 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
   const api = window.settings;
   const pane = document.querySelector<HTMLElement>('.pane[data-pane="tabs-spaces"]')!;
   const tree = document.getElementById('tm-tree')!;
+  const retryLoad = el('button', { class: 'button' }, 'Retry');
+  const loadError = el('div', { class: 'tm-empty', role: 'status', hidden: true }, 'Couldn’t load Tabs & Spaces. ', retryLoad);
+  tree.before(loadError);
   const search = document.getElementById('tm-search') as HTMLInputElement;
   const selectionBar = document.getElementById('tm-selection')!;
   const selectionCount = document.getElementById('tm-selection-count')!;
@@ -458,6 +461,7 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
   }
 
   function show(next: TabsView) {
+    loadError.hidden = true;
     if (editing || drag) {
       pending = next;
       return;
@@ -920,6 +924,9 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
   window.addEventListener('resize', placeSpaceEditor);
   for (const item of document.querySelectorAll<HTMLElement>('.nav-item')) item.addEventListener('click', closeSpaceEditor);
 
-  api.onTabs(show);
-  void api.tabs().then(show, console.error);
+  const failed = () => { loadError.hidden = false; };
+  const load = () => void api.tabs().then(show, failed);
+  retryLoad.onclick = load;
+  api.onTabs(show, failed);
+  load();
 }

@@ -120,6 +120,7 @@ export class Store {
   constructor(private persistence: StatePersistence) {
     this.state = this.load() ?? this.initialState();
     if (!this.state.windows.length) this.state.windows.push(this.newWindow());
+    this.normalizePhoneTabs();
   }
 
   onChange(fn: (change: StoreChange) => void) {
@@ -168,7 +169,11 @@ export class Store {
     const i = this.state.windows.findIndex((w) => w.id === windowId);
     if (i < 0 || this.state.windows.length === 1) return [];
     const win = this.state.windows[i];
-    for (const ws of Object.values(win.spaces)) this.discardResponsiveMirror(ws);
+    for (const ws of Object.values(win.spaces)) {
+      const desktop = ws.splitMode === 'responsive' && ws.activeTabId === ws.split?.[1] ? ws.split?.[0] : undefined;
+      this.discardResponsiveMirror(ws);
+      if (desktop && ws.today.includes(desktop)) ws.activeTabId = desktop;
+    }
     this.state.windows.splice(i, 1);
     // Pinned tabs and favorites it showed stay in the other windows' sidebars; only its Today tabs go with it.
     const closed: ClosedWindow = { ...win, spaces: {}, closedAt: Date.now() };
@@ -205,15 +210,6 @@ export class Store {
     // Its Spaces may have been deleted since.
     for (const spaceId of Object.keys(win.spaces)) if (!this.savedSpace(spaceId)) delete win.spaces[spaceId];
     if (!this.savedSpace(win.activeSpaceId)) win.activeSpaceId = this.state.spaces[0].id;
-    // Earlier versions could save a generated phone in a closed window without its split.
-    for (const ws of Object.values(win.spaces)) {
-      for (const id of [...ws.today]) {
-        if (this.state.tabs[id]?.device !== 'mobile') continue;
-        ws.today.splice(ws.today.indexOf(id), 1);
-        delete this.state.tabs[id];
-      }
-      if (ws.activeTabId && !ws.today.includes(ws.activeTabId)) ws.activeTabId = ws.today[0];
-    }
     this.state.windows.unshift(win);
     this.changed();
     return win;
@@ -1008,6 +1004,7 @@ export class Store {
   replaceState(state: BrowserState): boolean {
     if (!state?.spaces?.length || !state.tabs || !state.windows?.length) return false;
     this.state = state;
+    this.normalizePhoneTabs();
     // Undo steps name places in the state they came from.
     this.undoSteps = [];
     this.changed();
@@ -1200,6 +1197,42 @@ export class Store {
   }
 
   // ---- internals ------------------------------------------------------------------
+
+  /** Preserves saved links and removes phone mirrors that have no live responsive pair. */
+  private normalizePhoneTabs() {
+    const mobile = Object.values(this.state.tabs).filter((tab) => tab.device === 'mobile');
+    if (!mobile.length) return;
+    const shared = new Set([...this.state.favorites, ...this.state.spaces.flatMap((space) => pinnedTabIds(space.pinned))]);
+    const mirrors = new Set<string>();
+    for (const win of this.state.windows) {
+      for (const ws of Object.values(win.spaces)) {
+        const desktop = ws.split?.[0], phone = ws.split?.[1];
+        if (ws.splitMode !== 'responsive' || !desktop || !phone) continue;
+        if (!shared.has(phone) && this.state.tabs[desktop] && ws.today.includes(phone) && this.state.tabs[phone]?.device === 'mobile') {
+          mirrors.add(phone);
+        } else {
+          delete ws.split;
+          delete ws.splitMode;
+          if (ws.activeTabId === phone) ws.activeTabId = desktop;
+        }
+      }
+    }
+    for (const tab of mobile) {
+      if (shared.has(tab.id)) delete tab.device;
+      else if (!mirrors.has(tab.id)) {
+        this.detachEverywhere(tab.id);
+        delete this.state.tabs[tab.id];
+      }
+    }
+    this.forgetMissingActive();
+    this.state.closedWindows = this.state.closedWindows.filter((win) => {
+      for (const [spaceId, ws] of Object.entries(win.spaces)) {
+        if (!ws.today.length) delete win.spaces[spaceId];
+        else if (!ws.activeTabId || !ws.today.includes(ws.activeTabId)) ws.activeTabId = ws.today[0];
+      }
+      return Object.keys(win.spaces).length > 0;
+    });
+  }
 
   /** A generated phone tab belongs to its responsive split. */
   private discardResponsiveMirror(ws: WindowSpace) {

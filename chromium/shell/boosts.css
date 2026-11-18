@@ -130,7 +130,7 @@ main header {
   font-family: var(--mono);
 }
 
-#status.error {
+#status.error, #list-error {
   color: var(--red);
   white-space: pre-wrap;
 }

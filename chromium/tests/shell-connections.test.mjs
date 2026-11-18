@@ -81,6 +81,75 @@ test('worker restart resumes shell messages and a bad payload leaves other repli
   assert.equal(attempts, attemptsBeforeInvalidation);
 });
 
+test('Boosts serializes saves and keeps the editor address aligned with a retained draft', async (t) => {
+  const messages = [];
+  const port = { onDisconnect: event(), onMessage: event(), postMessage: (message) => messages.push(message) };
+  const nodes = new Map();
+  const element = () => ({
+    value: '', classList: { toggle() {} }, addEventListener() {}, append() {}, replaceChildren() {}, focus() {},
+  });
+  const node = (id) => {
+    if (!nodes.has(id)) nodes.set(id, element());
+    return nodes.get(id);
+  };
+  const handlers = new Map();
+  const location = { hash: '#first.css', pathname: '/boosts.html', search: '' };
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const globals = {
+    chrome: { runtime: { connect: () => port } },
+    document: { getElementById: node, querySelector: node, createElement: element, addEventListener() {} },
+    window: { addEventListener: (type, fn) => handlers.set(type, fn) },
+    location,
+    history: { replaceState: (_state, _title, hash) => { location.hash = hash; } },
+    confirm: () => true,
+  };
+  Object.assign(globalThis, globals);
+  t.after(() => {
+    for (const key of Object.keys(globals)) delete globalThis[key];
+  });
+  await loadModule('chromium/shell/boostsPage.ts');
+  const file = { name: 'first.css', host: 'first', kind: 'styles', code: 'original' };
+  const reply = (message, value) => port.onMessage.emit({ type: 'result', id: message.id, value });
+  reply(messages.find(({ name }) => name === 'boosts:get'), file);
+  await nextTurn();
+  const listRead = messages.find(({ name }) => name === 'boosts:list');
+  const editorStatus = node('status').textContent;
+  port.onMessage.emit({ type: 'result', id: listRead.id, error: 'Couldn’t read the list' });
+  await nextTurn();
+  assert.equal(node('list-error').hidden, false);
+  assert.equal(node('status').textContent, editorStatus);
+  port.onMessage.emit({ type: 'event', name: 'boosts:changed', args: [] });
+  reply(messages.filter(({ name }) => name === 'boosts:list').at(-1), [file]);
+  await nextTurn();
+  assert.equal(node('list-error').hidden, true);
+  const code = node('code');
+  const button = node('save');
+  const sentSaves = () => messages.filter(({ name }) => name === 'boosts:save');
+  code.value = 'first edit';
+  button.onclick();
+  code.value = 'second edit';
+  button.onclick();
+  await nextTurn();
+  assert.deepEqual(sentSaves().map(({ args }) => args[1]), ['first edit']);
+  reply(sentSaves()[0], { ...file, code: 'first edit' });
+  await nextTurn();
+  assert.deepEqual(sentSaves().map(({ args }) => args[1]), ['first edit', 'second edit']);
+  reply(sentSaves()[1], { ...file, code: 'second edit' });
+  await nextTurn();
+  code.value = 'first edit';
+  let beforeUnload = false;
+  handlers.get('beforeunload')({ preventDefault: () => { beforeUnload = true; } });
+  assert.equal(beforeUnload, true, 'reverting to the first save still differs from the second');
+
+  location.hash = '#second.css';
+  handlers.get('hashchange')();
+  code.value = 'retained draft';
+  reply(messages.find(({ args }) => args[0] === 'second.css'), { ...file, name: 'second.css' });
+  await nextTurn();
+  assert.equal(code.value, 'retained draft');
+  assert.equal(location.hash, '#first.css');
+});
+
 test('the agent restores focus and can replay console logs after idle on a shared debugger', async (t) => {
   const calls = [];
   const results = [];

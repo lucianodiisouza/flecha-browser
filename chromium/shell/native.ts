@@ -322,6 +322,7 @@ function registerSplitRatio(ctx: NativeContext) {
     }
     const space = store.activeSpaceIn(windowId);
     const split = space.split;
+    if (space.splitMode === 'responsive' && (!space.activeTabId || !split?.includes(space.activeTabId))) return;
     const left = split && chromeTabId(split[0]);
     const right = split && chromeTabId(split[1]);
     if (left === undefined || right === undefined) {

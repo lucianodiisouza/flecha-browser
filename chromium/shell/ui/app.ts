@@ -9,6 +9,7 @@ import { isEnter } from '../lib/keys';
 import { isUndoKey } from '../lib/undo';
 import { spaceDropBefore } from '../lib/spaceOrder';
 import { canDropToSplit, pageSplitTarget } from '../lib/splitDrop';
+import { onReconnect } from '../client';
 import { EMPTY_ACTIONS, EMPTY_TABS, type Match, type ResultKind, displayUrl, historyQuery, inlineCompletion, matchQuality, rank, score } from '../lib/commandBar';
 import { suggestable, suggestionRequests } from '../lib/suggest';
 import { searchUrl, webAddress } from '../lib/url';
@@ -27,8 +28,8 @@ declare global {
 }
 
 const api = window.flecha;
-/** Where this page is shown: the Electron window (unset), or the Chromium build's side panel or new tab page. */
-const surface = document.documentElement.dataset.surface as 'panel' | 'newtab' | undefined;
+/** The window frame, side panel or new tab page. */
+const surface = document.documentElement.dataset.surface;
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const DRAG_TYPE = 'application/x-flecha-tab';
 const SPACE_DRAG_TYPE = 'application/x-flecha-space';
@@ -207,6 +208,7 @@ function updatePinnedVisibility(space: Space) {
 
 /** What a blank Space offers: search, the sites you go back to most, and your dev servers. */
 let topSitesFetched = 0;
+let fetchingTopSites = false;
 let topSites: HistoryEntry[] = [];
 function renderEmptyState(s: UiState, space: Space, show: boolean) {
   const empty = $('empty-state');
@@ -217,12 +219,13 @@ function renderEmptyState(s: UiState, space: Space, show: boolean) {
   $('empty-title').textContent = hour < 5 ? 'Up late?' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   $('empty-space').replaceChildren(h('span', { class: 'empty-space-emoji' }, space.emoji ?? ''), h('span', {}, space.name));
   // History changes as you browse, so the tiles are fetched each time the page becomes empty.
-  if (wasHidden || Date.now() - topSitesFetched > 60_000) {
-    topSitesFetched = Date.now();
-    api.topSites().then((sites) => {
+  if (!fetchingTopSites && (wasHidden || Date.now() - topSitesFetched > 60_000)) {
+    fetchingTopSites = true;
+    void api.topSites().then((sites) => {
+      topSitesFetched = Date.now();
       topSites = sites;
       if (state) render(state);
-    });
+    }, () => { topSitesFetched = 0; }).finally(() => { fetchingTopSites = false; });
   }
   // Drawn on every update so icons appear as they are fetched.
   $('empty-top').hidden = !topSites.length;
@@ -657,7 +660,11 @@ function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget | undefined) 
 }
 
 function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-over', splitTarget?: string) {
-  const clear = () => el.classList.remove(hoverClass, 'drop-split-left', 'drop-split-right');
+  let hoveredSpaceId: string | undefined;
+  const clear = () => {
+    hoveredSpaceId = undefined;
+    el.classList.remove(hoverClass, 'drop-split-left', 'drop-split-right');
+  };
   const currentTarget = () => (!draggedTab || draggedTab.spaceId === state?.activeSpaceId) &&
     (!target.spaceId || target.spaceId === state?.activeSpaceId);
   const splitSide = (e: DragEvent): 'left' | 'right' | undefined => {
@@ -675,21 +682,23 @@ function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-ove
     clear();
     if (!currentTarget()) return;
     e.preventDefault();
+    hoveredSpaceId = state?.activeSpaceId;
     const side = splitSide(e);
     el.classList.add(side ? `drop-split-${side}` : hoverClass);
   });
   el.addEventListener('dragleave', clear);
   el.addEventListener('drop', (e) => {
+    const spaceId = hoveredSpaceId;
     clear();
     const id = e.dataTransfer?.getData(DRAG_TYPE);
     if (!id) return;
     e.preventDefault();
     e.stopPropagation();
-    if (!currentTarget()) return;
+    if (!spaceId || spaceId !== state?.activeSpaceId || !currentTarget()) return;
     const side = splitSide(e);
     hideSplitDrop();
-    if (side && splitTarget && state) api.dropToSplit(id, side, { kind: 'row', tabId: splitTarget, spaceId: state.activeSpaceId });
-    else api.moveTab(id, { ...target, spaceId: state?.activeSpaceId });
+    if (side && splitTarget) api.dropToSplit(id, side, { kind: 'row', tabId: splitTarget, spaceId });
+    else api.moveTab(id, { ...target, spaceId });
   });
 }
 
@@ -1797,8 +1806,7 @@ pinnedSection.addEventListener('dragenter', (event) => {
   if (!draggedTab && event.dataTransfer?.types.includes(DRAG_TYPE)) externalPinExpansion(true);
 });
 pinnedSection.addEventListener('dragleave', (event) => {
-  const next = event.relatedTarget instanceof Node ? event.relatedTarget : document.elementFromPoint(event.clientX, event.clientY);
-  if (!pinnedSection.contains(next)) externalPinExpansion(false);
+  if (!(event.relatedTarget instanceof Node) || !pinnedSection.contains(event.relatedTarget)) externalPinExpansion(false);
 });
 pinnedSection.addEventListener('drop', () => externalPinExpansion(false), true);
 $('btn-toggle-pinned').onclick = () => {
@@ -1820,4 +1828,8 @@ api.onRenameTab(renameTab);
 api.onEditHomeUrl(editHomeUrl);
 api.onPeek(renderPeek);
 api.onDownloads(renderDownloads);
+onReconnect(() => {
+  if (!palette.hidden) hidePalette();
+  if (surface === 'window') api.setTabDragging(!splitDrop.hidden);
+});
 api.ready();

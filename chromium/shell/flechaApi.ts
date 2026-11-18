@@ -5,7 +5,7 @@
 import type { FlechaApi, PaletteMode, UiState } from '../shared/types';
 import { spaceTint } from './lib/spaceTint';
 import { SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth } from '../shared/sidebarWidth';
-import { cmd, invoke, on } from './client';
+import { cmd, invoke, on, onReconnect } from './client';
 import { confirmDeleteSpace, copy, hasWindowOverlay, setupWindowUi, showMenu } from './windowUi';
 import { incognito } from './incognito';
 import { fetchSuggestions, suggestable } from './lib/suggest';
@@ -29,7 +29,10 @@ let lastState: UiState | undefined;
 function emitState(state: UiState) {
   lastState = state;
   // A width you finished dragging to is the saved one now.
-  if (resizing === state.sidebarWidth) resizing = undefined;
+  if (resizingCommitted && resizing === state.sidebarWidth) {
+    resizing = undefined;
+    resizingCommitted = false;
+  }
   const shown = { ...state, tint: spaceTint(state.tint, systemDark.matches), faviconUrls: siteIcons };
   for (const cb of stateListeners) cb(shown);
   applyFrame();
@@ -48,6 +51,13 @@ let frameState: { sidebar: chrome.flechaPrivate.SidebarMode; overlay: boolean; s
 /** The width the sidebar is being dragged to, until the saved state has it. */
 let resizing: number | undefined;
 const windowId = surface === 'window' && framed ? chrome.flechaPrivate.getWindowId() : undefined;
+let resizingCommitted = false;
+onReconnect(() => {
+  if (!resizingCommitted) return;
+  resizing = undefined;
+  resizingCommitted = false;
+  applyFrame();
+});
 const measure = typeof chrome.flechaPrivate?.setSplitRatio === 'function' ? () => void invoke('frame:resized').catch(() => undefined) : undefined;
 let measuredLayout: string | undefined;
 if (windowId && measure) {
@@ -62,7 +72,7 @@ function applyFrame() {
   const sidebarWidth = resizing ?? lastState.sidebarWidth ?? SIDEBAR_DEFAULT_WIDTH;
   document.documentElement.style.setProperty('--sidebar', `${sidebarWidth}px`);
   const { sidebarInPageFullscreen, sidebar } = frameState;
-  const overlay = frameState.overlay || hasWindowOverlay();
+  const overlay = frameState.overlay || hasWindowOverlay() || document.getElementById('split-drop')?.hidden === false;
   const layout = `${sidebar}:${sidebarWidth}:${sidebarInPageFullscreen}`;
   void windowId.then((id) => {
     const apply = chrome.flechaPrivate.setFrame({ sidebar, overlay, background, sidebarWidth }, id);
@@ -174,8 +184,9 @@ const api: FlechaApi = {
   toggleSidebar: cmd('toggleSidebar'),
   resizeSidebar: (width, done) => {
     resizing = clampSidebarWidth(width);
+    resizingCommitted = done && cmd('setSidebarWidth')(resizing);
+    if (done && !resizingCommitted) resizing = undefined;
     applyFrame();
-    if (done) cmd('setSidebarWidth')(resizing);
   },
   setSidebarPeek: cmd('setSidebarPeek'),
   // The page can write the clipboard itself; the background has no document to do it from.

@@ -12,7 +12,7 @@ import type { DetectedBrowser, ImportOptions, ImportPreview, ImportResult, UiSta
 import { hasImport, previewLines, resultLine } from '../shared/importText';
 import { cmd, invoke, on, onReconnect } from './client';
 import type { MenuRun } from './protocol';
-import { askDialog, popupMenu, type MenuEntry, type MenuOptions } from './settingsUi';
+import { askDialog, popupMenu, toast, type MenuEntry, type MenuOptions } from './settingsUi';
 import { DELETE_SPACE_DETAIL } from './lib/undo';
 
 const framed = typeof chrome.flechaPrivate?.setFrame === 'function';
@@ -24,7 +24,7 @@ const overlays = new Map<string, number>();
 export const hasWindowOverlay = () => overlays.size > 0;
 on('frame', (state: { overlay: boolean }) => (overlaid = state.overlay));
 onReconnect(() => {
-  for (const name of overlays.keys()) cmd('setOverlay')(name, true);
+  if (windowId) cmd('frame:reconnect')([...overlays.keys()]);
 });
 
 /** Resolves on the next resize (the frame growing), or after `ms` if none comes. */
@@ -74,7 +74,10 @@ export function setupWindowUi(h: WindowUiHooks) {
 
 /** Asks for the background's menu `name` about `id`, shows it at the pointer and runs the pick. */
 export async function showMenu(name: 'tabMenu' | 'spaceMenu', id: string) {
-  const items = await invoke<MenuEntry<MenuRun>[] | undefined>(name, id);
+  const items = await invoke<MenuEntry<MenuRun>[] | undefined>(name, id).catch(() => {
+    toast('Couldn’t open this menu. Try again.');
+    return undefined;
+  });
   if (!items?.length) return;
   const picked = await overWindow('menu', () => popupMenu(items));
   if (picked) await runMenuItem(picked.run);
@@ -160,7 +163,9 @@ export async function importFromBrowser() {
       cancelId: buttons.length - 1,
     });
     try {
-      const picked = answer < browsers.length ? browserSource(browsers[answer]) : buttons[answer] === BOOKMARKS_FILE ? await bookmarksFileSource() : undefined;
+      let picked: ImportSource | undefined;
+      if (answer < browsers.length) picked = browserSource(browsers[answer]);
+      else if (buttons[answer] === BOOKMARKS_FILE) picked = await bookmarksFileSource();
       if (!picked) return;
       const preview = await picked.preview();
       if (!hasImport(preview)) return note(`Nothing to import from ${picked.name}`, preview.warnings.join('\n') || 'No bookmarks or history were found.');
