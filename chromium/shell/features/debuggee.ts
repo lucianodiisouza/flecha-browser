@@ -14,10 +14,14 @@ type SharedReset = { done: Promise<void>; canceled?: boolean };
 const resetting = new Map<number, Map<symbol, SharedReset>>();
 const detachListeners: Array<(tabId: number, reason: string) => void> = [];
 
+function retireAttachment(tabId: number) {
+  for (const reset of resetting.get(tabId)?.values() ?? []) reset.canceled = true;
+  holders.delete(tabId);
+}
+
 chrome.debugger.onDetach.addListener((source, reason) => {
   if (source.tabId === undefined) return;
-  for (const reset of resetting.get(source.tabId)?.values() ?? []) reset.canceled = true;
-  holders.delete(source.tabId);
+  retireAttachment(source.tabId);
   for (const fn of detachListeners) fn(source.tabId, reason);
 });
 
@@ -106,7 +110,7 @@ export async function resetDebugger(tabId: number, holder: Holder) {
   const pending = attaching.get(tabId);
   if (pending) await pending.catch(() => undefined);
   if (holders.get(tabId) !== set || set.get(holder) !== claim) return;
-  holders.delete(tabId);
+  retireAttachment(tabId);
   await detach(tabId);
   for (const fn of detachListeners) fn(tabId, 'reset');
 }

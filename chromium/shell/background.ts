@@ -710,16 +710,19 @@ async function start() {
         store.windowView(windowId).spaces.some((space) => space.split === pair);
       const sameWindow = (...tabs: chrome.tabs.Tab[]) => tabs.every((tab) => tab.windowId === chromeWindowId);
       const currentTabs = () => Promise.all([chrome.tabs.get(left), chrome.tabs.get(right)]);
+      const adjacent = ([first, second]: [chrome.tabs.Tab, chrome.tabs.Tab]) => second.index === first.index + 1;
       const position = async () => {
         if (!stillWanted()) return 'abandoned';
         try {
-          if (!sameWindow(...await currentTabs()) || !stillWanted()) return 'abandoned';
+          const before = await currentTabs();
+          if (!sameWindow(...before) || !stillWanted()) return 'abandoned';
+          if (adjacent(before)) return 'ready';
           await chrome.tabs.move(left, { index: -1 });
           if (!stillWanted() || !sameWindow(await chrome.tabs.get(right)) || !stillWanted()) return 'abandoned';
           await chrome.tabs.move(right, { index: -1 });
-          const [first, second] = await currentTabs();
-          if (!sameWindow(first, second)) return 'abandoned';
-          return second.index === first.index + 1 ? 'ready' : 'retry';
+          const after = await currentTabs();
+          if (!sameWindow(...after)) return 'abandoned';
+          return adjacent(after) ? 'ready' : 'retry';
         } catch (error) {
           console.warn('Flecha shell: could not position split tabs', error);
           return 'retry';

@@ -54,10 +54,14 @@ export {};
 let files: Record<string, string> = {};
 let compiled: Record<string, CompiledBoost> = {};
 let loading: Promise<void> | undefined;
+let notifySavedBoostsLoaded: () => void;
+const savedBoostsLoaded = new Promise<void>((resolve) => { notifySavedBoostsLoaded = resolve; });
 async function readStoredBoosts() {
   const saved = await chrome.storage.local.get([STORE_KEY, COMPILED_KEY]);
   files = (saved[STORE_KEY] as typeof files | undefined) ?? {};
   compiled = (saved[COMPILED_KEY] as typeof compiled | undefined) ?? {};
+  registered = registerUserScripts();
+  notifySavedBoostsLoaded();
 }
 
 function loadBoosts() {
@@ -120,7 +124,6 @@ async function registerUserScripts(): Promise<boolean> {
   const api = userScripts();
   if (!api) return false;
   try {
-    await api.unregister();
     const scripts = Object.keys(files)
       .map((name) => ({ name, parsed: parseBoostName(name), code: compiled[name]?.code }))
       .filter((s) => s.parsed?.kind === 'script' && s.code)
@@ -131,6 +134,7 @@ async function registerUserScripts(): Promise<boolean> {
         world: 'MAIN' as chrome.userScripts.ExecutionWorld,
         runAt: 'document_end' as chrome.extensionTypes.RunAt,
       }));
+    await api.unregister();
     if (scripts.length) await api.register(scripts);
     return true;
   } catch (err) {
@@ -139,7 +143,7 @@ async function registerUserScripts(): Promise<boolean> {
   }
 }
 
-let registered: Promise<boolean> = loadBoosts().then(registerUserScripts, () => false);
+let registered = Promise.resolve(false);
 
 const matching = (url: string, kind: BoostKind) =>
   Object.keys(files).filter((name) => {
@@ -235,7 +239,8 @@ function logBoostError(error: unknown) {
 
 // ---- what the rest of the shell uses ----------------------------------------
 
-export async function ready() {
+export async function ready(onLoaded?: () => void) {
+  if (onLoaded) void savedBoostsLoaded.then(onLoaded).catch(logBoostError);
   await loadBoosts();
 }
 

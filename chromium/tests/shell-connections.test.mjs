@@ -271,31 +271,57 @@ test('a Boost save returns its own result before the queued deletion updates Chr
 test('a failed Boost startup read is retried before saving or registering scripts', async (t) => {
   let reads = 0;
   const startup = Promise.withResolvers();
-  const files = { boosts: { 'old.example.css': 'body {}' } };
-  const register = t.mock.fn(async () => {});
+  const recovery = Promise.withResolvers();
+  const registration = Promise.withResolvers();
+  const existing = 'old.example.ts';
+  const files = { boosts: { [existing]: 'old source' }, boostsCompiled: { [existing]: { code: 'old built' } } };
+  const unregister = t.mock.fn(async () => {});
+  const register = t.mock.fn(async () => registration.promise);
+  const executeScript = t.mock.fn(async () => [{ result: 'ran' }]);
+  const navigation = event();
   globalThis.chrome = {
     extension: { inIncognitoContext: false },
     storage: { local: {
       async get() {
         if (++reads === 1) return startup.promise;
+        await recovery.promise;
         return structuredClone(files);
       },
       async set(values) { Object.assign(files, structuredClone(values)); },
     } },
     tabs: { query: async () => [], onRemoved: event() },
-    webNavigation: { onCommitted: event(), onDOMContentLoaded: event() },
+    webNavigation: { onCommitted: event(), onDOMContentLoaded: navigation },
     debugger: { onDetach: event() },
-    userScripts: { getScripts: async () => [], unregister: async () => {}, register },
+    scripting: { executeScript },
+    userScripts: { getScripts: async () => [], unregister, register },
   };
   t.after(() => delete globalThis.chrome);
   const boosts = await loadModule('chromium/shell/features/boosts.ts', { fresh: true });
-  const failed = assert.rejects(boosts.ready(), /storage is starting/);
+  const loaded = t.mock.fn(() => boosts.boostedHosts());
+  const failed = assert.rejects(boosts.ready(loaded), /storage is starting/);
   startup.reject(new Error('Boost storage is starting'));
   await failed;
+  navigation.emit({ tabId: 1, frameId: 0, url: 'https://old.example/' });
+  const listing = boosts.list();
+  await nextTurn();
+  assert.equal(unregister.mock.callCount(), 0);
+  assert.equal(register.mock.callCount(), 0);
+  assert.equal(loaded.mock.callCount(), 0);
+  recovery.resolve();
+  assert.deepEqual((await listing).map(({ name }) => name), [existing]);
+  await nextTurn();
+  assert.deepEqual(loaded.mock.calls.map(({ result }) => result), [['old.example']]);
+  assert.equal(unregister.mock.callCount(), 1);
+  assert.deepEqual(register.mock.calls[0].arguments[0].map(({ id }) => id), [existing]);
+  assert.equal(executeScript.mock.callCount(), 0, 'navigation waits for native registration');
+  registration.resolve();
+  await nextTurn();
+  assert.equal(executeScript.mock.callCount(), 0, 'registered scripts do not use the fallback');
   const name = 'new.example.ts';
   assert.equal((await boosts.save(name, 'source', { build: { code: 'built' } })).code, 'source');
-  assert.deepEqual(files.boosts, { 'old.example.css': 'body {}', [name]: 'source' });
-  assert.deepEqual(register.mock.calls[0].arguments[0].map(({ id }) => id), [name]);
+  assert.deepEqual(files.boosts, { [existing]: 'old source', [name]: 'source' });
+  assert.deepEqual(register.mock.calls[1].arguments[0].map(({ id }) => id), [existing, name]);
+  assert.equal(loaded.mock.callCount(), 1);
 });
 
 test('Boosts serializes saves and keeps the editor address aligned with a retained draft', async (t) => {
@@ -873,7 +899,7 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   inputFailures.clear();
 
   inputFailures.set('rawKeyDown', 'Press failed before release stalled');
-  keyUp = Promise.withResolvers();
+  const stalledRelease = keyUp = Promise.withResolvers();
   port.onMessage.emit({ type: 'tool', id: 101, name: 'press_key', args: { tabId: phone, key: 'Escape' } });
   await nextTurn();
   assert.deepEqual(calls.slice(-2), [['rawKeyDown'], ['keyUp']]);
@@ -901,6 +927,11 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   t.mock.timers.tick(100);
   await nextTurn();
   assert.ok(results.some(({ id, result }) => id === 104 && !result.isError));
+  stalledRelease.reject(new Error('The old debugger replied after detach'));
+  await nextTurn();
+  port.onMessage.emit({ type: 'tool', id: 105, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  assert.ok(results.some(({ id, result }) => id === 105 && !result.isError));
 
   readPending = Promise.withResolvers();
   detachPending = Promise.withResolvers();
@@ -1031,15 +1062,18 @@ test('canceling a debugger attachment invalidates shared cleanup even while a re
   assert.equal(await hold(12, 'responsive'), true);
   const cleanup = Promise.withResolvers();
   const leaving = release(12, 'agent', () => cleanup.promise);
-  const renewing = hold(12, 'agent');
+  const renewed = t.mock.fn();
+  const renewing = hold(12, 'agent').then(renewed);
   const resetting = resetDebugger(12, 'responsive');
   assert.equal(detach.mock.callCount(), 1);
-  onDetach.emit({ tabId: 12 }, 'canceled_by_user');
   cleanup.resolve();
+  await leaving;
+  await nextTurn();
+  assert.deepEqual(renewed.mock.calls.map(({ arguments: result }) => result), [[false]]);
+  onDetach.emit({ tabId: 12 }, 'canceled_by_user');
   detachReply.resolve();
   await resetting;
-  await leaving;
-  assert.equal(await renewing, false);
+  await renewing;
   assert.equal(attach.mock.callCount(), 1);
   assert.equal(await hold(12, 'agent'), true);
   assert.equal(attach.mock.callCount(), 2);

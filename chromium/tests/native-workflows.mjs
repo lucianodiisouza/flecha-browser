@@ -345,6 +345,63 @@ try {
   assert.deepEqual(await fs.readFile(heliumHistory), originalHeliumHistory);
   console.log('PASS onboarding discovers and imports Helium history without bookmarks or source changes');
   await rpc('finishOnboarding');
+  const retryUrl = extension + 'settings.html#environments';
+  const { targetId: retryTarget } = await send('Target.createTarget', { url: retryUrl });
+  const retryPage = await attach(retryTarget);
+  const environmentPane = 'document.querySelector("[data-pane=environments].pane")';
+  const environmentCard = 'document.querySelector(".env-card:last-child")';
+  const editEnvironment = (field, value) => `(() => {
+    const input = ${environmentCard}.querySelector(${JSON.stringify(field)});
+    input.value = ${JSON.stringify(value)};
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`;
+  try {
+    await withinStep(loaded(retryPage, retryUrl), 'the Environment settings page');
+    await until(() => evaluate(retryPage, `!${environmentPane}.inert`), 'Environment preferences to load');
+    await evaluate(retryPage, `(() => {
+      const prefs = window.settings;
+      const get = prefs.get;
+      const set = prefs.set;
+      const reply = Promise.withResolvers();
+      const probe = globalThis.retryProbe = { reply, writes: [], committed: false, readFailed: false };
+      prefs.set = async (patch) => {
+        probe.writes.push(patch.environment);
+        const view = await set(patch);
+        if (patch.environment?.op === 'create') {
+          probe.committed = true;
+          await reply.promise;
+          throw new Error('Fixture lost create reply');
+        }
+        return view;
+      };
+      prefs.get = async () => {
+        if (probe.committed && !probe.readFailed) {
+          probe.readFailed = true;
+          throw new Error('Fixture reconciliation read failed');
+        }
+        return get();
+      };
+      document.querySelector('#addEnvironment').click();
+    })()`);
+    await evaluate(retryPage, editEnvironment('.env-targets', 'https://retry-environment.test'));
+    await until(() => evaluate(retryPage, 'retryProbe.committed'), 'the Environment create to commit');
+    await evaluate(retryPage, editEnvironment('.env-name', 'Retried project'));
+    await evaluate(retryPage, 'retryProbe.reply.resolve()');
+    await until(() => evaluate(retryPage, 'retryProbe.readFailed && !document.querySelector("#settings-load-error").hidden'), 'the reconciliation read to fail');
+    await evaluate(retryPage, 'document.querySelector("#settings-load-error button").click()');
+    await until(() => evaluate(retryPage, `!${environmentPane}.inert`), 'Environment preferences to recover');
+    assert.equal(await evaluate(retryPage, `${environmentCard}.querySelector('.env-name').value`), 'Retried project');
+    assert.equal(await evaluate(retryPage, `${environmentCard}.querySelector('.env-retry').hidden`), false);
+    await evaluate(retryPage, `${environmentCard}.querySelector('.env-retry').click()`);
+    const projectId = await evaluate(retryPage, 'retryProbe.writes[0].id');
+    await until(async () => (await rpc('settings:get')).environments.some((project) => project.id === projectId && project.name === 'Retried project'), 'the retried Environment name to save');
+    assert.deepEqual(await evaluate(retryPage, 'retryProbe.writes.map(edit => edit.op)'), ['create', 'edit']);
+    await rpc('settings:set', { environment: { op: 'remove', id: projectId } });
+    console.log('PASS Environment retry saves a newer name after a lost create reply and failed reconciliation read');
+  } finally {
+    await send('Target.closeTarget', { targetId: retryTarget });
+  }
   await rpc('openSettings', 'import');
   const settingsImport = await attach((await findTarget(t => t.url.includes('/settings.html#import'))).targetId);
   await loaded(settingsImport, 'chrome-extension://');
