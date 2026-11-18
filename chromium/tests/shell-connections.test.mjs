@@ -280,11 +280,16 @@ test('a failed Boost startup read is retried before saving or registering script
   const register = t.mock.fn(async () => registration.promise);
   const early = createContext({ runs: 0 });
   const later = createContext({ runs: 0 });
-  const documents = new Map([['early', early], ['later', later]]);
-  const executeScript = async ({ target, func, args }) => {
+  const missed = createContext({ runs: 0 });
+  const documents = new Map([['early', early], ['later', later], ['missed', missed]]);
+  const execute = t.mock.fn(async ({ target, js, world }) => {
+    assert.equal(world, 'MAIN');
+    assert.equal(target.documentIds.length, 1);
     const document = documents.get(target.documentIds[0]);
-    return [{ result: runInContext(`(${func})(...${JSON.stringify(args)})`, document) }];
-  };
+    runInContext(js[0].code, document);
+    return [{ documentId: target.documentIds[0] }];
+  });
+  const executeScript = t.mock.fn();
   const navigation = event();
   globalThis.chrome = {
     extension: { inIncognitoContext: false },
@@ -300,7 +305,7 @@ test('a failed Boost startup read is retried before saving or registering script
     webNavigation: { onCommitted: event(), onDOMContentLoaded: navigation },
     debugger: { onDetach: event() },
     scripting: { executeScript },
-    userScripts: { getScripts: async () => [], unregister, register },
+    userScripts: { getScripts: async () => [], unregister, register, execute },
   };
   t.after(() => delete globalThis.chrome);
   const boosts = await loadModule('chromium/shell/features/boosts.ts', { fresh: true });
@@ -329,13 +334,86 @@ test('a failed Boost startup read is retried before saving or registering script
   assert.equal(early.runs, 1, 'a late native injection cannot run the same script twice');
   runInContext(nativeScript, later);
   navigate('later');
+  navigate('missed');
   await nextTurn();
   assert.equal(later.runs, 1, 'a document injected by Chromium does not run the fallback script again');
+  assert.equal(missed.runs, 1, 'a document missed by registration is covered after registration succeeds');
+  assert.equal(execute.mock.callCount(), 3);
+  assert.equal(executeScript.mock.callCount(), 0);
   const name = 'new.example.ts';
   assert.equal((await boosts.save(name, 'source', { build: { code: 'built' } })).code, 'source');
   assert.deepEqual(files.boosts, { [existing]: 'old source', [name]: 'source' });
   assert.deepEqual(register.mock.calls[1].arguments[0].map(({ id }) => id), [existing, name]);
   assert.equal(loaded.mock.callCount(), 1);
+});
+
+test('the legacy Boost debugger runs only in the bound document across navigation', async (t) => {
+  const boost = 'old.example.ts';
+  const scripts = { boosts: { [boost]: 'source' }, boostsCompiled: { [boost]: { code: 'globalThis.runs += 1' } } };
+  const documents = new Map(['original', 'replacement', 'checking', 'steady'].map((id) => [id, createContext({ document: {}, runs: 0 })]));
+  const navigation = event();
+  const attaching = Promise.withResolvers();
+  let active = 'original';
+  const attach = t.mock.fn(async () => attaching.promise);
+  const detach = t.mock.fn(async () => {});
+  const sendCommand = t.mock.fn(async (_target, method, params) => {
+    if (method === 'Runtime.evaluate') {
+      const result = runInContext(params.expression, documents.get(active));
+      return { result: result ? { objectId: active } : { value: null } };
+    }
+    if (method === 'Runtime.callFunctionOn') {
+      if (params.objectId !== active) throw new Error('Original document was destroyed');
+      const claim = params.arguments[0].value;
+      runInContext(`(${params.functionDeclaration}).call(document, ${JSON.stringify(claim)})`, documents.get(active));
+    }
+  });
+  globalThis.chrome = {
+    extension: { inIncognitoContext: false },
+    storage: { local: { get: async () => scripts } },
+    tabs: { onRemoved: event() },
+    webNavigation: {
+      onCommitted: event(), onDOMContentLoaded: navigation,
+      async getFrame() {
+        const frame = { documentId: active, documentLifecycle: 'active' };
+        if (active === 'checking') active = 'replacement';
+        return frame;
+      },
+    },
+    scripting: { async executeScript({ target, func, args }) {
+      assert.deepEqual(target.documentIds, [active]);
+      return [{ result: runInContext(`(${func})(...${JSON.stringify(args)})`, documents.get(active)) }];
+    } },
+    debugger: { onDetach: event(), attach, detach, sendCommand },
+  };
+  t.after(() => delete globalThis.chrome);
+  const boosts = await loadModule('chromium/shell/features/boosts.ts', { fresh: true });
+  await boosts.ready();
+  const navigate = () => navigation.emit({ tabId: 1, frameId: 0, url: 'https://old.example/', documentId: active });
+  const callTargets = () => sendCommand.mock.calls
+    .filter(({ arguments: [, method] }) => method === 'Runtime.callFunctionOn')
+    .map(({ arguments: [, , params] }) => params.objectId);
+
+  navigate();
+  await nextTurn();
+  assert.equal(attach.mock.callCount(), 1);
+  active = 'replacement';
+  attaching.resolve();
+  await nextTurn();
+  assert.deepEqual(callTargets(), []);
+  assert.equal(detach.mock.callCount(), 1);
+
+  active = 'checking';
+  navigate();
+  await nextTurn();
+  assert.deepEqual(callTargets(), ['checking']);
+  assert.equal(documents.get('replacement').runs, 0);
+
+  active = 'steady';
+  navigate();
+  await nextTurn();
+  assert.equal(documents.get('steady').runs, 1);
+  assert.deepEqual(callTargets(), ['checking', 'steady']);
+  assert.equal(detach.mock.callCount(), 3);
 });
 
 test('Boosts serializes saves and keeps the editor address aligned with a retained draft', async (t) => {

@@ -10,8 +10,8 @@
  *    swapped in place when you save, without a reload;
  *  - scripts run in the page's own world once its DOM is ready, and open pages of the site
  *    reload when you save. With chrome.userScripts allowed they are registered with Chromium
- *    and run even on pages whose CSP forbids eval; without it they are evaluated on each
- *    load, through the DevTools protocol where the page's CSP forbids eval.
+ *    and use the same API to cover documents that missed registration. With User Scripts
+ *    unavailable, the DevTools compatibility path binds execution to the original document.
  */
 import { boostHostFor, boostMatches, boostName, parseBoostName, type BoostKind } from '../lib/boostFiles';
 import { hold, release, send } from './debuggee';
@@ -120,6 +120,7 @@ function matchPatterns(host: string) {
 }
 
 const boostMarker = (name: string) => `flecha.boost/${name}`;
+const legacyDocumentMarker = 'flecha.boost.legacyDocument';
 
 /** Both injection paths can reach the same document while registrations are changing. */
 function oncePerDocument(name: string, code: string): string {
@@ -148,7 +149,7 @@ async function registerUserScripts(): Promise<void> {
     await api.unregister();
     if (scripts.length) await api.register(scripts);
   } catch (err) {
-    console.warn('Flecha boosts: user scripts unavailable, evaluating on load instead', err);
+    console.warn('Flecha boosts: could not register user scripts for future navigations', err);
   }
 }
 
@@ -176,59 +177,74 @@ async function applyStyles(tabId: number, url: string) {
 
 // ---- scripts ----------------------------------------------------------------
 
-/** Runs a compiled boost in the page's world; CSP that forbids eval falls back to the DevTools protocol. */
-async function runScript(tabId: number, documentId: string | undefined, name: string, code: string, attempt = 0): Promise<void> {
-  const target: chrome.scripting.InjectionTarget = documentId ? { tabId, documentIds: [documentId] } : { tabId };
+async function runScript(tabId: number, documentId: string, name: string, code: string): Promise<void> {
   const source = oncePerDocument(name, code);
-  let outcome: unknown;
-  try {
-    [{ result: outcome }] = await chrome.scripting.executeScript({
-      target,
-      world: 'MAIN',
-      args: [source, name, boostMarker(name)],
-      func: (source: string, file: string, marker: string) => {
-        if (Object.hasOwn(globalThis, Symbol.for(marker))) return 'ran';
-        try {
-          (0, eval)(source);
-          return 'ran';
-        } catch (err) {
-          if (err instanceof EvalError) return 'csp';
-          console.error(`[Flecha boost ${file}]`, err);
-          return 'failed';
-        }
-      },
-    });
-  } catch (err) {
-    // A page that only just loaded can still be settling in; try once more.
-    if (attempt === 0) return void setTimeout(() => void runScript(tabId, documentId, name, code, 1), 150);
-    return console.warn(`Flecha boosts: couldn't run ${name}`, err);
+  const api = userScripts();
+  if (typeof api?.execute === 'function') {
+    const [result] = await api.execute({ target: { tabId, documentIds: [documentId] }, world: 'MAIN', js: [{ code: source }] });
+    if (result?.error) reportError(tabId, documentId, name, result.error);
+    return;
   }
-  if (outcome !== 'csp') return;
+  await runScriptWithDebugger(tabId, documentId, name, source);
+}
+
+/** Compatibility for profiles without access to chrome.userScripts.execute. */
+async function runScriptWithDebugger(tabId: number, documentId: string, name: string, source: string) {
+  const claim = crypto.randomUUID();
+  const [bound] = await chrome.scripting.executeScript({
+    target: { tabId, documentIds: [documentId] },
+    world: 'MAIN',
+    args: [boostMarker(name), legacyDocumentMarker, claim],
+    func: (scriptKey: string, documentKey: string, claim: string) => {
+      if (Object.hasOwn(globalThis, Symbol.for(scriptKey))) return false;
+      Object.defineProperty(document, Symbol.for(documentKey), { value: claim, configurable: true });
+      return true;
+    },
+  });
+  if (!bound?.result) return;
   const holder = Symbol('boost');
-  if (!(await hold(tabId, holder))) return reportError(tabId, name, 'this page doesn’t allow boost scripts');
+  if (!(await hold(tabId, holder))) return reportError(tabId, documentId, name, 'this page doesn’t allow boost scripts');
+  let objectId: string | undefined;
   try {
-    const out = await send<{ exceptionDetails?: { exception?: { description?: string }; text?: string } }>(tabId, 'Runtime.evaluate', {
-      expression: source,
+    // Capture the renderer's document object before checking Chromium's current document ID.
+    // A navigation after the check cannot transfer this object handle to the replacement page.
+    const marker = `Symbol.for(${JSON.stringify(legacyDocumentMarker)})`;
+    const handle = await send<{ result?: { objectId?: string } }>(tabId, 'Runtime.evaluate', {
+      expression: `document[${marker}] === ${JSON.stringify(claim)} ? document : null`,
+    });
+    objectId = handle?.result?.objectId;
+    if (!objectId) return;
+    const frame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 }).catch(() => undefined);
+    if (frame?.documentId !== documentId || frame.documentLifecycle !== 'active') return;
+    const out = await send<{ exceptionDetails?: { exception?: { description?: string }; text?: string } }>(tabId, 'Runtime.callFunctionOn', {
+      objectId,
+      functionDeclaration: `function (claim) {
+        if (this !== document || this[${marker}] !== claim) return;
+        delete this[${marker}];
+        ${source}
+      }`,
+      arguments: [{ value: claim }],
       userGesture: false,
     });
-    if (out?.exceptionDetails) reportError(tabId, name, out.exceptionDetails.exception?.description ?? out.exceptionDetails.text ?? 'failed');
+    if (out?.exceptionDetails) reportError(tabId, documentId, name, out.exceptionDetails.exception?.description ?? out.exceptionDetails.text ?? 'failed');
   } finally {
+    if (objectId) await send(tabId, 'Runtime.releaseObject', { objectId });
     await release(tabId, holder);
   }
 }
 
 /** Boost errors go to the page's own console, where the developer is already looking. */
-function reportError(tabId: number, name: string, message: string) {
+function reportError(tabId: number, documentId: string, name: string, message: string) {
   void chrome.scripting
-    .executeScript({ target: { tabId }, world: 'MAIN', args: [`[Flecha boost ${name}] ${message}`], func: (m: string) => console.error(m) })
+    .executeScript({ target: { tabId, documentIds: [documentId] }, world: 'MAIN', args: [`[Flecha boost ${name}] ${message}`], func: (m: string) => console.error(m) })
     .catch(() => undefined);
 }
 
-async function runScripts(tabId: number, url: string, documentId?: string) {
+async function runScripts(tabId: number, url: string, documentId: string) {
   for (const name of matching(url, 'script')) {
     const code = compiled[name]?.code;
     if (code) await runScript(tabId, documentId, name, code);
-    else if (compiled[name]?.error) reportError(tabId, name, compiled[name].error!);
+    else if (compiled[name]?.error) reportError(tabId, documentId, name, compiled[name].error!);
   }
 }
 
@@ -238,7 +254,7 @@ chrome.webNavigation.onCommitted.addListener(({ tabId, frameId, url }) => {
   void loadBoosts().then(() => applyStyles(tabId, url)).catch(logBoostError);
 });
 chrome.webNavigation.onDOMContentLoaded.addListener(({ tabId, frameId, url, documentId }) => {
-  if (frameId !== 0) return;
+  if (frameId !== 0 || !documentId) return;
   void loadBoosts().then(() => runScripts(tabId, url, documentId)).catch(logBoostError);
 });
 chrome.tabs.onRemoved.addListener((tabId) => inserted.delete(tabId));
