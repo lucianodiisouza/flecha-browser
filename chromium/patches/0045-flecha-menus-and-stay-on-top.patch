@@ -119,7 +119,7 @@
 +#endif  // CHROME_BROWSER_EXTENSIONS_API_FLECHA_PRIVATE_FLECHA_MENUS_H_
 --- /dev/null
 +++ b/chrome/browser/extensions/api/flecha_private/flecha_menus_mac.mm
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,156 @@
 +// Copyright 2026 The Flecha Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -136,6 +136,7 @@
 +#include "chrome/browser/flecha/flecha_shell_events.h"
 +#include "chrome/browser/profiles/profile.h"
 +#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 +#include "ui/base/accelerators/platform_accelerator_cocoa.h"
 +#include "ui/base/base_window.h"
 +#include "ui/gfx/native_ui_types.h"
@@ -145,22 +146,32 @@
 +// The tag of the items setMenus() was told are disabled.
 +constexpr NSInteger kFlechaDisabledItemTag = -0xf1ec;
 +
-+// The Flecha window a menu command is for: the one in front, else the last
-+// active window that isn't a Flechinha.
++// The Flecha window a menu command is for: the one in front, else (Settings,
++// DevTools or picture-in-picture in front) the browser window last active,
++// else any that isn't a Flechinha.
 +FlechaFrameHost* FlechaHostInFront() {
 +  NSWindow* front = NSApp.keyWindow ?: NSApp.mainWindow;
++  BrowserWindowInterface* last_browser =
++      GetLastActiveBrowserWindowInterfaceWithAnyProfile();
 +  FlechaFrameHost* last_active = nullptr;
++  FlechaFrameHost* any = nullptr;
 +  for (FlechaFrameHost* host : FlechaFrameHost::All()) {
 +    BrowserWindowInterface* browser = host->GetBrowserWindowInterface();
 +    if (front && browser && browser->GetWindow() &&
 +        browser->GetWindow()->GetNativeWindow().GetNativeNSWindow() == front) {
 +      return host;
 +    }
-+    if (!last_active && host->IsActiveWindow() && !host->IsFlechinha()) {
++    if (host->IsFlechinha()) {
++      continue;
++    }
++    if (!last_active && browser && browser == last_browser) {
 +      last_active = host;
 +    }
++    if (!any) {
++      any = host;
++    }
 +  }
-+  return last_active;
++  return last_active ? last_active : any;
 +}
 +
 +}  // namespace
