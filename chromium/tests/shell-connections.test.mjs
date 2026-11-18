@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { setImmediate as nextTurn } from 'node:timers/promises';
+import { createContext, runInContext } from 'node:vm';
 import { loadModule } from './load-module.mjs';
 
 function event() {
@@ -274,10 +275,16 @@ test('a failed Boost startup read is retried before saving or registering script
   const recovery = Promise.withResolvers();
   const registration = Promise.withResolvers();
   const existing = 'old.example.ts';
-  const files = { boosts: { [existing]: 'old source' }, boostsCompiled: { [existing]: { code: 'old built' } } };
+  const files = { boosts: { [existing]: 'old source' }, boostsCompiled: { [existing]: { code: 'globalThis.runs += 1' } } };
   const unregister = t.mock.fn(async () => {});
   const register = t.mock.fn(async () => registration.promise);
-  const executeScript = t.mock.fn(async () => [{ result: 'ran' }]);
+  const early = createContext({ runs: 0 });
+  const later = createContext({ runs: 0 });
+  const documents = new Map([['early', early], ['later', later]]);
+  const executeScript = async ({ target, func, args }) => {
+    const document = documents.get(target.documentIds[0]);
+    return [{ result: runInContext(`(${func})(...${JSON.stringify(args)})`, document) }];
+  };
   const navigation = event();
   globalThis.chrome = {
     extension: { inIncognitoContext: false },
@@ -301,7 +308,8 @@ test('a failed Boost startup read is retried before saving or registering script
   const failed = assert.rejects(boosts.ready(loaded), /storage is starting/);
   startup.reject(new Error('Boost storage is starting'));
   await failed;
-  navigation.emit({ tabId: 1, frameId: 0, url: 'https://old.example/' });
+  const navigate = (documentId) => navigation.emit({ tabId: 1, frameId: 0, url: 'https://old.example/', documentId });
+  navigate('early');
   const listing = boosts.list();
   await nextTurn();
   assert.equal(unregister.mock.callCount(), 0);
@@ -313,10 +321,16 @@ test('a failed Boost startup read is retried before saving or registering script
   assert.deepEqual(loaded.mock.calls.map(({ result }) => result), [['old.example']]);
   assert.equal(unregister.mock.callCount(), 1);
   assert.deepEqual(register.mock.calls[0].arguments[0].map(({ id }) => id), [existing]);
-  assert.equal(executeScript.mock.callCount(), 0, 'navigation waits for native registration');
+  assert.equal(early.runs, 1, 'fallback covers a document that loaded before registration');
+  const nativeScript = register.mock.calls[0].arguments[0][0].js[0].code;
   registration.resolve();
   await nextTurn();
-  assert.equal(executeScript.mock.callCount(), 0, 'registered scripts do not use the fallback');
+  runInContext(nativeScript, early);
+  assert.equal(early.runs, 1, 'a late native injection cannot run the same script twice');
+  runInContext(nativeScript, later);
+  navigate('later');
+  await nextTurn();
+  assert.equal(later.runs, 1, 'a document injected by Chromium does not run the fallback script again');
   const name = 'new.example.ts';
   assert.equal((await boosts.save(name, 'source', { build: { code: 'built' } })).code, 'source');
   assert.deepEqual(files.boosts, { [existing]: 'old source', [name]: 'source' });

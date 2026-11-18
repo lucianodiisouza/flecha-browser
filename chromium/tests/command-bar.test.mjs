@@ -29,19 +29,15 @@ test('typed addresses open directly with encoded paths and queries', () => {
   assert.equal(new URL(resolveInput(query)).searchParams.get('token'), 'fixture');
   assert.equal(suggestable(query), false);
   const localQuery = 'localhost? access token=fixture';
-  const localAddress = new URL(resolveInput(localQuery));
-  assert.equal(localAddress.hostname, 'localhost');
-  assert.equal(localAddress.searchParams.get(' access token'), 'fixture');
+  assert.equal(resolveInput(localQuery), 'http://localhost/?%20access%20token=fixture');
   assert.equal(suggestable(localQuery), false);
-  for (const [input, host, query] of [
-    ['localhost? opaque-fixture?', 'localhost', '?%20opaque-fixture?'],
-    ['app.localhost? Why?', 'app.localhost', '?%20Why?'],
-    ['192.168.0.10? opaque fixture', '192.168.0.10', '?%20opaque%20fixture'],
-    ['example.com? opaque-fixture?', 'example.com', '?%20opaque-fixture?'],
+  for (const [input, address] of [
+    ['localhost? opaque-fixture?', 'http://localhost/?%20opaque-fixture?'],
+    ['app.localhost? Why?', 'http://app.localhost/?%20Why?'],
+    ['192.168.0.10? opaque fixture', 'http://192.168.0.10/?%20opaque%20fixture'],
+    ['example.com? opaque-fixture?', 'https://example.com/?%20opaque-fixture?'],
   ]) {
-    const address = new URL(resolveInput(input));
-    assert.equal(address.hostname, host);
-    assert.equal(address.search, query);
+    assert.equal(resolveInput(input), address);
     assert.equal(suggestable(input), false);
   }
   for (const address of ['例子.中国', 'xn--fsqu00a.xn--fiqs8s']) assert.equal(resolveInput(address), `https://${address}`);

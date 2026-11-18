@@ -364,19 +364,20 @@ try {
       const get = prefs.get;
       const set = prefs.set;
       const reply = Promise.withResolvers();
-      const probe = globalThis.retryProbe = { reply, writes: [], committed: false, readFailed: false };
+      const probe = globalThis.retryProbe = { reply, writes: [], committed: false, lostReply: false, readFailed: false };
       prefs.set = async (patch) => {
         probe.writes.push(patch.environment);
         const view = await set(patch);
         if (patch.environment?.op === 'create') {
           probe.committed = true;
           await reply.promise;
+          probe.lostReply = true;
           throw new Error('Fixture lost create reply');
         }
         return view;
       };
       prefs.get = async () => {
-        if (probe.committed && !probe.readFailed) {
+        if (probe.lostReply && !probe.readFailed) {
           probe.readFailed = true;
           throw new Error('Fixture reconciliation read failed');
         }
@@ -386,6 +387,7 @@ try {
     })()`);
     await evaluate(retryPage, editEnvironment('.env-targets', 'https://retry-environment.test'));
     await until(() => evaluate(retryPage, 'retryProbe.committed'), 'the Environment create to commit');
+    assert.equal(await evaluate(retryPage, 'window.settings.get().then(() => retryProbe.readFailed)'), false);
     await evaluate(retryPage, editEnvironment('.env-name', 'Retried project'));
     await evaluate(retryPage, 'retryProbe.reply.resolve()');
     await until(() => evaluate(retryPage, 'retryProbe.readFailed && !document.querySelector("#settings-load-error").hidden'), 'the reconciliation read to fail');
@@ -393,8 +395,10 @@ try {
     await until(() => evaluate(retryPage, `!${environmentPane}.inert`), 'Environment preferences to recover');
     assert.equal(await evaluate(retryPage, `${environmentCard}.querySelector('.env-name').value`), 'Retried project');
     assert.equal(await evaluate(retryPage, `${environmentCard}.querySelector('.env-retry').hidden`), false);
-    await evaluate(retryPage, `${environmentCard}.querySelector('.env-retry').click()`);
     const projectId = await evaluate(retryPage, 'retryProbe.writes[0].id');
+    assert.deepEqual(await evaluate(retryPage, 'retryProbe.writes.map(edit => edit.op)'), ['create']);
+    assert.equal((await rpc('settings:get')).environments.find((project) => project.id === projectId)?.name, 'Project');
+    await evaluate(retryPage, `${environmentCard}.querySelector('.env-retry').click()`);
     await until(async () => (await rpc('settings:get')).environments.some((project) => project.id === projectId && project.name === 'Retried project'), 'the retried Environment name to save');
     assert.deepEqual(await evaluate(retryPage, 'retryProbe.writes.map(edit => edit.op)'), ['create', 'edit']);
     await rpc('settings:set', { environment: { op: 'remove', id: projectId } });

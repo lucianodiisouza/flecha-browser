@@ -119,10 +119,21 @@ function matchPatterns(host: string) {
   return host === 'all' ? ['http://*/*', 'https://*/*'] : [`*://${host}/*`, `*://*.${host}/*`];
 }
 
+const boostMarker = (name: string) => `flecha.boost/${name}`;
+
+/** Both injection paths can reach the same document while registrations are changing. */
+function oncePerDocument(name: string, code: string): string {
+  const marker = `Symbol.for(${JSON.stringify(boostMarker(name))})`;
+  return `if (!Object.hasOwn(globalThis, ${marker})) {
+  Object.defineProperty(globalThis, ${marker}, { value: true });
+${code}
+}`;
+}
+
 /** Keeps Chromium's registered user scripts in step with the stored boosts. */
-async function registerUserScripts(): Promise<boolean> {
+async function registerUserScripts(): Promise<void> {
   const api = userScripts();
-  if (!api) return false;
+  if (!api) return;
   try {
     const scripts = Object.keys(files)
       .map((name) => ({ name, parsed: parseBoostName(name), code: compiled[name]?.code }))
@@ -130,20 +141,18 @@ async function registerUserScripts(): Promise<boolean> {
       .map(({ name, parsed, code }) => ({
         id: name,
         matches: matchPatterns(parsed!.host),
-        js: [{ code: code! }],
+        js: [{ code: oncePerDocument(name, code!) }],
         world: 'MAIN' as chrome.userScripts.ExecutionWorld,
         runAt: 'document_end' as chrome.extensionTypes.RunAt,
       }));
     await api.unregister();
     if (scripts.length) await api.register(scripts);
-    return true;
   } catch (err) {
     console.warn('Flecha boosts: user scripts unavailable, evaluating on load instead', err);
-    return false;
   }
 }
 
-let registered = Promise.resolve(false);
+let registered = Promise.resolve();
 
 const matching = (url: string, kind: BoostKind) =>
   Object.keys(files).filter((name) => {
@@ -170,13 +179,15 @@ async function applyStyles(tabId: number, url: string) {
 /** Runs a compiled boost in the page's world; CSP that forbids eval falls back to the DevTools protocol. */
 async function runScript(tabId: number, documentId: string | undefined, name: string, code: string, attempt = 0): Promise<void> {
   const target: chrome.scripting.InjectionTarget = documentId ? { tabId, documentIds: [documentId] } : { tabId };
+  const source = oncePerDocument(name, code);
   let outcome: unknown;
   try {
     [{ result: outcome }] = await chrome.scripting.executeScript({
       target,
       world: 'MAIN',
-      args: [code, name],
-      func: (source: string, file: string) => {
+      args: [source, name, boostMarker(name)],
+      func: (source: string, file: string, marker: string) => {
+        if (Object.hasOwn(globalThis, Symbol.for(marker))) return 'ran';
         try {
           (0, eval)(source);
           return 'ran';
@@ -197,7 +208,7 @@ async function runScript(tabId: number, documentId: string | undefined, name: st
   if (!(await hold(tabId, holder))) return reportError(tabId, name, 'this page doesn’t allow boost scripts');
   try {
     const out = await send<{ exceptionDetails?: { exception?: { description?: string }; text?: string } }>(tabId, 'Runtime.evaluate', {
-      expression: code,
+      expression: source,
       userGesture: false,
     });
     if (out?.exceptionDetails) reportError(tabId, name, out.exceptionDetails.exception?.description ?? out.exceptionDetails.text ?? 'failed');
@@ -214,7 +225,6 @@ function reportError(tabId: number, name: string, message: string) {
 }
 
 async function runScripts(tabId: number, url: string, documentId?: string) {
-  if (await registered) return; // Chromium runs them itself.
   for (const name of matching(url, 'script')) {
     const code = compiled[name]?.code;
     if (code) await runScript(tabId, documentId, name, code);
