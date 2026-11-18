@@ -34,6 +34,8 @@ test('typed development addresses open directly and environment badges follow ex
     'test user: two words@example.com',
     'test-token@example.com/private',
     'test-token@example.com',
+    'test user@example.com/private?token=fixture',
+    'test user@example.com?token=fixture',
     ':fixture-password@example.com/private',
     ':two words@example.com/private',
   ]) {

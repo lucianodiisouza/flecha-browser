@@ -27,12 +27,14 @@ export function searchUrl(terms: string, engine?: SearchEngineId): string {
 
 function hasAddressCredentials(input: string): boolean {
   const text = input.trim();
-  const credentials = /^[^:/?#@]*:([^@]*)@(?=\S|$)/.exec(text);
-  if (!credentials) return /^[^:\s/?#@]+@(?=\S|$)/.test(text);
+  const userinfo = /^([^@]+)@(?=\S|$)/.exec(text);
+  if (!userinfo) return false;
+  const destinationHasTail = /^[^\s/?#\\]+[/?#\\]/.test(text.slice(userinfo[0].length));
+  const credentials = /^[^:/?#]*:(.*)$/s.exec(userinfo[1]);
+  if (!credentials) return /^[^:/?#]+$/.test(userinfo[1]) && (destinationHasTail || !/\s/.test(userinfo[1]));
   const [, password] = credentials;
   // A label followed by a space and a plain email address can be an explicit search.
-  return !/^\s/.test(password) || /\s/.test(password.trim()) ||
-    /^[^\s/?#\\]+[/?#\\]/.test(text.slice(credentials[0].length));
+  return destinationHasTail || !/^\s/.test(password) || /\s/.test(password.trim());
 }
 
 export function looksLikeRejectedAddress(input: string): boolean {

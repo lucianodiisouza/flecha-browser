@@ -360,7 +360,7 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   let waitingForTabRead = false;
   let refusedEvaluation = false;
   let diagnosingRefusal = false;
-  const pendingNavigation = Promise.withResolvers();
+  let pendingNavigation = Promise.withResolvers();
   const idleMessage = { type: 'error', args: [{ value: 'Logged while idle' }] };
   globalThis.chrome = {
     runtime: { connectNative: () => port },
@@ -649,6 +649,32 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   pendingNavigation.resolve();
   await nextTurn();
   assert.match(results.find(({ id }) => id === 50).result.content[0].text, /\/after-navigation/);
+
+  pendingNavigation = Promise.withResolvers();
+  port.onMessage.emit({ type: 'tool', id: 51, name: 'navigate', args: { tabId: phone, url: 'https://example.com/late-navigation' } });
+  await nextTurn();
+  t.mock.timers.tick(60_000);
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 51).result.content[0].text, /didn’t answer navigate within 60s/);
+  t.mock.timers.tick(59_999);
+  port.onMessage.emit({ type: 'tool', id: 52, name: 'read_page', args: { tabId: phone } });
+  await nextTurn();
+  assert.equal(results.some(({ id }) => id === 52), false, 'the next tool still waits during navigation recovery');
+  t.mock.timers.tick(1);
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 52)?.result.content[0].text ?? '', /Chrome is still finishing a previous navigation/);
+  assert.equal(tab.url, destination, 'the old navigation is still pending');
+  disableRuntime.resolve();
+  t.mock.timers.tick(120_000);
+  await nextTurn();
+  assert.equal(host.agentTabsInUse().has(tab.id), false, 'an unresolved navigation does not retain the idle debugger');
+  pendingNavigation.resolve();
+  await nextTurn();
+  port.onMessage.emit({ type: 'tool', id: 53, name: 'read_page', args: { tabId: phone } });
+  await nextTurn();
+  t.mock.timers.tick(100);
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 53)?.result.content[0].text ?? '', /\/late-navigation/);
 
   store.togglePin(phone);
   readPending = Promise.withResolvers();

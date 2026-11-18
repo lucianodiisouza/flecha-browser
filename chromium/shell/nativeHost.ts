@@ -292,6 +292,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     command(method: string, params?: object, signal?: AbortSignal): Promise<unknown>;
   };
   const tabOperations = new Map<number, Promise<void>>();
+  const pendingNavigations = new Map<number, Promise<void>>();
   const tabClosures = new WeakMap<TabInfo, symbol>();
 
   async function runTool(name: AgentToolName, args: Record<string, any>): Promise<AgentResult> {
@@ -312,6 +313,9 @@ export function registerNativeHost(ctx: NativeHostContext) {
           void tail.then(() => { if (tabOperations.get(chromeId) === tail) tabOperations.delete(chromeId); });
           await untilAborted(previous, signal);
           signal.throwIfAborted();
+          if (pendingNavigations.has(chromeId)) {
+            throw new Error('Chrome is still finishing a previous navigation on this tab. Try again after it finishes or use another tab.');
+          }
           runningTab = chromeId;
           working.add(chromeId);
           if (attached.has(chromeId)) keepAttached(chromeId);
@@ -362,6 +366,21 @@ export function registerNativeHost(ctx: NativeHostContext) {
     return { tabId, chromeId };
   }
 
+  async function waitForNavigation(chromeId: number, operation: Promise<unknown>, signal: AbortSignal) {
+    const clear = () => {
+      if (pendingNavigations.get(chromeId) === finished) pendingNavigations.delete(chromeId);
+    };
+    const finished = operation.then(clear, clear);
+    pendingNavigations.set(chromeId, finished);
+    try {
+      await untilAborted(operation, signal);
+    } finally {
+      // Give the write the same recovery interval as a debugger command. If Chrome
+      // still has not answered, later tools report the pending write immediately.
+      if (signal.aborted) await withDeadline(TOOL_TIMEOUT, () => finished).catch(() => undefined);
+    }
+  }
+
   // The native host validates arguments against AGENT_TOOLS before dispatching a tool.
   const tools: Record<AgentToolName, (args: Record<string, any>, use: UseTab) => Promise<AgentResult>> = {
     list_tabs: async () => {
@@ -392,11 +411,12 @@ export function registerNativeHost(ctx: NativeHostContext) {
     },
     navigate: async ({ tabId, url, action }, use) => {
       const t = await target(tabId, url ? `opening ${url}` : (action ?? 'navigating'), use);
-      // The caller can time out while Chrome still applies the navigation. Keep the tab locked until it settles.
-      if (url) await chrome.tabs.update(t.chromeId, { url: String(url) });
-      else if (action === 'back') await chrome.tabs.goBack(t.chromeId).catch(() => undefined);
-      else if (action === 'forward') await chrome.tabs.goForward(t.chromeId).catch(() => undefined);
-      else if (action === 'reload') await chrome.tabs.reload(t.chromeId);
+      let navigation: Promise<unknown> | undefined;
+      if (url) navigation = chrome.tabs.update(t.chromeId, { url: String(url) });
+      else if (action === 'back') navigation = chrome.tabs.goBack(t.chromeId).catch(() => undefined);
+      else if (action === 'forward') navigation = chrome.tabs.goForward(t.chromeId).catch(() => undefined);
+      else if (action === 'reload') navigation = chrome.tabs.reload(t.chromeId);
+      if (navigation) await waitForNavigation(t.chromeId, navigation, use.signal);
       await settle(t.chromeId, use.signal);
       const tab = await untilAborted(chrome.tabs.get(t.chromeId), use.signal);
       return text({ url: tab.url, title: tab.title });
@@ -675,7 +695,10 @@ export function registerNativeHost(ctx: NativeHostContext) {
     if (log.length > 500) log.splice(0, log.length - 500);
   });
   onDebuggerDetach(forget);
-  chrome.tabs.onRemoved.addListener((chromeId) => forget(chromeId));
+  chrome.tabs.onRemoved.addListener((chromeId) => {
+    pendingNavigations.delete(chromeId);
+    forget(chromeId);
+  });
 
   async function dispatchInput(chromeId: number, method: string, down: object, up: object, use: UseTab) {
     await attach(chromeId, use);
