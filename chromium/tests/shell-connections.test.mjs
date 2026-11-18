@@ -14,22 +14,31 @@ function event() {
 test('worker restart resumes shell messages and a bad payload leaves other replies intact', async (t) => {
   const ports = [];
   let attempts = 0;
-  let broken = false;
+  let transportError;
+  const toast = {};
+  globalThis.window = { addEventListener() {}, setTimeout: (...args) => setTimeout(...args) };
+  globalThis.document = { querySelector: () => toast };
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   globalThis.chrome = { runtime: { connect() {
     if (++attempts === 2) throw new Error('Worker still starting');
     const port = {
       sent: [], onDisconnect: event(), onMessage: event(), disconnect: () => port.onDisconnect.emit(),
       postMessage(message) {
-        if (broken) throw new Error('Attempting to use a disconnected port object');
+        if (transportError) throw new Error(transportError);
         port.sent.push(JSON.parse(JSON.stringify(message)));
       },
     };
     ports.push(port);
     return port;
   } } };
-  t.after(() => delete globalThis.chrome);
-  const { invoke, on } = await loadModule('chromium/shell/client.ts');
+  t.after(() => {
+    delete globalThis.chrome;
+    delete globalThis.window;
+    delete globalThis.document;
+  });
+  const { cmd, invoke, on, onReconnect } = await loadModule('chromium/shell/client.ts');
+  let reconnects = 0;
+  onReconnect(() => ++reconnects);
   const received = [];
   on('state', (state) => received.push(state));
   const pending = invoke('beforeRestart');
@@ -41,9 +50,12 @@ test('worker restart resumes shell messages and a bad payload leaves other repli
   assert.equal(attempts, 2);
   assert.equal(ports.length, 1);
   await assert.rejects(invoke('duringBackoff'), /background can’t be reached/);
+  assert.equal(cmd('newTab')(), false);
+  assert.match(toast.textContent, /didn’t send this command/);
   assert.equal(attempts, 2);
   t.mock.timers.tick(200);
   assert.equal(ports.length, 2);
+  assert.equal(reconnects, 1);
   ports[0].onMessage.emit({ type: 'event', name: 'state', args: ['old'] });
   ports[1].onMessage.emit({ type: 'event', name: 'state', args: ['new'] });
   assert.deepEqual(received, ['new']);
@@ -56,11 +68,17 @@ test('worker restart resumes shell messages and a bad payload leaves other repli
   assert.deepEqual(ports.map((port) => port.sent.map(({ name }) => name)), [['beforeRestart'], ['afterRestart']]);
 
   const disconnect = t.mock.method(ports[1], 'disconnect');
-  broken = true;
+  transportError = 'Attempting to use a disconnected port object';
   await assert.rejects(invoke('broken'), /background restarted/);
   assert.equal(disconnect.mock.callCount(), 1);
   t.mock.timers.tick(400);
   assert.equal(ports.length, 3);
+  transportError = 'Extension context invalidated.';
+  assert.equal(cmd('closeTab')(), false);
+  assert.match(toast.textContent, /Reload this page/);
+  const attemptsBeforeInvalidation = attempts;
+  t.mock.timers.tick(20_000);
+  assert.equal(attempts, attemptsBeforeInvalidation);
 });
 
 test('the agent restores focus and can replay console logs after idle on a shared debugger', async (t) => {
@@ -71,7 +89,8 @@ test('the agent restores focus and can replay console logs after idle on a share
   let emulatedFocus = false;
   let runtimeEnabled = false;
   let logEnabled = false;
-  const disableRuntime = Promise.withResolvers();
+  let disableRuntime = Promise.withResolvers();
+  let failSetup = false;
   const idleMessage = { type: 'error', args: [{ value: 'Logged while idle' }] };
   globalThis.chrome = {
     runtime: { connectNative: () => port },
@@ -94,7 +113,13 @@ test('the agent restores focus and can replay console logs after idle on a share
           runtimeEnabled = false;
           calls.push(['disabled']);
         }
-        if (method === 'Log.enable') logEnabled = true;
+        if (method === 'Log.enable') {
+          if (failSetup) {
+            failSetup = false;
+            throw new Error('Fixture setup failed');
+          }
+          logEnabled = true;
+        }
         if (method === 'Log.disable') logEnabled = false;
         if (method === 'Runtime.evaluate') return { result: { value: 'fixture body' } };
       },
@@ -134,10 +159,24 @@ test('the agent restores focus and can replay console logs after idle on a share
   t.mock.timers.tick(120_000 - 100);
   await nextTurn();
   assert.deepEqual(calls, [['attach', tab.id], ['disabled'], ['disabled'], ['detach', tab.id]]);
+
+  failSetup = true;
+  disableRuntime = Promise.withResolvers();
+  port.onMessage.emit({ type: 'tool', id: 25, name: 'read_page', args: { tabId: phone } });
+  await nextTurn();
+  port.onMessage.emit({ type: 'tool', id: 26, name: 'read_page', args: { tabId: phone } });
+  await nextTurn();
+  assert.equal(results.some(({ id }) => id === 26), false);
+  disableRuntime.resolve();
+  await nextTurn();
+  t.mock.timers.tick(100);
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 25).result.content[0].text, /Fixture setup failed/);
+  assert.match(results.find(({ id }) => id === 26).result.content[0].text, /fixture body/);
 });
 
 test('releasing a debugger holder queued behind a detach cancels its attachment', async (t) => {
-  const detach = Promise.withResolvers();
+  let detach = Promise.withResolvers();
   globalThis.chrome = { debugger: { onDetach: event(), attach: async () => {}, detach: () => detach.promise } };
   t.after(() => delete globalThis.chrome);
   const attach = t.mock.method(chrome.debugger, 'attach');
@@ -152,6 +191,17 @@ test('releasing a debugger holder queued behind a detach cancels its attachment'
   assert.equal(attach.mock.callCount(), 1);
   assert.equal(await hold(12, 'new'), true);
   assert.equal(attach.mock.callCount(), 2);
+
+  detach = Promise.withResolvers();
+  const closingAgain = release(12, 'new');
+  const oldClaim = hold(12, 'same-holder');
+  const cancelingAgain = release(12, 'same-holder');
+  const newClaim = hold(12, 'same-holder');
+  detach.resolve();
+  assert.equal(await oldClaim, false);
+  assert.equal(await newClaim, true);
+  await Promise.all([closingAgain, cancelingAgain]);
+  assert.equal(attach.mock.callCount(), 3);
 });
 
 test('the responsive split keeps the phone viewport width when the window grows', async () => {
@@ -178,7 +228,7 @@ test('responsive sizing waits for the native split, discards stale widths, and c
   };
   t.after(() => delete globalThis.chrome);
   const { Store } = await loadModule('chromium/shared/store.ts');
-  const { registerNative } = await loadModule('chromium/shell/native.ts');
+  const { frameResized, registerNative } = await loadModule('chromium/shell/native.ts');
   const { phoneSplitRatio } = await loadModule('chromium/shell/lib/responsiveViewport.ts');
   const store = new Store({ load: () => undefined, save: () => {} });
   const desktop = store.addTab('https://example.com/');
@@ -212,4 +262,12 @@ test('responsive sizing waits for the native split, discards stale widths, and c
   assert.deepEqual(ratios.at(-1), [1, phoneSplitRatio(1200)]);
   assert.equal(ratios.length, 3);
   assert.equal(store.activeSpace.splitRatio, undefined);
+
+  store.setSidebarVisible(false);
+  await nextTurn();
+  assert.equal(ratios.length, 3, 'the Store update precedes native layout');
+  measure = async () => ({ splitViewId: 3, width: 640 });
+  frameResized(store.focusedWindowId);
+  await nextTurn();
+  assert.deepEqual(ratios.at(-1), [1, phoneSplitRatio(1280)]);
 });

@@ -305,10 +305,10 @@ export interface PeekState {
   bounds: { x: number; y: number; width: number; height: number };
 }
 
-export type DropTarget =
+export type DropTarget = { spaceId?: string } & (
   | { zone: 'favorites'; beforeTabId?: string }
   | { zone: 'today'; beforeTabId?: string }
-  | { zone: 'pinned'; folderId?: string; beforeTabId?: string };
+  | { zone: 'pinned'; folderId?: string; beforeTabId?: string });
 
 /**
  * A place in any Space, for Settings → Tabs & Spaces. `beforeId` is a tab (or, in pinned, a folder)
@@ -587,7 +587,7 @@ export interface FlechaApi {
   splitWith(tabId: string): void;
   /** While a tab is dragged, the sidebar UI covers the page so it can be dropped there. */
   setTabDragging(dragging: boolean): void;
-  dropToSplit(tabId: string, side: 'left' | 'right', withTabId?: string): void;
+  dropToSplit(tabId: string, side: 'left' | 'right', withTabId?: string, spaceId?: string): void;
   splitNew(input: string): void;
   closePeek(): void;
   openDownload(id: string): void;

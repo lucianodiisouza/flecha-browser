@@ -26,7 +26,7 @@ import { SiteIcons } from './siteIcons';
 // Loaded on the first turn: its modules add webNavigation and message listeners as they load.
 import { registerFeatures, type Features } from './features';
 // Also loaded on the first turn, for the shortcut event that may have woken the background.
-import { defaultBrowserState, isFlechinha, isFlechinhaWindow, registerNative, runInPeek } from './native';
+import { defaultBrowserState, frameResized, isFlechinha, isFlechinhaWindow, registerNative, runInPeek } from './native';
 import { registerDownloads } from './downloads';
 import { registerSiteControls } from './siteControls';
 import { Favicons } from './favicons';
@@ -550,18 +550,30 @@ async function start() {
     }
     rememberLive();
     if (!closing.length) return;
+    const splitPartners = new Map<number, number>();
     const windows = new Set((await Promise.all(closing.map((c) => chrome.tabs.get(c).catch(() => undefined)))).map((t) => t?.windowId));
     for (const chromeWindowId of windows) {
       if (chromeWindowId === undefined) continue;
       const tabs = await chrome.tabs.query({ windowId: chromeWindowId });
       const left = tabs.filter((t) => !closing.includes(t.id!));
+      for (const tab of tabs) {
+        if (tab.id === undefined || !closing.includes(tab.id) || tab.splitViewId === undefined || tab.splitViewId < 0) continue;
+        const partner = left.find((other) => other.splitViewId === tab.splitViewId);
+        if (partner?.id !== undefined) splitPartners.set(tab.id, partner.id);
+      }
       if (!left.length && !placeholders.has(chromeWindowId)) await makePlaceholder(chromeWindowId);
       else if (tabs.some((t) => t.active && closing.includes(t.id!))) await showBeforeClosing(chromeWindowId, left);
     }
-    for (const chromeId of closing) {
+    await Promise.all(closing.map((chromeId) => {
+      // Closing an old pane also sends an unsplit event for the pane we kept.
+      const partner = splitPartners.get(chromeId);
+      if (partner !== undefined) ourSplits.set(partner, 'unsplit');
       ours.add(chromeId);
-      void chrome.tabs.remove(chromeId).catch(() => ours.delete(chromeId));
-    }
+      return chrome.tabs.remove(chromeId).catch(() => {
+        ours.delete(chromeId);
+        if (partner !== undefined && ourSplits.get(partner) === 'unsplit') ourSplits.delete(partner);
+      });
+    }));
   }
 
   /**
@@ -689,11 +701,13 @@ async function start() {
       // Split tabs must be next to each other, left first.
       await chrome.tabs.move(left, { index: -1 }).catch(() => undefined);
       await chrome.tabs.move(right, { index: -1 }).catch(() => undefined);
-      await chrome.tabs.createSplit([left, right]).catch((err) => {
+      const created = await chrome.tabs.createSplit([left, right]).then(() => true, (err) => {
         ourSplits.delete(left);
         ourSplits.delete(right);
         console.warn('Flecha shell: split failed', err);
+        return false;
       });
+      if (created && store.activeSpaceIn(windowId).splitMode === 'responsive') broadcastTo(chromeWindowId, 'split-layout');
     }
   }
 
@@ -729,19 +743,17 @@ async function start() {
   }
 
   /** A tab dropped on the page: show it beside the page, on the side it was dropped. */
-  function dropToSplit(tabId: string, side: 'left' | 'right', withTabId?: string) {
+  function dropToSplit(tabId: string, side: 'left' | 'right', withTabId?: string, spaceId?: string) {
     const windowId = here();
     const chromeWindowId = hereChrome();
     frameOf(chromeWindowId).tabDragging = false;
     sendFrame(chromeWindowId);
     const space = store.activeSpaceIn(windowId);
-    const target = withTabId ?? pageSplitTarget(space);
-    if (!withTabId && space.split?.includes(tabId)) return;
+    if (spaceId !== undefined && spaceId !== space.id) return;
+    const target = withTabId ?? pageSplitTarget(space, tabId);
     if (!canDropToSplit(store.state.tabs, tabId, target)) return;
     const ids = store.allTabIds(space, windowId);
     if (!ids.includes(tabId) || !ids.includes(target)) return;
-    // A responsive mirror only exists for its split; it goes away when something else takes its place.
-    if (space.splitMode === 'responsive') exitSplit(windowId);
     store.splitWith(tabId, side, windowId, target);
   }
 
@@ -940,7 +952,7 @@ async function start() {
       { label: 'Open in Flechinha', run: does('openFlechinha', tab.url, tabId) },
       SEPARATOR,
       // An incognito window has just its tabs: nothing to pin, no other Space.
-      ...(incognito
+      ...(incognito || tab.device === 'mobile'
         ? []
         : [
             { label: zone === 'today' ? 'Pin Tab' : 'Unpin Tab', run: does('togglePin', tabId) },
@@ -1193,6 +1205,10 @@ async function start() {
     setSidebarWidth: (width: number) => {
       if (Number.isFinite(width)) store.setSidebarWidth(width);
     },
+    'frame:resized': () => {
+      const windowId = windowOf(callerWindow());
+      if (windowId && store.activeSpaceIn(windowId).splitMode === 'responsive') frameResized(windowId);
+    },
     setSidebarPeek: (peek: boolean) => {
       const frame = frameOf(hereChrome());
       if (store.sidebarVisibleIn(here()) || frame.sidebarPeek === !!peek) return;
@@ -1215,8 +1231,8 @@ async function start() {
     },
     splitWith: (id: string) => store.splitWith(id, 'right', here()),
     exitSplit: () => exitSplit(),
-    dropToSplit: (id: string, side: string, withId?: string) =>
-      dropToSplit(String(id), side === 'left' ? 'left' : 'right', typeof withId === 'string' ? withId : undefined),
+    dropToSplit: (id: string, side: string, withId?: string, spaceId?: string) =>
+      dropToSplit(String(id), side === 'left' ? 'left' : 'right', typeof withId === 'string' ? withId : undefined, spaceId),
     splitNew: (input: string) => {
       const windowId = here();
       store.splitWith(openTab(input, false, windowId).id, 'right', windowId);

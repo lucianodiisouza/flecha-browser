@@ -2,8 +2,10 @@
  * Extension buttons in the sidebar. Flecha hides Chromium's toolbar, so the frame page shows
  * the toolbar's extension actions instead (patch 0056) and runs them: a popup opens below its
  * button, and right-click shows the extension's own menu (options, pin, remove). The puzzle
- * button after them opens Chromium's extensions menu there (patch 0071).
+ * button opens Chromium's extensions menu there (patch 0071).
  */
+import { toast } from './settingsUi';
+
 const surface = document.documentElement.dataset.surface;
 if (surface === 'window' && typeof chrome.flechaPrivate?.getExtensionActions === 'function') void showExtensionActions();
 
@@ -20,7 +22,9 @@ async function showExtensionActions() {
   // A browser without patch 0071 has no extensions menu to show.
   const hasMenu = typeof chrome.flechaPrivate.showExtensionsMenu === 'function';
   menuButton.hidden = !hasMenu;
-  if (hasMenu) menuButton.addEventListener('click', () => void chrome.flechaPrivate.showExtensionsMenu(windowId, anchor(menuButton)));
+  if (hasMenu) menuButton.addEventListener('click', () => {
+    void chrome.flechaPrivate.showExtensionsMenu(windowId, anchor(menuButton)).catch(() => toast('Couldn’t open the Extensions menu.'));
+  });
   let collapsed = false;
   toggle.addEventListener('click', () => {
     collapsed = !collapsed;

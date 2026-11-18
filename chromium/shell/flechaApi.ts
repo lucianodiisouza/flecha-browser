@@ -48,6 +48,13 @@ let frameState: { sidebar: chrome.flechaPrivate.SidebarMode; overlay: boolean; s
 /** The width the sidebar is being dragged to, until the saved state has it. */
 let resizing: number | undefined;
 const windowId = surface === 'window' && framed ? chrome.flechaPrivate.getWindowId() : undefined;
+if (windowId && typeof chrome.flechaPrivate.setSplitRatio === 'function') {
+  const measure = () => void invoke('frame:resized').catch(() => undefined);
+  // The frame's viewport changes after Chromium lays out the sidebar and panes.
+  window.addEventListener('resize', measure);
+  // A new native split reports membership before the panes have both resized.
+  on('split-layout', () => requestAnimationFrame(measure));
+}
 function applyFrame() {
   if (!windowId || !frameState || !lastState) return;
   const background = spaceTint(lastState.tint, systemDark.matches);

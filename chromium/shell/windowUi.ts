@@ -130,6 +130,7 @@ export async function importFromBrowser() {
     let browsers: DetectedBrowser[];
     try {
       browsers = await invoke<DetectedBrowser[]>('detectBrowsers');
+      if (!Array.isArray(browsers)) throw new Error('Browser discovery is unavailable.');
     } catch (error) {
       return note('Couldn’t look for your browsers', error instanceof Error ? error.message : 'Browser discovery failed.');
     }
@@ -146,9 +147,9 @@ export async function importFromBrowser() {
       defaultId: 0,
       cancelId: buttons.length - 1,
     });
-    const picked = answer < browsers.length ? browserSource(browsers[answer]) : buttons[answer] === BOOKMARKS_FILE ? await bookmarksFileSource() : undefined;
-    if (!picked) return;
     try {
+      const picked = answer < browsers.length ? browserSource(browsers[answer]) : buttons[answer] === BOOKMARKS_FILE ? await bookmarksFileSource() : undefined;
+      if (!picked) return;
       const preview = await picked.preview();
       if (!hasImport(preview)) return note(`Nothing to import from ${picked.name}`, preview.warnings.join('\n') || 'No bookmarks or history were found.');
       const detail = [
@@ -157,10 +158,10 @@ export async function importFromBrowser() {
         ...preview.warnings,
       ].join('\n');
       // Merge joins Spaces of the same name and leaves out tabs you or the favorites have; Add as New keeps everything.
-      const buttons = preview.spaces.length ? ['Merge', 'Add as New', 'Cancel'] : ['Import', 'Cancel'];
-      const answer = await askDialog({ message: `Import from ${picked.name}?`, detail, buttons, defaultId: 0, cancelId: buttons.length - 1 });
-      if (answer === buttons.length - 1) return;
-      const mode = buttons[answer] === 'Add as New' ? 'append' : 'merge';
+      const choices = preview.spaces.length ? ['Merge', 'Add as New', 'Cancel'] : ['Import', 'Cancel'];
+      const choice = await askDialog({ message: `Import from ${picked.name}?`, detail, buttons: choices, defaultId: 0, cancelId: choices.length - 1 });
+      if (choice === choices.length - 1) return;
+      const mode = choices[choice] === 'Add as New' ? 'append' : 'merge';
       // New Spaces from other Arc Profiles can have Separate Cookies and Logins; one that joins yours keeps its own.
       let isolate = preview.canIsolate ? preview.spaces.flatMap((s, i) => (s.profile && !(s.matches && mode === 'merge') ? [i] : [])) : [];
       if (isolate.length) {
@@ -175,9 +176,10 @@ export async function importFromBrowser() {
         if (separate !== 0) isolate = [];
       }
       const r = await picked.run({ mode, isolate, spacesKey: preview.spacesKey });
-      return note(`Imported from ${picked.name}`, [resultLine(r), ...r.warnings, ...r.details].filter(Boolean).join('\n') || 'Nothing to import');
+      const result = resultLine(r);
+      return note(result ? `Imported from ${picked.name}` : `Nothing imported from ${picked.name}`, [result, ...r.warnings, ...r.details].filter(Boolean).join('\n') || 'Nothing to import');
     } catch {
-      return note(`Couldn’t import ${picked.name}`, 'Try again.');
+      return note('Couldn’t import', 'Try again.');
     }
   });
 }

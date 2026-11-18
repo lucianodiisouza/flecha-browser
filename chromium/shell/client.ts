@@ -3,13 +3,18 @@
  * ipcRenderer. cmd() fires a command, invoke() awaits a reply, on() listens for events.
  */
 import type { Message } from './protocol';
+import { toast } from './settingsUi';
 
 type Reply = { resolve: (value: unknown) => void; reject: (error: Error) => void };
 type Connection = { port: chrome.runtime.Port; replies: Map<number, Reply>; openedAt: number };
 const listeners = new Map<string, Array<(...args: any[]) => void>>();
+const reconnectListeners = new Set<() => void>();
 let nextId = 1;
 let current: Connection | undefined;
 let retryDelay = 0;
+let invalidated = false;
+const heartbeat = setInterval(() => post({ type: 'ping' }), 20_000);
+const contextInvalidated = (message?: string) => message === 'Extension context invalidated.';
 // Use upstream's backoff when the service worker repeatedly drops the connection.
 const STABLE_MS = 10_000;
 const RETRY_MAX_MS = 5_000;
@@ -19,27 +24,34 @@ function scheduleRetry(wasStable = false) {
   setTimeout(connect, retryDelay);
 }
 
-function disconnected(connection: Connection) {
+function stop() {
+  invalidated = true;
+  clearInterval(heartbeat);
+}
+
+function disconnected(connection: Connection, terminal = false) {
   if (current !== connection) return;
   current = undefined;
   for (const reply of connection.replies.values()) reply.reject(new Error('Flecha’s background restarted'));
   connection.replies.clear();
-  scheduleRetry(Date.now() - connection.openedAt >= STABLE_MS);
+  if (terminal) stop();
+  else scheduleRetry(Date.now() - connection.openedAt >= STABLE_MS);
 }
 
 function connect() {
+  if (typeof chrome.runtime?.connect !== 'function') return stop();
   let port: chrome.runtime.Port;
   try {
     port = chrome.runtime.connect({ name: 'flecha' });
-  } catch {
-    scheduleRetry();
+  } catch (error) {
+    if (error instanceof Error && contextInvalidated(error.message)) stop();
+    else scheduleRetry();
     return;
   }
   const connection: Connection = { port, replies: new Map(), openedAt: Date.now() };
   current = connection;
   port.onDisconnect.addListener(() => {
-    void chrome.runtime.lastError;
-    disconnected(connection);
+    disconnected(connection, contextInvalidated(chrome.runtime?.lastError?.message));
   });
   port.onMessage.addListener((message: Message) => {
     if (current !== connection) return;
@@ -52,22 +64,25 @@ function connect() {
       for (const fn of listeners.get(message.name) ?? []) fn(...message.args);
     }
   });
+  for (const cb of reconnectListeners) cb();
 }
 
 function post(message: Message, reply?: Reply) {
   const connection = current;
   if (!connection) {
     reply?.reject(new Error('Flecha’s background can’t be reached'));
-    return;
+    return false;
   }
   if (message.type === 'invoke' && reply) connection.replies.set(message.id, reply);
   try {
     connection.port.postMessage(message);
+    return true;
   } catch (error) {
     const reason = error instanceof Error ? error : new Error(String(error));
     // GinPort also throws for serialization failures, which leave the port usable.
-    if (reason.message === 'Attempting to use a disconnected port object' || reason.message === 'Extension context invalidated.') {
-      disconnected(connection);
+    const terminal = contextInvalidated(reason.message);
+    if (terminal || reason.message === 'Attempting to use a disconnected port object') {
+      disconnected(connection, terminal);
       try {
         connection.port.disconnect();
       } catch {
@@ -77,16 +92,24 @@ function post(message: Message, reply?: Reply) {
       if (message.type === 'invoke') connection.replies.delete(message.id);
       reply?.reject(reason);
     }
+    return false;
   }
 }
 
 connect();
-setInterval(() => post({ type: 'ping' }), 20_000);
+
+/** A new connection can refresh reads. Mutations may already have run before a port closed. */
+export function onReconnect(listener: () => void) {
+  reconnectListeners.add(listener);
+}
 
 export const cmd =
   (name: string) =>
-  (...args: unknown[]) =>
-    post({ type: 'cmd', name, args });
+  (...args: unknown[]) => {
+    const sent = post({ type: 'cmd', name, args });
+    if (!sent) toast(invalidated ? 'Flecha didn’t send this command. Reload this page.' : 'Flecha didn’t send this command. Try again.');
+    return sent;
+  };
 
 export function invoke<T = unknown>(name: string, ...args: unknown[]): Promise<T> {
   const id = nextId++;

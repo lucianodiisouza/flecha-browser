@@ -276,7 +276,11 @@ function registerFlechinha(ctx: NativeContext) {
 
 // ---- split ratio (patch 0019) ------------------------------------------------------------
 
-let reapplyResponsiveRatio: ((windowId: string) => void) | undefined;
+let applySplitRatio: ((windowId: string, reset?: boolean) => void) | undefined;
+
+export function frameResized(windowId: string) {
+  applySplitRatio?.(windowId);
+}
 
 if (has('setSplitRatio')) {
   // Keep a user-selected ratio in a regular split and restore the phone width in a responsive split.
@@ -287,7 +291,7 @@ if (has('setSplitRatio')) {
       if (!windowId) return;
       const space = ctx.store.activeSpaceIn(windowId);
       if (space.split?.[0] !== id) return;
-      if (space.splitMode === 'responsive') reapplyResponsiveRatio?.(windowId);
+      if (space.splitMode === 'responsive') applySplitRatio?.(windowId, true);
       else ctx.store.setSplitRatio(ratio, windowId);
     }),
   );
@@ -336,7 +340,7 @@ function registerSplitRatio(ctx: NativeContext) {
     }
     for (const win of store.state.windows) void applyWindow(win.id);
   };
-  reapplyResponsiveRatio = (windowId) => void applyWindow(windowId, true);
+  applySplitRatio = applyWindow;
   apply();
   store.onChange((change) => {
     if (change === 'structure') apply();

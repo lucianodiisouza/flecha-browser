@@ -511,7 +511,10 @@ export function registerNativeHost(ctx: NativeHostContext) {
 
   function attach(chromeId: number): Promise<void> {
     const cleanup = releasing.get(chromeId);
-    if (cleanup) return cleanup.then(() => attach(chromeId));
+    if (cleanup) {
+      const previous = attaching.get(chromeId);
+      return Promise.all([cleanup, previous?.catch(() => undefined)]).then(() => attach(chromeId));
+    }
     // Attached counts from the debugger's attach, but commands wait until the tab is awake and set
     // up: a call during that time waits for it too.
     let pending = attaching.get(chromeId);

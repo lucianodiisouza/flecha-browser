@@ -64,7 +64,9 @@ export function parseTargets(text: string): EnvironmentTarget[] {
     if (!parts.length) continue;
     const raw = parts[parts.length - 1];
     try {
-      const url = new URL(webAddress(raw) ?? `https://${raw}`);
+      const address = webAddress(raw, { allowBareHost: true });
+      if (!address) continue;
+      const url = new URL(address);
       if (url.protocol !== 'http:' && url.protocol !== 'https:') continue;
       const label = parts.length > 1 ? parts.slice(0, -1).join(' ') : url.host;
       targets.push({ label, origin: url.origin });

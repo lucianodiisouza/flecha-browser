@@ -33,8 +33,9 @@ test('a folded Pinned section is shared by its Space and survives a save', () =>
   assert.equal(store.windowView(first).spaces.find((space) => space.id === personal).pinnedCollapsed, true);
   assert.equal(store.windowView(second).spaces.find((space) => space.id === personal).pinnedCollapsed, true);
   const saved = decodeState(store.serialize());
-  assert.equal(saved.spaces.find((space) => space.id === personal).pinnedCollapsed, true);
-  assert.equal(saved.spaces.find((space) => space.id === work).pinnedCollapsed, undefined);
+  const restored = new Store({ load: () => saved, save: () => {} });
+  assert.equal(restored.windowView(first).spaces.find((space) => space.id === personal).pinnedCollapsed, true);
+  assert.equal(restored.windowView(first).spaces.find((space) => space.id === work).pinnedCollapsed, undefined);
 });
 
 test('a version 1 state becomes one window with each Space\'s Today tabs and selection', () => {
@@ -252,6 +253,11 @@ test('taking a pinned target from a responsive split disposes of its phone mirro
   const pinned = store.addTab('https://example.com/pin', { windowId: second });
   store.togglePin(pinned.id, second);
   const mirror = store.openResponsive(second);
+  store.togglePin(mirror, second);
+  store.toggleFavorite(mirror, second);
+  assert.deepEqual(store.activeSpaceIn(second).today, [mirror]);
+  assert.equal(store.locate(mirror).zone, 'today');
+  assert.equal(store.placeTab(mirror, { zone: 'favorites' }, second), false);
   store.activate(mirror, { windowId: second });
   const source = store.addTab('https://example.com/source', { windowId: first });
 
@@ -265,6 +271,17 @@ test('taking a pinned target from a responsive split disposes of its phone mirro
   assert.deepEqual(displaced.today, []);
   assert.equal(store.state.tabs[mirror], undefined);
   assert.deepEqual(store.state.archive, []);
+});
+
+test('a stale sidebar destination leaves the dragged tab in its original Space', () => {
+  const { store, first, personal, work } = twoWindows();
+  const source = store.addTab('https://example.com/source', { windowId: first });
+  const oldFolder = store.newFolder('Original folder', {}, first);
+  store.switchSpace(work, first);
+  store.moveTab(source.id, { zone: 'pinned', spaceId: personal, folderId: oldFolder }, first);
+  store.moveTab(source.id, { zone: 'today', spaceId: work, beforeTabId: 'gone' }, first);
+  assert.deepEqual(store.activeSpaceIn(first).today, []);
+  assert.equal(store.locate(source.id).space.id, personal);
 });
 
 test('each window hides or shows its own sidebar; new windows start as the last choice', () => {

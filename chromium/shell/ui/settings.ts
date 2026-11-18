@@ -5,6 +5,7 @@ import { setupVsrPane } from './vsrPane.js';
 import { setupDebugPane } from './debugPane.js';
 import { isEnter } from '../lib/keys';
 import { importFromBrowser } from '../windowUi';
+import { onReconnect } from '../client';
 
 declare global {
   interface Window {
@@ -414,10 +415,10 @@ function renderAgent(view: SettingsView) {
 
 makeDefault.addEventListener('click', async () => render(await api.makeDefaultBrowser()));
 // macOS asks for confirmation in its own dialog, so check again when the window regains focus.
-window.addEventListener('focus', async () => render(await api.get()));
+window.addEventListener('focus', refresh);
 // The agent bridge's address and the native host's errors come later than the change that asked for them.
 // Only the agent card redraws, so a shortcut keycap with focus keeps it.
-api.onChange(async () => renderAgent(await api.get()));
+api.onChange(() => void api.get().then(renderAgent, console.error));
 
 document.getElementById('openBoosts')!.addEventListener('click', () => api.openBoosts());
 document.getElementById('showTour')!.addEventListener('click', () => api.showTour());
@@ -442,4 +443,9 @@ searchEngine.addEventListener('change', async () =>
 );
 adBlock.addEventListener('change', async () => render(await api.set({ adBlock: adBlock.checked })));
 
-api.get().then(render);
+function refresh() {
+  void api.get().then(render, console.error);
+}
+
+onReconnect(refresh);
+refresh();

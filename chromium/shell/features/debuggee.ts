@@ -6,7 +6,7 @@
  */
 const PROTOCOL = '1.3';
 
-const holders = new Map<number, Set<string>>();
+const holders = new Map<number, Map<string, symbol>>();
 const attaching = new Map<number, Promise<void>>();
 const detaching = new Map<number, Promise<void>>();
 const detachListeners: Array<(tabId: number, reason: string) => void> = [];
@@ -26,7 +26,7 @@ export function onDebuggerDetach(fn: (tabId: number, reason: string) => void) {
 export async function acquire(tabId: number, holder: string): Promise<void> {
   let owners = holders.get(tabId);
   if (!owners) {
-    const queued = new Set<string>();
+    const queued = new Map<string, symbol>();
     holders.set(tabId, queued);
     owners = queued;
     const attach = (detaching.get(tabId) ?? Promise.resolve())
@@ -50,9 +50,10 @@ export async function acquire(tabId: number, holder: string): Promise<void> {
       });
     attaching.set(tabId, attach);
   }
-  owners.add(holder);
+  const claim = owners.get(holder) ?? Symbol(holder);
+  owners.set(holder, claim);
   await attaching.get(tabId);
-  if (holders.get(tabId) !== owners || !owners.has(holder)) throw new Error('Debugger attachment was released');
+  if (holders.get(tabId) !== owners || owners.get(holder) !== claim) throw new Error('Debugger attachment was released');
 }
 
 /** Resolves false when Chromium refuses to attach. */

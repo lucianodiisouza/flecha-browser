@@ -870,6 +870,23 @@ body {
   background-image: linear-gradient(to left, color-mix(in srgb, var(--blue) 25%, transparent) 50%, transparent 50%);
 }
 
+@media (forced-colors: active) {
+  .row[data-tab-id]:is(.drop-split-left, .drop-split-right)::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border: 1px solid Highlight;
+    border-radius: inherit;
+    pointer-events: none;
+  }
+  .row[data-tab-id].drop-split-left::after {
+    right: 50%;
+  }
+  .row[data-tab-id].drop-split-right::after {
+    left: 50%;
+  }
+}
+
 /* ---- local servers ------------------------------------------------------ */
 
 .row.local-server {

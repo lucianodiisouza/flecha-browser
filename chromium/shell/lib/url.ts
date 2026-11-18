@@ -33,24 +33,30 @@ export function resolveInput(raw: string, engine?: SearchEngineId): string {
 }
 
 /** What was typed as a URL, completed (`github.com` → `https://github.com`); undefined when it reads as a search. */
-export function webAddress(raw: string): string | undefined {
+export function webAddress(raw: string, { allowBareHost = false } = {}): string | undefined {
   const input = raw.trim();
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input) || /^(about|data|file|mailto):/i.test(input)) return input;
-  const local = /^(localhost|[a-z0-9.-]+\.localhost|(?:\d{1,3}\.){3}\d{1,3}|\[::1\])(?=[:/?#]|$)/i.exec(input);
-  if (local) {
-    const [authority] = input.split(/[/?#]/, 1);
-    if (!/^(?::\d+)?$/.test(authority.slice(local[0].length))) return undefined;
+  const [authority] = input.split(/[/?#]/, 1);
+  const bare = /^(\[::1\]|[^:\s\\@%]+)(?::(\d+))?$/.exec(authority);
+  if (!bare) return undefined;
+  const [, host, port] = bare;
+  const ipv4 = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(host);
+  const localHost = /^(localhost|[a-z0-9.-]+\.localhost|\[::1\])$/i.test(host);
+  const domain = /\.[a-z]{2,}$/i.test(host);
+  if (!localHost && !ipv4 && (/\s/.test(input) || (!domain && !(allowBareHost && !port && /^[a-z][a-z0-9-]*$/i.test(host))))) return undefined;
+  const [first, second] = ipv4 ? host.split('.').map(Number) : [];
+  // Implicit HTTP is for loopback, the wildcard bind address and RFC 1918 networks.
+  const localIp = ipv4 && (first === 127 || first === 10 || (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168) || host === '0.0.0.0');
+  const address = `${localHost || localIp ? 'http' : 'https'}://${input}`;
+  try {
+    const url = new URL(address);
     // WHATWG URL interprets a zero-padded IPv4 octet as octal.
-    if (/(?:^|\.)0\d/.test(local[0]) && /^\d+\.[\d.]+$/.test(local[0])) return undefined;
-    try {
-      const url = new URL(`http://${input}`);
-      return /\s/.test(input) ? url.href : `http://${input}`;
-    } catch {
-      return undefined;
-    }
+    if (ipv4 && url.hostname !== host) return undefined;
+    return /\s/.test(input) ? url.href : address;
+  } catch {
+    return undefined;
   }
-  if (!/\s/.test(input) && /^[^/]+\.[a-z]{2,}(:\d+)?(\/.*)?$/i.test(input)) return `https://${input}`;
-  return undefined;
 }
 
 /**

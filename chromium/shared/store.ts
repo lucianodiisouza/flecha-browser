@@ -376,25 +376,26 @@ export class Store {
   moveTab(tabId: string, target: DropTarget, windowId?: string) {
     const tab = this.state.tabs[tabId];
     const from = this.locate(tabId);
-    if (!tab || !from || target.beforeTabId === tabId) return;
+    if (!tab || tab.device === 'mobile' || !from || target.beforeTabId === tabId) return;
     const win = this.window(windowId);
+    if (target.spaceId !== undefined && target.spaceId !== win.activeSpaceId) return;
     const targetSpace = this.savedSpace(win.activeSpaceId) ?? this.state.spaces[0];
 
-    this.detachEverywhere(tabId);
-    const insert = (list: string[]) => {
-      const i = target.beforeTabId ? list.indexOf(target.beforeTabId) : -1;
-      list.splice(i < 0 ? list.length : i, 0, tabId);
-    };
-
-    if (target.zone === 'favorites') {
-      insert(this.state.favorites);
-    } else if (target.zone === 'today') {
-      insert(this.windowSpace(targetSpace.id, win.id).today);
-    } else {
-      const parent = target.folderId ? findFolder(targetSpace.pinned, target.folderId)?.children : undefined;
-      const list = parent ?? (target.beforeTabId ? findParentList(targetSpace.pinned, target.beforeTabId) : undefined) ?? targetSpace.pinned;
+    if (target.zone === 'pinned') {
+      const list = target.folderId ? findFolder(targetSpace.pinned, target.folderId)?.children
+        : target.beforeTabId ? findParentList(targetSpace.pinned, target.beforeTabId) : targetSpace.pinned;
+      if (!list) return;
       const i = target.beforeTabId ? list.findIndex((n) => n.kind === 'tab' && n.tabId === target.beforeTabId) : -1;
-      list.splice(i < 0 ? list.length : i, 0, { kind: 'tab', tabId });
+      if (target.beforeTabId && i < 0) return;
+      this.detachEverywhere(tabId);
+      const before = list.findIndex((n) => n.kind === 'tab' && n.tabId === target.beforeTabId);
+      list.splice(before < 0 ? list.length : before, 0, { kind: 'tab', tabId });
+    } else {
+      const list = target.zone === 'favorites' ? this.state.favorites : this.windowSpace(targetSpace.id, win.id).today;
+      if (target.beforeTabId && !list.includes(target.beforeTabId)) return;
+      this.detachEverywhere(tabId);
+      const before = target.beforeTabId ? list.indexOf(target.beforeTabId) : -1;
+      list.splice(before < 0 ? list.length : before, 0, tabId);
     }
 
     if (target.zone === 'today') delete tab.homeUrl;
@@ -411,7 +412,7 @@ export class Store {
    */
   placeTab(tabId: string, to: TabPlacement, windowId?: string): boolean {
     const tab = this.state.tabs[tabId];
-    if (!tab || !this.locate(tabId) || to.beforeId === tabId || !this.placementExists(to)) return false;
+    if (!tab || tab.device === 'mobile' || !this.locate(tabId) || to.beforeId === tabId || !this.placementExists(to)) return false;
     this.detachEverywhere(tabId);
     this.insert(tabId, to, windowId);
     if (to.zone === 'today') delete tab.homeUrl;
@@ -458,11 +459,13 @@ export class Store {
   splitWith(tabId: string, side: 'left' | 'right' = 'right', windowId?: string, withTabId?: string) {
     const win = this.window(windowId);
     const ws = this.windowSpace(win.activeSpaceId, win.id);
-    const current = withTabId ?? ws.activeTabId;
+    const current = withTabId ?? (ws.splitMode === 'responsive' && ws.activeTabId === ws.split?.[1] ? ws.split?.[0] : ws.activeTabId);
     const space = this.savedSpace(win.activeSpaceId);
     if (!space || !current || current === tabId) return;
     const ids = this.allTabIds(space, win.id);
     if (!ids.includes(tabId) || !ids.includes(current)) return;
+    if (this.state.tabs[tabId]?.device === 'mobile' || this.state.tabs[current]?.device === 'mobile') return;
+    this.discardResponsiveMirror(ws);
     // A pinned tab or favorite on screen elsewhere comes here, as when it's activated.
     this.claim(tabId, win);
     this.claim(current, win);
@@ -510,6 +513,7 @@ export class Store {
 
   /** Moves a tab into another Space (pinned tabs keep being pinned there, Today tabs stay in their window). */
   moveToSpace(tabId: string, spaceId: string) {
+    if (this.state.tabs[tabId]?.device === 'mobile') return;
     const from = this.locate(tabId);
     const to = this.savedSpace(spaceId);
     if (!from?.space || !to || from.space === to) return;
@@ -1164,6 +1168,15 @@ export class Store {
 
   // ---- internals ------------------------------------------------------------------
 
+  /** A generated phone tab belongs to its responsive split. */
+  private discardResponsiveMirror(ws: WindowSpace) {
+    const mirror = ws.splitMode === 'responsive' ? ws.split?.[1] : undefined;
+    if (!mirror || this.state.tabs[mirror]?.device !== 'mobile') return;
+    this.detachEverywhere(mirror);
+    if (ws.activeTabId === mirror) delete ws.activeTabId;
+    delete this.state.tabs[mirror];
+  }
+
   /** A shared tab (pinned or favorite) shows in one window at a time: `win` takes it from the others. */
   private claim(tabId: string, win: FlechaWindow) {
     for (const other of this.state.windows) {
@@ -1171,12 +1184,7 @@ export class Store {
       for (const ws of Object.values(other.spaces)) {
         if (ws.activeTabId === tabId) ws.activeTabId = undefined;
         if (ws.split?.includes(tabId)) {
-          const mirror = ws.split[1];
-          if (ws.splitMode === 'responsive' && ws.today.includes(mirror) && this.state.tabs[mirror]?.device === 'mobile') {
-            ws.today = ws.today.filter((id) => id !== mirror);
-            if (ws.activeTabId === mirror) delete ws.activeTabId;
-            delete this.state.tabs[mirror];
-          }
+          this.discardResponsiveMirror(ws);
           delete ws.split;
           delete ws.splitMode;
         }
@@ -1204,6 +1212,7 @@ export class Store {
         const ws = win.spaces[space.id];
         // A split ends as soon as either half leaves the Space.
         if (ws?.split && !ws.split.every((id) => this.allTabIds(space, win.id).includes(id))) {
+          this.discardResponsiveMirror(ws);
           delete ws.split;
           delete ws.splitMode;
           persist = true;
