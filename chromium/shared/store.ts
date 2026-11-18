@@ -1,4 +1,4 @@
-import type { BrowserState, DropTarget, Environment, PinnedNode, SearchEngineId, Space, TabInfo, TabPlacement, WindowBounds } from './types';
+import type { ArchivedTab, BrowserState, DropTarget, Environment, LinkRule, PinnedNode, SearchEngineId, Space, TabInfo, TabPlacement, WindowBounds } from './types';
 import type { ArcImport, ImportNode } from './importApply';
 
 const SPACE_COLORS = ['#cdd9f7', '#f6d6cc', '#d3ecd5', '#e8d6f3', '#f5e7c4', '#cfe8ec'];
@@ -50,10 +50,13 @@ export class Store {
     return undefined;
   }
 
-  addTab(url: string, opts: { activate?: boolean; afterTabId?: string } = {}): TabInfo {
+  /** A Today tab in the active Space, or in `spaceId`'s (Air Traffic Control), which then becomes the active Space. */
+  addTab(url: string, opts: { activate?: boolean; afterTabId?: string; spaceId?: string } = {}): TabInfo {
     const tab: TabInfo = { id: randomUUID(), url, title: url, lastActive: Date.now() };
     this.state.tabs[tab.id] = tab;
-    const space = this.activeSpace;
+    const target = opts.spaceId ? this.state.spaces.find((s) => s.id === opts.spaceId) : undefined;
+    if (target && opts.activate !== false) this.state.activeSpaceId = target.id;
+    const space = target ?? this.activeSpace;
     const after = opts.afterTabId ? space.today.indexOf(opts.afterTabId) : -1;
     space.today.splice(after + 1, 0, tab.id);
     if (opts.activate !== false) space.activeTabId = tab.id;
@@ -405,6 +408,8 @@ export class Store {
     const ids = [...pinnedTabIds(space.pinned), ...space.today];
     for (const id of ids) delete this.state.tabs[id];
     this.state.spaces = this.state.spaces.filter((s) => s !== space);
+    // Its Air Traffic Control rules have nowhere to send links.
+    if (this.state.linkRules) this.state.linkRules = this.state.linkRules.filter((r) => r.spaceId !== spaceId);
     if (this.state.activeSpaceId === spaceId) this.state.activeSpaceId = this.state.spaces[0].id;
     this.changed();
     return ids;
@@ -512,6 +517,81 @@ export class Store {
 
   setOpenLinksInFlechinha(enabled: boolean) {
     if (typeof enabled === 'boolean') this.state.openLinksInFlechinha = enabled;
+    this.changed();
+  }
+
+  /** A folder's own icon; an empty one goes back to the folder icon. */
+  setFolderEmoji(folderId: string, emoji: string | undefined) {
+    const folder = this.findFolder(folderId)?.folder;
+    if (!folder) return;
+    const value = emoji?.trim();
+    // One emoji, whole (flags and skin tones are several code points): the first grapheme.
+    const first = value ? new Intl.Segmenter().segment(value)[Symbol.iterator]().next().value?.segment : undefined;
+    if (first) folder.emoji = first;
+    else delete folder.emoji;
+    this.changed();
+  }
+
+  /**
+   * Arc's "Reset all tabs in this Space": every pinned tab back at its pinned address.
+   * Returns the tabs that moved, for the browser to load the address in their open pages.
+   */
+  resetPinned(spaceId: string): Array<{ tabId: string; url: string }> {
+    const space = this.state.spaces.find((s) => s.id === spaceId);
+    if (!space) return [];
+    const moved: Array<{ tabId: string; url: string }> = [];
+    for (const tabId of pinnedTabIds(space.pinned)) {
+      const tab = this.state.tabs[tabId];
+      if (!tab?.homeUrl || tab.homeUrl === tab.url) continue;
+      moved.push({ tabId, url: tab.homeUrl });
+      tab.url = tab.homeUrl;
+    }
+    if (moved.length) this.changed();
+    return moved;
+  }
+
+  /** Opens whatever hides a tab in the sidebar: its folders, and a folded-away Pinned section. */
+  revealTab(tabId: string) {
+    const loc = this.locate(tabId);
+    if (!loc?.space || loc.zone !== 'pinned') return;
+    const open = (nodes: PinnedNode[]): boolean =>
+      nodes.some((n) => {
+        if (n.kind === 'tab') return n.tabId === tabId;
+        if (!open(n.children)) return false;
+        n.open = true;
+        return true;
+      });
+    open(loc.space.pinned);
+    delete loc.space.pinnedCollapsed;
+    this.changed();
+  }
+
+  /** Takes one tab out of the archive, matched by when it closed and its address. */
+  removeArchived(closedAt: number, url: string): ArchivedTab | undefined {
+    const i = this.state.archive.findIndex((a) => a.closedAt === closedAt && a.url === url);
+    if (i < 0) return undefined;
+    const [item] = this.state.archive.splice(i, 1);
+    this.changed();
+    return item;
+  }
+
+  clearArchive() {
+    this.state.archive = [];
+    this.changed();
+  }
+
+  /** Air Traffic Control's rules, cleaned up: no empty matches, only Spaces that exist. */
+  setLinkRules(rules: LinkRule[]) {
+    const spaces = new Set(this.state.spaces.map((s) => s.id));
+    this.state.linkRules = (Array.isArray(rules) ? rules : [])
+      .map((r) => ({ id: String(r?.id || randomUUID()), match: normalizeMatch(String(r?.match ?? '')), spaceId: String(r?.spaceId ?? '') }))
+      .filter((r) => r.match && spaces.has(r.spaceId))
+      .slice(0, 100);
+    this.changed();
+  }
+
+  setBlockThirdPartyCookies(block: boolean) {
+    this.state.blockThirdPartyCookies = !!block;
     this.changed();
   }
 
@@ -730,6 +810,38 @@ export class Store {
 
 export function pinnedTabIds(nodes: PinnedNode[]): string[] {
   return nodes.flatMap((n) => (n.kind === 'tab' ? [n.tabId] : pinnedTabIds(n.children)));
+}
+
+/** A rule's address as people type it, without scheme, "www." or a trailing slash: "github.com/anthropics". */
+export function normalizeMatch(match: string) {
+  return match
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z]+:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/\/+$/, '');
+}
+
+/** The Space a link goes to under Air Traffic Control: the first rule whose host (or subdomain) and path prefix match. */
+export function linkRuleSpace(rules: LinkRule[] | undefined, url: string): string | undefined {
+  let address: URL;
+  try {
+    address = new URL(url);
+  } catch {
+    return undefined;
+  }
+  if (!/^https?:$/.test(address.protocol)) return undefined;
+  const host = address.hostname.toLowerCase().replace(/^www\./, '');
+  const path = address.pathname.toLowerCase();
+  for (const rule of rules ?? []) {
+    const slash = rule.match.indexOf('/');
+    const ruleHost = slash < 0 ? rule.match : rule.match.slice(0, slash);
+    const rulePath = slash < 0 ? '' : rule.match.slice(slash);
+    if (host !== ruleHost && !host.endsWith(`.${ruleHost}`)) continue;
+    if (rulePath && path !== rulePath && !path.startsWith(`${rulePath}/`)) continue;
+    return rule.spaceId;
+  }
+  return undefined;
 }
 
 export function findFolder(nodes: PinnedNode[], id: string): Extract<PinnedNode, { kind: 'folder' }> | undefined {

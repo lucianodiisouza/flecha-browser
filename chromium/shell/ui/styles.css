@@ -1068,6 +1068,62 @@ body {
   margin-top: 4px;
 }
 
+/* ---- media card (a tab playing sound, while you're elsewhere) ------------- */
+
+.media-card {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: var(--space-2) 4px 0;
+  padding: 4px 4px 4px 8px;
+  border-radius: var(--radius-lg);
+  background: var(--fill-subtle);
+  box-shadow: inset 0 0 0 0.5px var(--line);
+}
+
+.media-card[hidden] {
+  display: none;
+}
+
+.media-open {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-xs);
+  text-align: left;
+}
+
+.media-open #media-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-card.paused #media-title {
+  color: var(--text-3);
+}
+
+/* Reveal Tab in Sidebar: the row lights up once. */
+@keyframes revealed {
+  from {
+    box-shadow: inset 0 0 0 2px var(--blue);
+  }
+  to {
+    box-shadow: inset 0 0 0 2px transparent;
+  }
+}
+
+.revealed {
+  animation: revealed 1.4s ease-out;
+}
+
+.folder-emoji {
+  font-size: 13px;
+  line-height: 1;
+}
+
 /* ---- footer ------------------------------------------------------------- */
 
 footer {

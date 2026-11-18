@@ -22,6 +22,7 @@
       <button class="nav-item" data-pane="appearance"><span class="nav-icon pink"><i data-icon="palette"></i></span>Appearance</button>
       <button class="nav-item" data-pane="tabs"><span class="nav-icon teal"><i data-icon="tab"></i></span>Tabs</button>
       <button class="nav-item" data-pane="tabs-spaces"><span class="nav-icon indigo"><i data-icon="stack"></i></span>Tabs &amp; Spaces</button>
+      <button class="nav-item" data-pane="archive"><span class="nav-icon gray"><i data-icon="archive"></i></span>Archive</button>
       <button class="nav-item" data-pane="privacy"><span class="nav-icon blue"><i data-icon="lock"></i></span>Privacy</button>
       <button class="nav-item" data-pane="downloads"><span class="nav-icon green"><i data-icon="download"></i></span>Downloads</button>
       <div class="nav-label">Developer</div>
@@ -105,7 +106,7 @@
           <label class="row">
             <div class="row-text">
               <strong>Archive Today tabs after</strong>
-              <small>Tabs you haven't looked at in a while tidy themselves away. Find them again in the command bar or the Archive menu.</small>
+              <small>Tabs you haven't looked at in a while tidy themselves away. Find them again in the command bar or in Settings › Archive.</small>
             </div>
             <select id="archiveAfter" class="select">
               <option value="12">12 hours</option>
@@ -144,6 +145,16 @@
             <button type="button" id="showIgnoredPorts" class="button">Show Again</button>
           </div>
         </div>
+        <h2 class="section-title">Air Traffic Control</h2>
+        <p class="lead">Links from other apps that match a rule open in its Space, instead of a Flechinha or the Space you're in. A site covers its subdomains; add a path to narrow it, like <span class="mono">github.com/anthropics</span>.</p>
+        <div class="card">
+          <div id="linkRules"></div>
+          <form id="linkRuleForm" class="row">
+            <input id="linkRuleMatch" class="text-field mono" placeholder="github.com" spellcheck="false" autocomplete="off" />
+            <select id="linkRuleSpace" class="select"></select>
+            <button class="button" type="submit">Add Rule</button>
+          </form>
+        </div>
       </section>
 
       <section class="pane tm-pane" data-pane="tabs-spaces">
@@ -157,6 +168,9 @@
             <button id="tm-move" class="button">Move to…</button>
             <button id="tm-delete" class="button danger">Delete</button>
           </div>
+          <button id="tm-export" class="button" data-tip="Save every Space to a file in Downloads">Export…</button>
+          <button id="tm-import" class="button">Import…</button>
+          <input id="tm-import-file" type="file" accept=".json,application/json" hidden />
           <button id="tm-new-space" class="button">New Space</button>
         </div>
         <div id="tm-tree" class="tm-tree"></div>
@@ -175,11 +189,62 @@
             </div>
             <input type="checkbox" id="adBlock" class="switch" />
           </label>
+          <label class="row">
+            <div class="row-text">
+              <strong>Block third-party cookies</strong>
+              <small>Sites can't follow you through cookies set by the pages they embed. A few sign-in buttons and embeds may stop working.</small>
+            </div>
+            <input type="checkbox" id="blockThirdPartyCookies" class="switch" />
+          </label>
+        </div>
+        <h2 class="section-title">Clear Browsing Data</h2>
+        <div class="card">
+          <label class="row">
+            <div class="row-text">
+              <strong>Time range</strong>
+              <small>Every Space, including those with separate cookies.</small>
+            </div>
+            <select id="clearRange" class="select">
+              <option value="1">Last hour</option>
+              <option value="24">Last 24 hours</option>
+              <option value="168">Last 7 days</option>
+              <option value="672">Last 4 weeks</option>
+              <option value="0">All time</option>
+            </select>
+          </label>
+          <label class="row">
+            <div class="row-text"><strong>History</strong><small>Pages you visited, downloads list and form entries.</small></div>
+            <input type="checkbox" id="clearHistory" class="switch" checked />
+          </label>
+          <label class="row">
+            <div class="row-text"><strong>Cookies and site data</strong><small>Signs you out of most sites.</small></div>
+            <input type="checkbox" id="clearCookies" class="switch" />
+          </label>
+          <label class="row">
+            <div class="row-text"><strong>Cached images and files</strong><small>Pages load a little slower the next time.</small></div>
+            <input type="checkbox" id="clearCache" class="switch" checked />
+          </label>
+          <div class="row">
+            <div class="row-text"><small id="clearStatus"></small></div>
+            <button id="clearData" class="button danger" type="button">Clear Data…</button>
+          </div>
         </div>
         <p class="footnote">
           To keep a Space's cookies and logins apart from the others, open its editor (double-click the Space name)
-          and turn on <em>Separate cookies and logins</em>.
+          and turn on <em>Separate cookies and logins</em>. History, autofill and site permissions are still shared between Spaces.
         </p>
+      </section>
+
+      <section class="pane" data-pane="archive">
+        <p class="lead">Tabs closed or tidied away from Today, newest first. Click one to open it again.</p>
+        <div class="tm-toolbar">
+          <label class="tm-search">
+            <i data-icon="search"></i>
+            <input id="archiveSearch" type="search" placeholder="Search the archive" spellcheck="false" autocomplete="off" />
+          </label>
+          <button id="clearArchive" class="button danger" type="button">Clear Archive…</button>
+        </div>
+        <div id="archiveList" class="card archive-list"></div>
       </section>
 
       <section class="pane" data-pane="downloads">

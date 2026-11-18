@@ -28,7 +28,8 @@ export interface WindowBounds {
 
 export type PinnedNode =
   | { kind: 'tab'; tabId: string }
-  | { kind: 'folder'; id: string; name: string; open: boolean; children: PinnedNode[] };
+  /** `emoji` replaces the folder icon, as in Arc. */
+  | { kind: 'folder'; id: string; name: string; open: boolean; children: PinnedNode[]; emoji?: string };
 
 export interface Space {
   id: string;
@@ -54,6 +55,17 @@ export interface ArchivedTab {
   url: string;
   title: string;
   closedAt: number;
+}
+
+/**
+ * Air Traffic Control, as in Arc: links from other apps whose address matches `match` open in
+ * that Space. `match` is a host (`github.com`, which covers its subdomains) optionally followed
+ * by a path prefix (`github.com/anthropics`).
+ */
+export interface LinkRule {
+  id: string;
+  match: string;
+  spaceId: string;
 }
 
 export interface HistoryEntry {
@@ -162,6 +174,10 @@ export interface BrowserState {
   onboarded?: boolean;
   /** Your own keyboard shortcuts by command id (Electron accelerators); null removes a shortcut. */
   keybindings?: Record<string, string | null>;
+  /** Air Traffic Control: where links from other apps go, first match wins. */
+  linkRules?: LinkRule[];
+  /** Chromium's "block third-party cookies", applied through chrome.privacy. */
+  blockThirdPartyCookies?: boolean;
 }
 
 /** One row of Settings → Keyboard Shortcuts. */
@@ -205,6 +221,8 @@ export interface UiState extends BrowserState {
   /** Current shortcut per command, for display ("⌘T"); empty when removed. */
   shortcuts: Record<string, string>;
   defaultBrowser: { isDefault: boolean; canSet: boolean };
+  /** The tab that last played sound, for the sidebar's media card while you're on another tab. */
+  media?: { tabId: string; playing: boolean };
 }
 
 export type PaletteMode = 'new-tab' | 'navigate' | 'split';
@@ -290,10 +308,14 @@ export interface SettingsView {
   openLinksInFlechinha: boolean;
   showLocalServers: boolean;
   ignoredLocalPorts: number[];
+  linkRules: LinkRule[];
+  /** For the rules' Space menus. */
+  spaces: Array<{ id: string; name: string; emoji?: string }>;
+  blockThirdPartyCookies: boolean;
 }
 
 /** The downloads folder is only changed through the folder picker, never set directly. */
-export type SettingsPatch = Partial<Omit<SettingsView, 'searchEngines' | 'downloadsFolder' | 'defaultBrowser' | 'agent' | 'shortcuts' | 'notice'>> & {
+export type SettingsPatch = Partial<Omit<SettingsView, 'searchEngines' | 'downloadsFolder' | 'defaultBrowser' | 'agent' | 'shortcuts' | 'notice' | 'spaces'>> & {
   agentEnabled?: boolean;
   /** An accelerator, null for no shortcut, or 'default' to go back to Flecha's. */
   shortcut?: { id: string; keys: string | null };
@@ -390,6 +412,17 @@ export interface SettingsApi {
   showTab(tabId: string): Promise<void>;
   /** The macOS emoji picker, for a Space's icon. */
   showEmojiPanel(): Promise<void>;
+  /** Settings → Archive: archived tabs, newest first. */
+  archive(): Promise<ArchivedTab[]>;
+  /** Reopens archived tabs (as Today tabs) or forgets them; `clear` forgets them all. Resolves with what's left. */
+  editArchive(edit: { op: 'reopen' | 'remove'; closedAt: number; url: string } | { op: 'clear' }): Promise<ArchivedTab[]>;
+  onArchive(cb: (archive: ArchivedTab[]) => void): void;
+  /** Settings → Privacy: clears browsing data from the last `sinceHours` (0: all time), every Space included. */
+  clearBrowsingData(request: { sinceHours: number; history: boolean; cookies: boolean; cache: boolean }): Promise<void>;
+  /** Saves every Space, pinned tab and favorite to a file in Downloads. */
+  exportSpaces(): Promise<void>;
+  /** Replaces the Spaces with those in an exported file, after asking. */
+  importSpaces(json: string): Promise<void>;
 }
 
 export interface InstalledExtension {
@@ -471,6 +504,8 @@ export interface FlechaApi {
   moveFolder(folderId: string, to: { folderId?: string; beforeId?: string }): void;
   toggleFolder(folderId: string): void;
   renameFolder(folderId: string, name: string): void;
+  /** An emoji in place of the folder icon; empty for the folder icon again. */
+  setFolderEmoji(folderId: string, emoji: string): void;
   moveTab(tabId: string, target: DropTarget): void;
   clearToday(): void;
   /** Brings over the Spaces and tabs of Flecha's Electron version. */
@@ -512,4 +547,16 @@ export interface FlechaApi {
   makeDefaultBrowser(): void;
   /** An empty Flechinha, for a quick lookup. */
   newFlechinha(): void;
+  /** The sidebar scrolls to a tab and opens the folders it's in (Reveal Tab in Sidebar). */
+  onRevealTab(cb: (tabId: string) => void): void;
+  revealTab(tabId?: string): void;
+  /** Sends every pinned tab of a Space back to its pinned address. */
+  resetSpaceTabs(spaceId: string): void;
+  /** The sidebar's media card: play or pause the page, or stop showing the card. */
+  mediaControl(tabId: string, action: 'toggle' | 'dismiss'): void;
+  /** The whole page, not just what's on screen, saved as a PNG in Downloads. */
+  captureFullPage(): void;
+  /** The page's selected text as a Markdown quote, with a link back. */
+  copyQuote(): void;
+  exportSpaces(): void;
 }

@@ -164,6 +164,7 @@ function render(s: UiState) {
 
   renderLocalServers(s);
   renderAgent(s);
+  renderMedia(s);
 
   const title = $('space-title');
   if (title.contentEditable !== 'true') title.textContent = space.name;
@@ -372,7 +373,7 @@ function renderNode(node: PinnedNode, space: Space, folderId: string | undefined
         editInline(name, node.name, (value) => api.renameFolder(node.id, value));
       },
     },
-    h('span', { class: 'row-icon folder-icon' }, icon(node.open ? 'folderOpen' : 'folder')),
+    h('span', { class: 'row-icon folder-icon' }, node.emoji ? h('span', { class: 'folder-emoji' }, node.emoji) : icon(node.open ? 'folderOpen' : 'folder')),
     name,
     h('span', { class: 'chevron' }, icon('chevron')),
   );
@@ -511,6 +512,16 @@ function tabTitle(tab: TabInfo) {
 
 /** Inline rename of a tab row, started from the tab's context menu. */
 function renameTab(tabId: string) {
+  // "Change Icon…" on a folder: type an emoji, or pick one with ⌃⌘Space.
+  if (tabId.startsWith('icon:')) {
+    const folderId = tabId.slice(5);
+    const slot = document.querySelector<HTMLElement>(`.row[data-folder-id="${CSS.escape(folderId)}"] .folder-icon`);
+    if (!slot) return;
+    slot.replaceChildren();
+    slot.classList.add('folder-emoji');
+    showFlash('Type an emoji, or press ⌃⌘Space to pick one');
+    return editInline(slot, '', (emoji) => api.setFolderEmoji(folderId, emoji));
+  }
   const folderName = document.querySelector<HTMLElement>(`.row[data-folder-id="${CSS.escape(tabId)}"] .folder-name`);
   if (folderName) return editInline(folderName, folderName.textContent ?? '', (name) => api.renameFolder(tabId, name));
   const row = document.querySelector<HTMLElement>(`.row[data-tab-id="${CSS.escape(tabId)}"] .title`);
@@ -941,13 +952,47 @@ window.addEventListener('blur', () => !sitePanel.hidden && toggleSitePanel(false
 
 // Confirmations ("Link copied") replace the address for a moment.
 let flashTimer: number | undefined;
-api.onFlash((message) => {
+function showFlash(message: string) {
   const wrap = $('urlbar-wrap');
   wrap.dataset.flash = message;
   wrap.classList.add('flashing');
   clearTimeout(flashTimer);
   flashTimer = window.setTimeout(() => wrap.classList.remove('flashing'), 1400);
+}
+api.onFlash(showFlash);
+
+// ---- Reveal Tab in Sidebar ----------------------------------------------------------------
+// The background opens its folders first; the row exists once that state has drawn.
+
+api.onRevealTab((tabId) => {
+  requestAnimationFrame(() => {
+    const row = document.querySelector<HTMLElement>(`#sidebar [data-tab-id="${CSS.escape(tabId)}"]`);
+    if (!row) return;
+    row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    row.classList.remove('revealed');
+    void row.offsetWidth;
+    row.classList.add('revealed');
+  });
 });
+
+// ---- the media card: a tab playing sound while you're on another ---------------------------
+
+function renderMedia(s: UiState) {
+  const card = $('media-card');
+  const tab = s.media ? s.tabs[s.media.tabId] : undefined;
+  const onScreen = s.spaces.some((sp) => sp.id === s.activeSpaceId && sp.activeTabId === s.media?.tabId);
+  card.hidden = !tab || onScreen;
+  if (!tab || card.hidden) return;
+  card.classList.toggle('paused', !s.media!.playing);
+  $('media-icon').replaceChildren(favicon(tab));
+  $('media-title').textContent = tabTitle(tab);
+  const toggle = $('media-toggle');
+  toggle.dataset.tip = s.media!.playing ? 'Pause' : 'Play';
+  toggle.replaceChildren(icon(s.media!.playing ? 'pause' : 'play'));
+}
+$('media-open').addEventListener('click', () => state?.media && api.activate(state.media.tabId));
+$('media-toggle').addEventListener('click', () => state?.media && api.mediaControl(state.media.tabId, 'toggle'));
+$('media-dismiss').addEventListener('click', () => state?.media && api.mediaControl(state.media.tabId, 'dismiss'));
 
 // ---- sites that need DRM ----------------------------------------------------------------
 
@@ -1094,6 +1139,21 @@ const ACTIONS: Array<{ label: string; keywords: string; icon: IconName; shortcut
     run: () => api.importMenu(),
   },
   { label: 'Open Boosts', keywords: 'boosts folder scripts css', icon: 'zap', run: () => api.openBoostsFolder() },
+  { label: 'Reveal Tab in Sidebar', keywords: 'reveal find show tab sidebar where', icon: 'sidebar', run: () => api.revealTab() },
+  {
+    label: 'Reset Pinned Tabs',
+    keywords: 'reset pinned tabs home space original',
+    icon: 'reload',
+    run: () => state && api.resetSpaceTabs(state.activeSpaceId),
+  },
+  { label: 'Capture Full Page', keywords: 'capture screenshot full page png image', icon: 'camera', run: () => api.captureFullPage() },
+  { label: 'Copy Selection as Quote', keywords: 'copy quote selection markdown cite', icon: 'copy', run: () => api.copyQuote() },
+  { label: 'View Archive', keywords: 'archive archived closed tabs history restore', icon: 'archive', run: () => api.openSettings('archive') },
+  { label: 'Air Traffic Control', keywords: 'air traffic control links rules route space other apps', icon: 'link', run: () => api.openSettings('tabs') },
+  { label: 'Clear Browsing Data', keywords: 'clear browsing data history cookies cache privacy', icon: 'trash', run: () => api.openSettings('privacy') },
+  { label: 'Export Spaces', keywords: 'export spaces backup save file json', icon: 'download', run: () => api.exportSpaces() },
+  // The sidebar can't open a file picker, so this lands on Settings' Import… button.
+  { label: 'Import Spaces from File', keywords: 'import spaces restore backup file json', icon: 'import', run: () => api.openSettings('tabs-spaces') },
 ];
 
 function matchingActions(q: string) {

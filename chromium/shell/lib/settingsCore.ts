@@ -26,6 +26,8 @@ export interface SettingsEffects {
   theme(theme: NonNullable<SettingsView['theme']>): void;
   agent(enabled: boolean): Promise<void>;
   adBlock(enabled: boolean): Promise<void>;
+  /** Chromium's third-party cookie blocking. */
+  thirdPartyCookies?(block: boolean): Promise<void>;
 }
 
 export function settingsView(store: Store, env: SettingsEnvironment): SettingsView {
@@ -43,6 +45,9 @@ export function settingsView(store: Store, env: SettingsEnvironment): SettingsVi
     openLinksInFlechinha: s.openLinksInFlechinha !== false,
     showLocalServers: s.showLocalServers !== false,
     ignoredLocalPorts: s.ignoredLocalPorts ?? [],
+    linkRules: s.linkRules ?? [],
+    spaces: s.spaces.map((sp) => ({ id: sp.id, name: sp.name, emoji: sp.emoji })),
+    blockThirdPartyCookies: !!s.blockThirdPartyCookies,
     agent: {
       enabled: !!s.agent?.enabled,
       endpoint: env.agentEndpoint,
@@ -103,6 +108,11 @@ export async function applySettings(store: Store, patch: SettingsPatch, effects:
     store.setLocalServers({ show: patch.showLocalServers, ignoredPorts: patch.ignoredLocalPorts });
   }
   if (typeof patch.archiveAfterHours === 'number') store.setArchiveAfter(patch.archiveAfterHours);
+  if (patch.linkRules !== undefined) store.setLinkRules(patch.linkRules);
+  if (patch.blockThirdPartyCookies !== undefined) {
+    store.setBlockThirdPartyCookies(patch.blockThirdPartyCookies);
+    await effects.thirdPartyCookies?.(!!patch.blockThirdPartyCookies).catch((err) => console.error('Third-party cookies setting failed', err));
+  }
   if (patch.agentEnabled !== undefined) {
     store.setAgent({ enabled: patch.agentEnabled, token: store.state.agent?.token || newToken() });
     await effects.agent(patch.agentEnabled).catch((err) => console.error('Agent bridge failed', err));

@@ -3,7 +3,7 @@
  * Electron's settings preload exposes, over the hub instead of ipcRenderer. It has to run
  * before ui/settings.ts, which reads `window.settings` as it loads.
  */
-import type { DetectedBrowser, ImportResult, RecordedKey, SettingsApi, SettingsView, TabsMenuAction, TabsView } from '../shared/types';
+import type { ArchivedTab, DetectedBrowser, ImportResult, RecordedKey, SettingsApi, SettingsView, TabsMenuAction, TabsView } from '../shared/types';
 import type { AskOptions, TabsMenuItem } from './lib/tabManager';
 import { cmd, invoke, on } from './client';
 import type { NotYet } from './settingsHandlers';
@@ -98,6 +98,12 @@ const api: SettingsApi = {
   onTabs: (cb) => on('settings:tabs', cb),
   showTab: (tabId) => invoke('settings:show-tab', tabId).then(() => undefined),
   showEmojiPanel: () => invoke('settings:emoji-panel').then(tellNotYet).then(() => undefined),
+  archive: () => invoke<ArchivedTab[]>('settings:archive'),
+  editArchive: (edit) => invoke<ArchivedTab[]>('settings:edit-archive', edit),
+  onArchive: (cb) => on('settings:archive', cb),
+  clearBrowsingData: (request) => invoke('settings:clear-browsing-data', request).then(() => undefined),
+  exportSpaces: () => invoke('exportSpaces').then(() => undefined),
+  importSpaces: (json) => invoke('importSpaces', json).then(() => undefined),
 };
 
 window.settings = api;
