@@ -28,6 +28,8 @@ test('typed development addresses open directly and environment badges follow ex
   for (const credentialed of [
     'test-user:fixture-password@example.com/private',
     'test-user:two words@example.com',
+    'test user:fixture-password@example.com/private',
+    'test user:two words@example.com/private',
     'test-token@example.com/private',
     'test-token@example.com',
     ':fixture-password@example.com/private',
@@ -65,6 +67,7 @@ test('typed development addresses open directly and environment badges follow ex
     assert.equal(suggestable(malformed), false);
   }
   assert.equal(suggestable('re: meet @ noon'), true);
+  assert.equal(resolveInput('contact fixture@example.com'), 'https://www.google.com/search?q=contact%20fixture%40example.com');
   assert.match(resolveInput('re: meet @ noon'), /[?&]q=re%3A%20meet%20%40%20noon/);
   assert.equal(resolveInput('re: read? Where next'), 'https://www.google.com/search?q=re%3A%20read%3F%20Where%20next');
   assert.equal(resolveInput('node.js: tutorial'), 'https://www.google.com/search?q=node.js%3A%20tutorial');

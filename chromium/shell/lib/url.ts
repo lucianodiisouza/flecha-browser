@@ -26,7 +26,7 @@ export function searchUrl(terms: string, engine?: SearchEngineId): string {
 }
 
 function hasAddressCredentials(input: string): boolean {
-  return /^(?:[^:\s/?#@]+(?::[^@]*)?|:[^@]*)@(?=\S|$)/.test(input.trim());
+  return /^(?:[^:\s/?#@]+|[^:/?#@]*:[^@]*)@(?=\S|$)/.test(input.trim());
 }
 
 export function looksLikeRejectedAddress(input: string): boolean {
