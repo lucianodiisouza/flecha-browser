@@ -535,6 +535,7 @@ async function start() {
         ? []
         : [
             { label: zone === 'today' ? 'Pin Tab' : 'Unpin Tab', run: does('togglePin', tabId) },
+            { label: 'Move to New Folder', enabled: zone !== 'favorites', run: does('moveToNewFolder', tabId) },
             { label: zone === 'favorites' ? 'Remove from Favorites' : 'Add to Favorites', run: does('toggleFavorite', tabId) },
             {
               label: 'Move to Space',
@@ -617,6 +618,10 @@ async function start() {
     newSpace: spacesOnly(() => editSpace(store.newSpace().id)),
     editSpace: spacesOnly((id: string) => editSpace(String(id))),
     newFolder: spacesOnly(() => store.newFolder()),
+    moveToNewFolder: spacesOnly((tabId: string) => {
+      const folderId = store.newFolder();
+      if (folderId) store.moveTab(String(tabId), { zone: 'pinned', folderId });
+    }),
     tabMenu: (id: string) => tabMenu(String(id)),
     spaceMenu: (id: string) => spaceMenu(String(id)),
     setOverlay: (name: string, on: boolean) => {

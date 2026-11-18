@@ -449,6 +449,10 @@ export interface FlechaApi {
   updateSpace(spaceId: string, patch: { name?: string; emoji?: string; color?: string }): void;
   setPinnedCollapsed(spaceId: string, collapsed: boolean): void;
   setLocalServersCollapsed(collapsed: boolean): void;
+  /** A folder at the end of the active Space's pinned tabs. */
+  newFolder(): void;
+  /** A new folder in the tab's Space, with the tab (pinned first, if it wasn't) inside. */
+  moveToNewFolder(tabId: string): void;
   /** Leaves this dev server port out until Settings shows it again. */
   ignoreLocalPort(port: number): void;
   setSpaceIsolated(spaceId: string, isolated: boolean): void;
