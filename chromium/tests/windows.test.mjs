@@ -284,6 +284,41 @@ test('a stale sidebar destination leaves the dragged tab in its original Space',
   assert.equal(store.locate(source.id).space.id, personal);
 });
 
+test('closing a responsive source selects the next Today tab, and reopening a window omits phone mirrors', () => {
+  const { store, second } = twoWindows();
+  const desktop = store.addTab('https://example.com/desktop', { windowId: second });
+  const alternate = store.addTab('https://example.com/alternate', { windowId: second, activate: false });
+  const mirror = store.openResponsive(second);
+  store.closeTab(desktop.id);
+  assert.equal(store.activeTabIn(second)?.id, alternate.id);
+  assert.equal(store.state.tabs[mirror], undefined);
+  const nextMirror = store.openResponsive(second);
+  store.activate(nextMirror, { windowId: second });
+  store.closeWindow(second);
+  assert.equal(store.state.tabs[nextMirror], undefined);
+  assert.equal(store.reopenWindow().id, second);
+  assert.deepEqual(store.activeSpaceIn(second).today, [alternate.id]);
+  assert.equal(store.activeTabIn(second)?.id, alternate.id);
+});
+
+test('undo restores a phone mirror only with its responsive pair', () => {
+  const { store, first } = twoWindows();
+  const desktop = store.addTab('https://example.com/desktop', { windowId: first });
+  const mirror = store.openResponsive(first);
+  store.removeTabs([desktop.id]);
+  store.undo();
+  assert.deepEqual(store.activeSpaceIn(first).split, [desktop.id, mirror]);
+  store.removeTabs([desktop.id]);
+  const left = store.addTab('https://example.com/left', { windowId: first });
+  const right = store.addTab('https://example.com/right', { windowId: first });
+  store.splitWith(right.id, 'right', first, left.id);
+  store.undo();
+  assert.deepEqual(store.activeSpaceIn(first).split, [left.id, right.id]);
+  assert.ok(store.state.tabs[desktop.id]);
+  assert.equal(store.state.tabs[mirror], undefined);
+  assert.equal(store.activeSpaceIn(first).today.includes(mirror), false);
+});
+
 test('each window hides or shows its own sidebar; new windows start as the last choice', () => {
   const { store, first, second } = twoWindows();
   store.setSidebarVisible(false, first);

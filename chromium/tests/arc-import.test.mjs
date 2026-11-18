@@ -73,6 +73,7 @@ test('bookmarks from other browsers merge into the Space named after the browser
   assert.equal((await applyBrowserImport(data, { mode: 'merge', isolate: [] }, store, noHistory)).spaces, 1);
   const again = await applyBrowserImport(data, { mode: 'merge', isolate: [] }, store, noHistory);
   assert.deepEqual({ spaces: again.spaces, merged: again.merged, bookmarks: again.bookmarks, details: again.details }, { spaces: 0, merged: 1, bookmarks: 0, details: [] });
+  assert.equal(again.changed, false);
 });
 
 /** A one-Space sidebar whose Today holds `items` (id/object pairs) listed by `today`. */

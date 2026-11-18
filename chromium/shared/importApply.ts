@@ -51,6 +51,7 @@ export interface ImportSpace {
 
 /** What Store.importSpaces did. */
 export interface ImportOutcome {
+  folders: number;
   /** New Spaces, and existing ones merged into. */
   spaces: number;
   merged: number;
@@ -140,7 +141,7 @@ export async function applyBrowserImport(
   store: Pick<Store, 'importSpaces'>,
   history: { merge(entries: HistoryEntry[]): number | Promise<number> },
 ): Promise<ImportResult> {
-  const result: ImportResult = { spaces: 0, merged: 0, bookmarks: 0, history: 0, archived: 0, warnings: [...data.warnings], details: [] };
+  const result: ImportResult = { changed: false, spaces: 0, merged: 0, bookmarks: 0, history: 0, archived: 0, warnings: [...data.warnings], details: [] };
   if (options.spacesKey !== undefined && options.spacesKey !== spacesKey(data)) {
     result.warnings.push(`${data.name}’s Spaces changed since the preview, so nothing was imported. Look at the preview again.`);
     return result;
@@ -149,9 +150,11 @@ export async function applyBrowserImport(
   if (spaces.length || data.arc) {
     const out = store.importSpaces(spaces, { mode: options.mode, favorites: data.arc?.favorites, archive: data.arc?.archive });
     Object.assign(result, { spaces: out.spaces, merged: out.merged, bookmarks: out.tabs, archived: out.archived });
+    result.changed = out.spaces + out.tabs + out.folders + out.splits + out.archived > 0;
     result.details = skippedLines(data, out.pairs, out.archiveDropped);
   }
   if (data.history.length) result.history = await history.merge(data.history);
+  result.changed ||= result.history > 0;
   return result;
 }
 

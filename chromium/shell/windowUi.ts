@@ -10,7 +10,7 @@
  */
 import type { DetectedBrowser, ImportOptions, ImportPreview, ImportResult, UiState } from '../shared/types';
 import { hasImport, previewLines, resultLine } from '../shared/importText';
-import { cmd, invoke, on } from './client';
+import { cmd, invoke, on, onReconnect } from './client';
 import type { MenuRun } from './protocol';
 import { askDialog, popupMenu, type MenuEntry, type MenuOptions } from './settingsUi';
 import { DELETE_SPACE_DETAIL } from './lib/undo';
@@ -20,7 +20,12 @@ const surface = document.documentElement.dataset.surface;
 const windowId = framed && surface === 'window' ? chrome.flechaPrivate.getWindowId() : undefined;
 
 let overlaid = false;
+const overlays = new Map<string, number>();
+export const hasWindowOverlay = () => overlays.size > 0;
 on('frame', (state: { overlay: boolean }) => (overlaid = state.overlay));
+onReconnect(() => {
+  for (const name of overlays.keys()) cmd('setOverlay')(name, true);
+});
 
 /** Resolves on the next resize (the frame growing), or after `ms` if none comes. */
 const resized = (ms: number) =>
@@ -38,12 +43,19 @@ const resized = (ms: number) =>
 async function overWindow<T>(name: string, fn: () => Promise<T>): Promise<T> {
   if (!windowId) return fn();
   const grow = !overlaid;
-  cmd('setOverlay')(name, true);
+  const users = overlays.get(name) ?? 0;
+  overlays.set(name, users + 1);
+  if (!users) cmd('setOverlay')(name, true);
   if (grow) await resized(300);
   try {
     return await fn();
   } finally {
-    cmd('setOverlay')(name, false);
+    const remaining = (overlays.get(name) ?? 1) - 1;
+    if (remaining) overlays.set(name, remaining);
+    else {
+      overlays.delete(name);
+      cmd('setOverlay')(name, false);
+    }
   }
 }
 
@@ -177,7 +189,7 @@ export async function importFromBrowser() {
       }
       const r = await picked.run({ mode, isolate, spacesKey: preview.spacesKey });
       const result = resultLine(r);
-      return note(result ? `Imported from ${picked.name}` : `Nothing imported from ${picked.name}`, [result, ...r.warnings, ...r.details].filter(Boolean).join('\n') || 'Nothing to import');
+      return note(r.changed ? `Imported from ${picked.name}` : `Nothing imported from ${picked.name}`, [result, ...r.warnings, ...r.details].filter(Boolean).join('\n') || 'Nothing to import');
     } catch {
       return note('Couldn’t import', 'Try again.');
     }

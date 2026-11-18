@@ -206,7 +206,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     try {
       return await applyBrowserImport(await read(), importOptions(options, ctx.canIsolate), store, history);
     } catch (err) {
-      return { spaces: 0, merged: 0, bookmarks: 0, history: 0, archived: 0, warnings: [helperProblem(err)], details: [] };
+      return { changed: false, spaces: 0, merged: 0, bookmarks: 0, history: 0, archived: 0, warnings: [helperProblem(err)], details: [] };
     }
   }
 
@@ -283,11 +283,27 @@ export function registerNativeHost(ctx: NativeHostContext) {
     return tabs;
   }
 
+  type UseTab = (chromeId: number) => void;
+
   async function runTool(name: AgentToolName, args: Record<string, any>): Promise<AgentResult> {
+    const used = new Set<number>();
+    const use: UseTab = (chromeId) => {
+      if (used.has(chromeId)) return;
+      used.add(chromeId);
+      working.set(chromeId, (working.get(chromeId) ?? 0) + 1);
+      if (attached.has(chromeId)) keepAttached(chromeId);
+    };
     try {
-      return await tools[name](args);
+      return await tools[name](args, use);
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
+    } finally {
+      for (const chromeId of used) {
+        const count = working.get(chromeId)! - 1;
+        if (count) working.set(chromeId, count);
+        else working.delete(chromeId);
+        if (attached.has(chromeId)) keepAttached(chromeId);
+      }
     }
   }
 
@@ -295,17 +311,18 @@ export function registerNativeHost(ctx: NativeHostContext) {
    * The tool's tab with its Chromium tab, after telling the sidebar. It stays where it is: tools
    * drive tabs through chrome.debugger, which needs no tab on screen and no window focus.
    */
-  async function target(tabId: string, action: string) {
+  async function target(tabId: string, action: string, use: UseTab) {
     if (!store.state.tabs[tabId]) throw new Error(`No tab with id ${tabId}`);
     showActivity(tabId, action);
     const chromeId = await ctx.tabs.chromeTab(tabId);
     if (chromeId === undefined) throw new Error(`Tab ${tabId} couldn’t be opened`);
+    use(chromeId);
     // A tab tab sleep discarded needs nothing more: attaching the debugger brings its page back
     // (native-agent.mjs checks it).
     return { tabId, chromeId };
   }
 
-  const tools: Record<AgentToolName, (args: Record<string, any>) => Promise<AgentResult>> = {
+  const tools: Record<AgentToolName, (args: Record<string, any>, use: UseTab) => Promise<AgentResult>> = {
     list_tabs: async () => {
       showActivity(undefined, 'listing tabs');
       return text(listTabs());
@@ -330,8 +347,8 @@ export function registerNativeHost(ctx: NativeHostContext) {
       ctx.tabs.close(tabId);
       return text('ok');
     },
-    navigate: async ({ tabId, url, action }) => {
-      const t = await target(tabId, url ? `opening ${url}` : (action ?? 'navigating'));
+    navigate: async ({ tabId, url, action }, use) => {
+      const t = await target(tabId, url ? `opening ${url}` : (action ?? 'navigating'), use);
       if (url) await chrome.tabs.update(t.chromeId, { url: String(url) });
       else if (action === 'back') await chrome.tabs.goBack(t.chromeId).catch(() => undefined);
       else if (action === 'forward') await chrome.tabs.goForward(t.chromeId).catch(() => undefined);
@@ -340,8 +357,8 @@ export function registerNativeHost(ctx: NativeHostContext) {
       const tab = await chrome.tabs.get(t.chromeId);
       return text({ url: tab.url, title: tab.title });
     },
-    read_page: async ({ tabId, format = 'text', maxChars = 40000 }) => {
-      const t = await target(tabId, 'reading the page');
+    read_page: async ({ tabId, format = 'text', maxChars = 40000 }, use) => {
+      const t = await target(tabId, 'reading the page', use);
       const code = {
         text: 'document.body?.innerText ?? ""',
         html: 'document.documentElement.outerHTML',
@@ -352,20 +369,20 @@ export function registerNativeHost(ctx: NativeHostContext) {
       const tab = await chrome.tabs.get(t.chromeId);
       return text(`# ${tab.title}\n${tab.url}\n\n${content.slice(0, maxChars)}`);
     },
-    screenshot: async ({ tabId }) => {
-      const t = await target(tabId, 'taking a screenshot');
+    screenshot: async ({ tabId }, use) => {
+      const t = await target(tabId, 'taking a screenshot', use);
       // Chromium has a tab that isn't on screen draw a frame for this (page_handler.cc).
       const shot = (await debug(t.chromeId, 'Page.captureScreenshot', { format: 'png' })) as { data: string };
       return { content: [{ type: 'image', data: await shrink(shot.data, 1280), mimeType: 'image/png' }] };
     },
-    console_logs: async ({ tabId, level, limit = 50 }) => {
-      const t = await target(tabId, 'reading the console');
+    console_logs: async ({ tabId, level, limit = 50 }, use) => {
+      const t = await target(tabId, 'reading the console', use);
       await attach(t.chromeId);
       const entries = (consoleLogs.get(t.chromeId) ?? []).filter((e) => !level || e.level === level);
       return text(entries.slice(-limit).map((e) => `[${e.level}] ${e.message}${e.source ? `  (${e.source})` : ''}`).join('\n') || '(no messages)');
     },
-    click: async ({ tabId, selector }) => {
-      const t = await target(tabId, `clicking ${selector}`);
+    click: async ({ tabId, selector }, use) => {
+      const t = await target(tabId, `clicking ${selector}`, use);
       const point = (await evaluate(t.chromeId, centerOf(String(selector)))) as { x: number; y: number } | undefined;
       if (!point) return fail(`No visible element matches ${selector}`);
       for (const type of ['mousePressed', 'mouseReleased']) {
@@ -374,8 +391,8 @@ export function registerNativeHost(ctx: NativeHostContext) {
       await settle(t.chromeId);
       return text({ clicked: selector, url: (await chrome.tabs.get(t.chromeId)).url });
     },
-    type: async ({ tabId, selector, text: value, clear, submit }) => {
-      const t = await target(tabId, `typing into ${selector ?? 'the page'}`);
+    type: async ({ tabId, selector, text: value, clear, submit }, use) => {
+      const t = await target(tabId, `typing into ${selector ?? 'the page'}`, use);
       if (selector) {
         const found = await evaluate(
           t.chromeId,
@@ -395,19 +412,19 @@ export function registerNativeHost(ctx: NativeHostContext) {
       await settle(t.chromeId);
       return text('ok');
     },
-    press_key: async ({ tabId, key }) => {
-      const t = await target(tabId, `pressing ${key}`);
+    press_key: async ({ tabId, key }, use) => {
+      const t = await target(tabId, `pressing ${key}`, use);
       await pressKey(t.chromeId, String(key));
       await settle(t.chromeId);
       return text('ok');
     },
-    evaluate: async ({ tabId, expression }) => {
-      const t = await target(tabId, 'running JavaScript');
+    evaluate: async ({ tabId, expression }, use) => {
+      const t = await target(tabId, 'running JavaScript', use);
       const result = await evaluate(t.chromeId, String(expression));
       return text(result === undefined ? 'undefined' : result);
     },
-    wait_for: async ({ tabId, selector, timeoutMs = 10000 }) => {
-      const t = await target(tabId, `waiting for ${selector ?? 'the page'}`);
+    wait_for: async ({ tabId, selector, timeoutMs = 10000 }, use) => {
+      const t = await target(tabId, `waiting for ${selector ?? 'the page'}`, use);
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
         const ready = selector
@@ -427,7 +444,8 @@ export function registerNativeHost(ctx: NativeHostContext) {
 
   const DEBUG_IDLE = 120_000;
   const DEBUG_HOLDER = 'agent';
-  const attached = new Map<number, ReturnType<typeof setTimeout>>();
+  const attached = new Map<number, ReturnType<typeof setTimeout> | undefined>();
+  const working = new Map<number, number>();
   const attaching = new Map<number, Promise<void>>();
   const releasing = new Map<number, Promise<void>>();
   const consoleLogs = new Map<number, Array<{ level: string; message: string; source: string; time: number }>>();
@@ -436,7 +454,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     clearTimeout(attached.get(chromeId));
     attached.set(
       chromeId,
-      setTimeout(() => void releaseAgent(chromeId), DEBUG_IDLE),
+      working.has(chromeId) ? undefined : setTimeout(() => void releaseAgent(chromeId), DEBUG_IDLE),
     );
   }
 

@@ -12,7 +12,8 @@ const detaching = new Map<number, Promise<void>>();
 const detachListeners: Array<(tabId: number, reason: string) => void> = [];
 
 chrome.debugger.onDetach.addListener((source, reason) => {
-  if (source.tabId === undefined) return;
+  // During a release Chromium can report detachment of the old session before its reply.
+  if (source.tabId === undefined || detaching.has(source.tabId)) return;
   holders.delete(source.tabId);
   for (const fn of detachListeners) fn(source.tabId, reason);
 });

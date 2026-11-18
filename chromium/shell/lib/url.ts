@@ -37,13 +37,16 @@ export function webAddress(raw: string, { allowBareHost = false } = {}): string 
   const input = raw.trim();
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input) || /^(about|data|file|mailto):/i.test(input)) return input;
   const [authority] = input.split(/[/?#]/, 1);
-  const bare = /^(\[::1\]|[^:\s\\@%]+)(?::(\d+))?$/.exec(authority);
+  const bare = /^(\[[\da-f:.]+\]|[^:\s\\@%\[\]]+)(?::(\d+))?$/i.exec(authority);
   if (!bare) return undefined;
   const [, host, port] = bare;
   const ipv4 = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(host);
   const localHost = /^(localhost|[a-z0-9.-]+\.localhost|\[::1\])$/i.test(host);
   const domain = /\.[a-z]{2,}$/i.test(host);
-  if (!localHost && !ipv4 && (/\s/.test(input) || (!domain && !(allowBareHost && !port && /^[a-z][a-z0-9-]*$/i.test(host))))) return undefined;
+  // Settings already expects an address. Reserve recognized URI schemes when a single label has a port.
+  const settingsHost = allowBareHost && (host.startsWith('[') ||
+    (/^[a-z][a-z0-9-]*$/i.test(host) && !(port && /^(blob|ftp|http|https|news|sms|tel|urn)$/i.test(host))));
+  if (!localHost && !ipv4 && (/\s/.test(input) || (!domain && !settingsHost))) return undefined;
   const [first, second] = ipv4 ? host.split('.').map(Number) : [];
   // Implicit HTTP is for loopback, the wildcard bind address and RFC 1918 networks.
   const localIp = ipv4 && (first === 127 || first === 10 || (first === 172 && second >= 16 && second <= 31) ||

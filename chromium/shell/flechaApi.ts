@@ -6,7 +6,7 @@ import type { FlechaApi, PaletteMode, UiState } from '../shared/types';
 import { spaceTint } from './lib/spaceTint';
 import { SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth } from '../shared/sidebarWidth';
 import { cmd, invoke, on } from './client';
-import { confirmDeleteSpace, copy, setupWindowUi, showMenu } from './windowUi';
+import { confirmDeleteSpace, copy, hasWindowOverlay, setupWindowUi, showMenu } from './windowUi';
 import { incognito } from './incognito';
 import { fetchSuggestions, suggestable } from './lib/suggest';
 import { chooseFlechaState } from './lib/flechaImport';
@@ -48,8 +48,9 @@ let frameState: { sidebar: chrome.flechaPrivate.SidebarMode; overlay: boolean; s
 /** The width the sidebar is being dragged to, until the saved state has it. */
 let resizing: number | undefined;
 const windowId = surface === 'window' && framed ? chrome.flechaPrivate.getWindowId() : undefined;
-if (windowId && typeof chrome.flechaPrivate.setSplitRatio === 'function') {
-  const measure = () => void invoke('frame:resized').catch(() => undefined);
+const measure = typeof chrome.flechaPrivate?.setSplitRatio === 'function' ? () => void invoke('frame:resized').catch(() => undefined) : undefined;
+let measuredLayout: string | undefined;
+if (windowId && measure) {
   // The frame's viewport changes after Chromium lays out the sidebar and panes.
   window.addEventListener('resize', measure);
   // A new native split reports membership before the panes have both resized.
@@ -60,11 +61,18 @@ function applyFrame() {
   const background = spaceTint(lastState.tint, systemDark.matches);
   const sidebarWidth = resizing ?? lastState.sidebarWidth ?? SIDEBAR_DEFAULT_WIDTH;
   document.documentElement.style.setProperty('--sidebar', `${sidebarWidth}px`);
-  const { sidebarInPageFullscreen, ...frame } = frameState;
+  const { sidebarInPageFullscreen, sidebar } = frameState;
+  const overlay = frameState.overlay || hasWindowOverlay();
+  const layout = `${sidebar}:${sidebarWidth}:${sidebarInPageFullscreen}`;
   void windowId.then((id) => {
-    void chrome.flechaPrivate.setFrame({ ...frame, background, sidebarWidth }, id);
+    const apply = chrome.flechaPrivate.setFrame({ sidebar, overlay, background, sidebarWidth }, id);
     // Patch 0072; a browser without it lays out a page's full screen as the sidebar's mode says.
-    if (typeof chrome.flechaPrivate.setSidebarInPageFullscreen === 'function') void chrome.flechaPrivate.setSidebarInPageFullscreen(sidebarInPageFullscreen, id);
+    const fullscreen = chrome.flechaPrivate.setSidebarInPageFullscreen?.(sidebarInPageFullscreen, id);
+    void Promise.all([apply, fullscreen]).then(() => {
+      if (!measure || measuredLayout === layout) return;
+      measuredLayout = layout;
+      requestAnimationFrame(measure);
+    }).catch(() => undefined);
   });
 }
 on('frame', (state) => {

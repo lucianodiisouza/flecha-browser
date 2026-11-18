@@ -301,21 +301,35 @@ if (has('setSplitRatio')) {
 function registerSplitRatio(ctx: NativeContext) {
   const { store, chromeTabId } = ctx;
   if (!has('setSplitRatio') || !chromeTabId) return;
-  const measurements = new Map<string, { applied?: { splitId: number; ratio: number } }>();
+  const measurements = new Map<string, {
+    request?: symbol;
+    needsReset?: boolean;
+    applied?: { splitId: number; ratio: number };
+    writing?: Promise<void>;
+  }>();
 
   const applyWindow = async (windowId: string, reset = false) => {
+    const measurement = measurements.get(windowId) ?? {};
+    const request = Symbol();
+    measurement.request = request;
+    if (reset) measurement.needsReset = true;
+    measurements.set(windowId, measurement);
+    await measurement.writing;
+    if (measurement.request !== request || !store.hasWindow(windowId)) return;
+    if (measurement.needsReset) {
+      measurement.applied = undefined;
+      measurement.needsReset = false;
+    }
     const space = store.activeSpaceIn(windowId);
     const split = space.split;
     const left = split && chromeTabId(split[0]);
     const right = split && chromeTabId(split[1]);
     if (left === undefined || right === undefined) {
-      measurements.delete(windowId);
+      measurement.applied = undefined;
       return;
     }
-    const measurement = { applied: reset ? undefined : measurements.get(windowId)?.applied };
-    measurements.set(windowId, measurement);
     const [desktop, other] = await Promise.all([chrome.tabs.get(left), chrome.tabs.get(right)]).catch(() => []);
-    if (measurements.get(windowId) !== measurement || !store.hasWindow(windowId) ||
+    if (measurement.request !== request || !store.hasWindow(windowId) ||
         store.activeSpaceIn(windowId).split !== split) return;
     const splitId = desktop?.splitViewId;
     if (splitId === undefined || splitId < 0 || other?.splitViewId !== splitId) return;
@@ -326,12 +340,10 @@ function registerSplitRatio(ctx: NativeContext) {
     }
     const previous = measurement.applied;
     if (previous?.splitId === splitId && previous.ratio === ratio) return;
-    try {
-      await chrome.flechaPrivate.setSplitRatio(left, ratio);
-      measurement.applied = { splitId, ratio };
-    } catch {
-      // The split may have changed since tabs.get(). The next split update tries again.
-    }
+    measurement.writing = chrome.flechaPrivate.setSplitRatio(left, ratio)
+      .then(() => { measurement.applied = { splitId, ratio }; })
+      .catch(() => { measurement.applied = undefined; })
+      .finally(() => { measurement.writing = undefined; });
   };
 
   const apply = () => {

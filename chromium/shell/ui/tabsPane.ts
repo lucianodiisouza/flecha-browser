@@ -921,5 +921,5 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
   for (const item of document.querySelectorAll<HTMLElement>('.nav-item')) item.addEventListener('click', closeSpaceEditor);
 
   api.onTabs(show);
-  void api.tabs().then(show);
+  void api.tabs().then(show, console.error);
 }

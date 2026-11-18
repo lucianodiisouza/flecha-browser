@@ -48,11 +48,14 @@ export function describe(url: string, environments: Environment[] = []): ActiveE
 function tone(target: EnvironmentTarget): ActiveEnvironment['tone'] {
   const address = target.origin.replace(/^[a-z]+:\/\//i, '').toLowerCase();
   const label = target.label.toLowerCase() === address ? '' : target.label.toLowerCase();
+  const staging = /\b(stag(e|ing)|preview|qa|test(ing)?|dev(elop(ment)?)?|sandbox|uat)\d*\b/;
   if (/\bprod(uction)?\b/.test(label)) return 'production';
+  if (/\blocal\b/.test(label)) return 'local';
+  if (staging.test(label)) return 'staging';
   const hostname = address.replace(/:\d+$/, '');
-  if (hostname === '[::1]' || hostname === '0.0.0.0' || /localhost|127\.0\.0\.1|\blocal\b|\.test\b|\.local\b/.test(`${label} ${address}`)) return 'local';
-  const host = hostname.replace(/\.[^.]+$/, '');
-  if (/\b(stag(e|ing)|preview|qa|test(ing)?|dev(elop(ment)?)?|sandbox|uat)\d*\b/.test(`${label} ${host}`)) return 'staging';
+  if (/^(localhost|\[::1\]|0\.0\.0\.0|127(?:\.\d+){3})$|\.(localhost|test|local)$/i.test(hostname)) return 'local';
+  const subdomains = hostname.includes('.') ? hostname.split('.').slice(0, -2).join('.') : hostname;
+  if (staging.test(subdomains)) return 'staging';
   return 'production';
 }
 

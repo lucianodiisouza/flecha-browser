@@ -16,7 +16,7 @@ import { pinnableAddress, resolveInput, sameAddress, searchEngine } from './lib/
 import { canDropToSplit, pageSplitTarget } from './lib/splitDrop';
 import { shortcutHints, type ShortcutId } from './lib/shortcuts';
 import { describe as describeEnvironment } from './lib/environments';
-import type { BrowserState, DropTarget, SearchEngineId, UiState } from '../shared/types';
+import type { BrowserState, DropTarget, FlechaApi, SearchEngineId, UiState } from '../shared/types';
 import { asWindow, broadcast, broadcastTo, call, callerWindow, handle, listen, onConnect, pageWindows } from './hub';
 import type { MenuRun } from './protocol';
 import type { MenuEntry } from './settingsUi';
@@ -550,28 +550,18 @@ async function start() {
     }
     rememberLive();
     if (!closing.length) return;
-    const splitPartners = new Map<number, number>();
     const windows = new Set((await Promise.all(closing.map((c) => chrome.tabs.get(c).catch(() => undefined)))).map((t) => t?.windowId));
     for (const chromeWindowId of windows) {
       if (chromeWindowId === undefined) continue;
       const tabs = await chrome.tabs.query({ windowId: chromeWindowId });
       const left = tabs.filter((t) => !closing.includes(t.id!));
-      for (const tab of tabs) {
-        if (tab.id === undefined || !closing.includes(tab.id) || tab.splitViewId === undefined || tab.splitViewId < 0) continue;
-        const partner = left.find((other) => other.splitViewId === tab.splitViewId);
-        if (partner?.id !== undefined) splitPartners.set(tab.id, partner.id);
-      }
       if (!left.length && !placeholders.has(chromeWindowId)) await makePlaceholder(chromeWindowId);
       else if (tabs.some((t) => t.active && closing.includes(t.id!))) await showBeforeClosing(chromeWindowId, left);
     }
     await Promise.all(closing.map((chromeId) => {
-      // Closing an old pane also sends an unsplit event for the pane we kept.
-      const partner = splitPartners.get(chromeId);
-      if (partner !== undefined) ourSplits.set(partner, 'unsplit');
       ours.add(chromeId);
       return chrome.tabs.remove(chromeId).catch(() => {
         ours.delete(chromeId);
-        if (partner !== undefined && ourSplits.get(partner) === 'unsplit') ourSplits.delete(partner);
       });
     }));
   }
@@ -666,14 +656,14 @@ async function start() {
   // Chromium shows both tabs of a split whenever either is active, which is how a Space's
   // split behaves in the Store too. Chromium places the halves by tab order.
 
-  /** Split changes we asked Chromium for, by tab: their events are ours, not the user's. */
-  const ourSplits = new Map<number, 'split' | 'unsplit'>();
+  /** Pairs confirmed in Chromium, so an old pane's removal can't clear a pending replacement. */
+  const nativePairs = new WeakSet<[string, string]>();
 
   async function syncSplits(windowId: string, chromeWindowId: number) {
-    const wanted = new Map<string, [number, number]>();
+    const wanted = new Map<string, { native: [number, number]; store: [string, string] }>();
     for (const space of store.windowView(windowId).spaces) {
       const pair = space.split?.map((id) => live.get(id));
-      if (pair?.length === 2 && pair[0] !== undefined && pair[1] !== undefined) wanted.set(pair.join(','), pair as [number, number]);
+      if (space.split && pair?.[0] !== undefined && pair[1] !== undefined) wanted.set(pair.join(','), { store: space.split, native: [pair[0], pair[1]] });
     }
     const tabs = await chrome.tabs.query({ windowId: chromeWindowId });
     const splits = new Map<number, chrome.tabs.Tab[]>();
@@ -687,49 +677,58 @@ async function start() {
         .sort((a, b) => a.index - b.index)
         .map((t) => t.id)
         .join(',');
-      if (wanted.has(key)) have.add(key);
-      else {
-        for (const t of members) ourSplits.set(t.id!, 'unsplit');
+      const pair = wanted.get(key);
+      if (pair) {
+        have.add(key);
+        nativePairs.add(pair.store);
+      } else {
         await chrome.tabs.unsplit(splitId).catch(() => undefined);
       }
     }
     const here = new Set(tabs.map((t) => t.id));
-    for (const [key, [left, right]] of wanted) {
+    for (const [key, { native: [left, right], store: pair }] of wanted) {
       if (have.has(key) || !here.has(left) || !here.has(right)) continue;
-      ourSplits.set(left, 'split');
-      ourSplits.set(right, 'split');
       // Split tabs must be next to each other, left first.
       await chrome.tabs.move(left, { index: -1 }).catch(() => undefined);
       await chrome.tabs.move(right, { index: -1 }).catch(() => undefined);
       const created = await chrome.tabs.createSplit([left, right]).then(() => true, (err) => {
-        ourSplits.delete(left);
-        ourSplits.delete(right);
         console.warn('Flecha shell: split failed', err);
         return false;
       });
-      if (created && store.activeSpaceIn(windowId).splitMode === 'responsive') broadcastTo(chromeWindowId, 'split-layout');
+      if (created) {
+        nativePairs.add(pair);
+        if (store.activeSpaceIn(windowId).splitMode === 'responsive') broadcastTo(chromeWindowId, 'split-layout');
+      }
     }
   }
 
   /** A split made or ended in Chromium itself (its split menu, the close button) goes to the Store. */
   async function splitChanged(chromeId: number, splitViewId: number, chromeWindowId: number) {
-    const ours = ourSplits.get(chromeId);
-    if (ours && ours === (splitViewId < 0 ? 'unsplit' : 'split')) return void ourSplits.delete(chromeId);
     const id = flechaIdFor(chromeId);
     const windowId = windowOf(chromeWindowId);
     if (!id || !windowId) return;
     const space = store.activeSpaceIn(windowId);
+    const pair = space.split;
+    const tabs = await chrome.tabs.query({ windowId: chromeWindowId }).catch(() => undefined);
+    if (!tabs || !store.hasWindow(windowId) || store.activeSpaceIn(windowId).split !== pair) return;
     if (splitViewId < 0) {
-      if (space.split?.includes(id)) exitSplit(windowId);
+      if (!pair?.includes(id) || !nativePairs.has(pair)) return;
+      const [left, right] = pair.map((id) => tabs.find((tab) => tab.id === live.get(id)));
+      if (left?.splitViewId !== undefined && left.splitViewId >= 0 && left.splitViewId === right?.splitViewId) return;
+      exitSplit(windowId);
       return;
     }
-    const members = (await chrome.tabs.query({ windowId: chromeWindowId }))
+    const members = tabs
       .filter((t) => t.splitViewId === splitViewId)
       .sort((a, b) => a.index - b.index)
       .map((t) => flechaIdFor(t.id!));
     const active = space.activeTabId;
     if (members.length !== 2 || !members.every(Boolean) || !active || !members.includes(active)) return;
-    if (space.split && members.every((m) => space.split!.includes(m!))) return;
+    if (pair && members.every((m) => pair.includes(m!))) {
+      nativePairs.add(pair);
+      return;
+    }
+    if (pair && !nativePairs.has(pair)) return;
     const other = members.find((m) => m !== active)!;
     store.splitWith(other, members[0] === other ? 'left' : 'right', windowId);
   }
@@ -743,14 +742,15 @@ async function start() {
   }
 
   /** A tab dropped on the page: show it beside the page, on the side it was dropped. */
-  function dropToSplit(tabId: string, side: 'left' | 'right', withTabId?: string, spaceId?: string) {
+  function dropToSplit(tabId: string, side: 'left' | 'right', destination: Parameters<FlechaApi['dropToSplit']>[2]) {
     const windowId = here();
     const chromeWindowId = hereChrome();
     frameOf(chromeWindowId).tabDragging = false;
     sendFrame(chromeWindowId);
     const space = store.activeSpaceIn(windowId);
-    if (spaceId !== undefined && spaceId !== space.id) return;
-    const target = withTabId ?? pageSplitTarget(space, tabId);
+    if (destination?.spaceId !== space.id) return;
+    const target = destination.tabId;
+    if (destination.kind === 'page' && target !== pageSplitTarget(space, tabId)) return;
     if (!canDropToSplit(store.state.tabs, tabId, target)) return;
     const ids = store.allTabIds(space, windowId);
     if (!ids.includes(tabId) || !ids.includes(target)) return;
@@ -1231,8 +1231,8 @@ async function start() {
     },
     splitWith: (id: string) => store.splitWith(id, 'right', here()),
     exitSplit: () => exitSplit(),
-    dropToSplit: (id: string, side: string, withId?: string, spaceId?: string) =>
-      dropToSplit(String(id), side === 'left' ? 'left' : 'right', typeof withId === 'string' ? withId : undefined, spaceId),
+    dropToSplit: (id: string, side: string, destination: Parameters<FlechaApi['dropToSplit']>[2]) =>
+      dropToSplit(String(id), side === 'left' ? 'left' : 'right', destination),
     splitNew: (input: string) => {
       const windowId = here();
       store.splitWith(openTab(input, false, windowId).id, 'right', windowId);

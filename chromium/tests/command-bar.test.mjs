@@ -27,6 +27,12 @@ test('typed development addresses open directly and environment badges follow ex
     { label: '203.0.113.9:3000', origin: 'https://203.0.113.9:3000' },
     { label: 'Internal', origin: 'https://intranet' },
   ]);
+  const extra = parseTargets('[fd00::1]:8443\nstaging:8443\nlocalhost-tools.example.com\nexample.test.com\napp.local');
+  assert.deepEqual(extra.map(({ origin }) => origin), [
+    'https://[fd00::1]:8443', 'https://staging:8443', 'https://localhost-tools.example.com', 'https://example.test.com', 'https://app.local',
+  ]);
+  assert.deepEqual(extra.map(({ origin }) => describe(origin, [{ id: 'extra', name: 'Extra', targets: extra }]).tone),
+    ['production', 'staging', 'production', 'production', 'local']);
 });
 
 test('developer command lookup ignores inherited properties and decodes UTF-8 JWTs', () => {

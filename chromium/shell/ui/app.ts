@@ -35,6 +35,7 @@ const SPACE_DRAG_TYPE = 'application/x-flecha-space';
 /** The Space whose button is being dragged: drag events only say what kind of thing it is. */
 let draggedSpace: string | undefined;
 let draggedTab: { id: string; spaceId: string } | undefined;
+let externalPinnedDrag = false;
 
 let state: UiState | undefined;
 
@@ -166,6 +167,7 @@ function render(s: UiState) {
     renderAgentFolder(s, space);
   }
   $('pinned-header').hidden = incognito;
+  $('scroll').style.visibility = draggedTab && draggedTab.spaceId !== space.id ? 'hidden' : '';
   updatePinnedVisibility(space);
   if (draggedTab) showSplitDrop(draggedTab.id);
 
@@ -196,7 +198,7 @@ function render(s: UiState) {
 }
 
 function updatePinnedVisibility(space: Space) {
-  const expanded = !space.pinnedCollapsed || draggedTab?.spaceId === space.id;
+  const expanded = !space.pinnedCollapsed || draggedTab?.spaceId === space.id || externalPinnedDrag;
   $('pinned').hidden = !expanded;
   $('btn-toggle-pinned').setAttribute('aria-expanded', String(expanded));
   $('pinned-count').hidden = expanded || !space.pinned.length;
@@ -686,7 +688,7 @@ function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-ove
     if (!currentTarget()) return;
     const side = splitSide(e);
     hideSplitDrop();
-    if (side && splitTarget) api.dropToSplit(id, side, splitTarget, state?.activeSpaceId);
+    if (side && splitTarget && state) api.dropToSplit(id, side, { kind: 'row', tabId: splitTarget, spaceId: state.activeSpaceId });
     else api.moveTab(id, { ...target, spaceId: state?.activeSpaceId });
   });
 }
@@ -1534,21 +1536,20 @@ document.addEventListener('mousedown', (e) => {
 // ---- drop a tab on the page to split ---------------------------------------------------
 
 const splitDrop = $('split-drop');
+let hoveredPageDrop: { half: HTMLElement; target: Parameters<FlechaApi['dropToSplit']>[2] } | undefined;
 
 /** Drop zones over the page while a tab is dragged, unless it's the tab already on screen. */
 function showSplitDrop(tabId: string) {
   const space = state?.spaces.find((s) => s.id === state!.activeSpaceId);
   if (!state || !space || draggedTab?.spaceId !== space.id || !canDropToSplit(state.tabs, tabId, pageSplitTarget(space, tabId))) return hideSplitDrop();
   if (!splitDrop.hidden) return;
-  // Where the page is: right of the docked sidebar, else the whole window inside the gap.
-  const left = document.body.dataset.sidebar === 'docked' ? $('sidebar').offsetWidth : 8;
-  Object.assign(splitDrop.style, { left: `${left}px`, top: '8px', right: '8px', bottom: '8px' });
   splitDrop.hidden = false;
   api.setTabDragging(true);
 }
 
 function hideSplitDrop() {
   if (splitDrop.hidden) return;
+  hoveredPageDrop = undefined;
   splitDrop.hidden = true;
   for (const half of splitDrop.children) half.classList.remove('over');
   api.setTabDragging(false);
@@ -1556,20 +1557,26 @@ function hideSplitDrop() {
 
 for (const half of splitDrop.querySelectorAll<HTMLElement>('.drop-half')) {
   half.addEventListener('dragover', (e) => {
-    if (splitDrop.hidden || !e.dataTransfer?.types.includes(DRAG_TYPE)) return;
+    if (splitDrop.hidden || !draggedTab || !e.dataTransfer?.types.includes(DRAG_TYPE)) return;
+    const space = state?.spaces.find((s) => s.id === draggedTab?.spaceId);
+    const target = space && pageSplitTarget(space, draggedTab.id);
+    if (!space || !target || space.id !== state?.activeSpaceId) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     half.classList.add('over');
+    hoveredPageDrop = { half, target: { kind: 'page', tabId: target, spaceId: space.id } };
   });
-  half.addEventListener('dragleave', () => half.classList.remove('over'));
+  half.addEventListener('dragleave', () => {
+    half.classList.remove('over');
+    if (hoveredPageDrop?.half === half) hoveredPageDrop = undefined;
+  });
   half.addEventListener('drop', (e) => {
     const id = e.dataTransfer?.getData(DRAG_TYPE);
     e.preventDefault();
     if (splitDrop.hidden) return;
-    splitDrop.hidden = true;
-    for (const h of splitDrop.children) h.classList.remove('over');
-    if (id) api.dropToSplit(id, half.dataset.side as 'left' | 'right', undefined, draggedTab?.spaceId);
-    else api.setTabDragging(false);
+    const hovered = hoveredPageDrop;
+    hideSplitDrop();
+    if (id && hovered?.half === half) api.dropToSplit(id, half.dataset.side as 'left' | 'right', hovered.target);
   });
 }
 
@@ -1779,6 +1786,21 @@ $('sidebar').addEventListener('contextmenu', (e) => {
 acceptDrops($('favorites'), { zone: 'favorites' });
 acceptDrops($('pinned'), { zone: 'pinned' });
 acceptDrops($('pinned-header'), { zone: 'pinned' });
+const pinnedSection = $('pinned-section');
+function externalPinExpansion(expanded: boolean) {
+  if (externalPinnedDrag === expanded) return;
+  externalPinnedDrag = expanded;
+  const space = state?.spaces.find((item) => item.id === state?.activeSpaceId);
+  if (space) updatePinnedVisibility(space);
+}
+pinnedSection.addEventListener('dragenter', (event) => {
+  if (!draggedTab && event.dataTransfer?.types.includes(DRAG_TYPE)) externalPinExpansion(true);
+});
+pinnedSection.addEventListener('dragleave', (event) => {
+  const next = event.relatedTarget instanceof Node ? event.relatedTarget : document.elementFromPoint(event.clientX, event.clientY);
+  if (!pinnedSection.contains(next)) externalPinExpansion(false);
+});
+pinnedSection.addEventListener('drop', () => externalPinExpansion(false), true);
 $('btn-toggle-pinned').onclick = () => {
   const space = state?.spaces.find((item) => item.id === state?.activeSpaceId);
   if (space) api.updateSpace(space.id, { pinnedCollapsed: !space.pinnedCollapsed });

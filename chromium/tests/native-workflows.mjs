@@ -121,7 +121,7 @@ const watchdog = setTimeout(async () => {
   if (finished) return;
   const capture = path.join(os.tmpdir(), 'flecha-harness-timeout.png');
   try { execFileSync('import', ['-display', env.DISPLAY, '-window', 'root', capture]); } catch {}
-  if (debugSession) console.error('DIAGNOSTIC', await evaluate(debugSession, "Promise.all([chrome.downloads.search({}), typeof chrome.flechaPrivate.getDownloadWarnings === 'function' ? chrome.flechaPrivate.getDownloadWarnings() : []]).then(([d, w]) => JSON.stringify({ downloads: d.map(x => [x.id, x.filename.split('/').pop(), x.state, x.error, x.canResume, x.bytesReceived]), warnings: w, rows: [...document.querySelectorAll('#downloads-list .download')].map(li => li.textContent), active: testState?.spaces.find(sp => sp.id === testState.activeSpaceId)?.activeTabId && testState.tabs[testState.spaces.find(sp => sp.id === testState.activeSpaceId).activeTabId]?.url }))").catch((error) => error.message));
+  if (debugSession) void evaluate(debugSession, "Promise.all([chrome.downloads.search({}), typeof chrome.flechaPrivate.getDownloadWarnings === 'function' ? chrome.flechaPrivate.getDownloadWarnings() : []]).then(([d, w]) => JSON.stringify({ downloads: d.map(x => [x.id, x.filename.split('/').pop(), x.state, x.error, x.canResume, x.bytesReceived]), warnings: w, rows: [...document.querySelectorAll('#downloads-list .download')].map(li => li.textContent), active: testState?.spaces.find(sp => sp.id === testState.activeSpaceId)?.activeTabId && testState.tabs[testState.spaces.find(sp => sp.id === testState.activeSpaceId).activeTabId]?.url }))").then((data) => console.error('DIAGNOSTIC', data), () => undefined);
   console.error(`FAIL the run took longer than ${deadline} ms (FLECHA_HARNESS_TIMEOUT_MS); last step is the last PASS above${waitingFor ? `, waiting for ${waitingFor}` : ''}; the harness display is in ${capture}`);
   await cleanUp();
   process.exit(1);
@@ -228,13 +228,24 @@ try {
   const stateWhere = (predicate) => evaluate(session, `testWait(${predicate})`);
   const until = async (ready, expected) => {
     // Use the native host's wait_for budget for an individual UI condition.
-    const stepDeadline = expected ? performance.now() + 10_000 : Infinity;
-    for (;;) {
-      const result = await ready();
-      if (result) return result;
-      if (performance.now() >= stepDeadline) throw new Error(`Timed out waiting for ${expected}`);
-      if (browser.exitCode !== null) throw new Error('The browser exited');
-      await new Promise(resolve => setTimeout(resolve, 50));
+    let stop = false;
+    let timer;
+    const poll = async () => {
+      while (!stop) {
+        const result = await ready();
+        if (result || stop) return result;
+        if (browser.exitCode !== null) throw new Error('The browser exited');
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    };
+    if (!expected) return poll();
+    try {
+      return await Promise.race([poll(), new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timed out waiting for ${expected}`)), 10_000);
+      })]);
+    } finally {
+      stop = true;
+      clearTimeout(timer);
     }
   };
   const domWhere = (predicate) => evaluate(session, `new Promise(resolve => { const check = () => { if ((${predicate})()) { observer.disconnect(); document.removeEventListener('focusin',check); resolve(true); } }; const observer = new MutationObserver(check); observer.observe(document.body, {subtree:true,childList:true,attributes:true}); document.addEventListener('focusin',check); check(); })`);
@@ -309,11 +320,21 @@ try {
   } finally {
     await fs.writeFile(bookmarkFile, bookmarkData);
   }
+  await evaluate(settingsImport, "document.querySelector('.shell-dialog[open] button').click()");
+  await until(() => evaluate(settingsImport, "!importButton.hasAttribute('aria-disabled')"), 'the import dialog to dismiss');
+  await evaluate(settingsImport, 'importButton.click()');
+  await until(() => evaluate(settingsImport, "document.querySelector('.shell-dialog[open] button')?.textContent === 'Chrome'"), 'the duplicate import chooser');
+  await evaluate(settingsImport, "document.querySelector('.shell-dialog[open] button').click()");
+  await until(() => evaluate(settingsImport, "document.querySelector('.shell-dialog[open] strong')?.textContent === 'Import from Chrome?'"), 'the duplicate import preview');
+  await evaluate(settingsImport, "document.querySelector('.shell-dialog[open] button').click()");
+  await until(() => evaluate(settingsImport, "document.querySelector('.shell-dialog[open] strong')?.textContent === 'Nothing imported from Chrome'"), 'the duplicate-only result');
+  assert.equal(await evaluate(settingsImport, "document.querySelector('.shell-dialog[open] p').textContent"), 'Nothing to import');
   waitingFor = undefined;
   const importWindowId = await evaluate(settingsImport, 'chrome.windows.getCurrent().then(window => window.id)');
   await evaluate(session, `chrome.windows.remove(${importWindowId})`);
   console.log('PASS Settings Import opens the browser and bookmarks-file chooser');
   console.log('PASS Settings reports when the import source has changed and nothing was imported');
+  console.log('PASS Settings reports a duplicate-only merge as unchanged');
   await rpc('newSpace');
   await stateWhere('s => s.spaces.length > 1');
   await evaluate(session, "document.querySelector('#space-done').click()");
@@ -633,6 +654,7 @@ try {
   await until(() => evaluate(session, `document.querySelector('#space-title').dataset.spaceId === ${JSON.stringify(otherDragSpace)}`), 'the new Space to render during the drag');
   assert.equal(await evaluate(session, `(() => {
     const { source, target, event } = staleTabDrag;
+    if (getComputedStyle(target).visibility !== 'hidden') throw new Error('The previous Space’s rows are still visible');
     const moveTab = flecha.moveTab;
     let submitted = false;
     flecha.moveTab = () => { submitted = true; };
@@ -667,8 +689,8 @@ try {
   await send('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'active' }] }, session);
   assert.equal(await evaluate(session, `(() => {
     const style = getComputedStyle(testTabDrag.target, '::after');
-    return style.borderStyle === 'solid' && parseFloat(style.left) === testTabDrag.target.offsetWidth / 2;
-  })()`), true, 'forced colors outline the right half');
+    return style.borderStyle === 'solid' && Math.abs(parseFloat(style.left) - testTabDrag.target.offsetWidth * 0.4) <= 1;
+  })()`), true, 'forced colors outline the right drop zone');
   if (artifacts) await fs.writeFile(path.join(artifacts, 'split-drop-forced-colors.png'), Buffer.from((await send('Page.captureScreenshot', { format: 'png' }, session)).data, 'base64'));
   await send('Emulation.setEmulatedMedia', { features: [] }, session);
   if (artifacts) {
@@ -692,11 +714,13 @@ try {
   assert.deepEqual(sidebarSplit.spaces.find(sp => sp.id === sidebarSplit.activeSpaceId).split, [a, b]);
   waitingFor = 'the two dropped tabs to share a native split';
   const splitWindowId = await evaluate(session, 'chrome.flechaPrivate.getWindowId()');
-  await until(() => evaluate(session, `chrome.tabs.query({ windowId: ${splitWindowId} }).then(tabs => {
-    const left = tabs.find(t => t.url === ${JSON.stringify(sidebarSplit.tabs[a].url)});
-    const right = tabs.find(t => t.url === ${JSON.stringify(sidebarSplit.tabs[b].url)});
-    return left && right && left.id !== right.id && left.splitViewId >= 0 && left.splitViewId === right.splitViewId;
-  })`), waitingFor);
+  const waitForNativeSplit = (leftUrl, rightUrl, removed, expected) => until(() => evaluate(session, `chrome.tabs.query({ windowId: ${splitWindowId} }).then(tabs => {
+    const left = tabs.find(t => t.url === ${JSON.stringify(leftUrl)});
+    const right = tabs.find(t => t.url === ${JSON.stringify(rightUrl)});
+    return left && right && left.id !== right.id && left.splitViewId >= 0 && left.splitViewId === right.splitViewId
+      && !tabs.some(t => t.id === ${JSON.stringify(removed)});
+  })`), expected);
+  await waitForNativeSplit(sidebarSplit.tabs[a].url, sidebarSplit.tabs[b].url, undefined, waitingFor);
   waitingFor = undefined;
   await preserved('entering split view');
   await rpc('exitSplit');
@@ -712,23 +736,62 @@ try {
   const responsivePanes = () => evaluate(session, `chrome.tabs.query({ windowId: ${splitWindowId} }).then(tabs => {
     const desktop = tabs.find(t => t.active && t.url === ${JSON.stringify(responsive.tabs[a].url)});
     const phone = desktop && tabs.find(t => t.id !== desktop.id && desktop.splitViewId >= 0 && t.splitViewId === desktop.splitViewId);
-    return phone ? { desktop: desktop.width, phone: phone.width } : null;
+    return phone ? { desktop: desktop.width, phone: phone.width, phoneId: phone.id } : null;
   })`);
   const panes = await until(async () => {
     const now = await responsivePanes();
     // The phone viewport uses the 393px width in responsiveViewport.ts.
     return now && Math.abs(now.phone - 393) <= 1 && now;
   }, 'the active desktop tab to share a native split with a phone-width pane');
+  const dockedFrame = await evaluate(session, 'innerWidth');
+  await rpc('setOverlay', 'responsive-test', true);
+  const fullFrame = await until(() => evaluate(session, `innerWidth > ${dockedFrame} && innerWidth`), 'the frame to open a full-width overlay');
   await rpc('toggleSidebar');
   await until(async () => {
     const now = await responsivePanes();
     return now && now.desktop > panes.desktop && Math.abs(now.phone - panes.phone) <= 1;
   }, 'the desktop pane to grow while the phone stays the same width');
+  assert.equal(await evaluate(session, 'innerWidth'), fullFrame);
   await rpc('toggleSidebar');
   await until(async () => {
     const now = await responsivePanes();
     return now && Math.abs(now.desktop - panes.desktop) <= 1 && Math.abs(now.phone - panes.phone) <= 1;
   }, 'the responsive panes to return to their docked widths');
+  await rpc('setOverlay', 'responsive-test', false);
+  await rpc('activate', mirror);
+  await active(mirror);
+  await evaluate(session, `(() => {
+    const source = document.querySelector('.row[data-tab-id="' + CSS.escape(${JSON.stringify(unrelated)}) + '"]');
+    const half = document.querySelector('#split-drop .drop-half[data-side=right]');
+    const event = { dataTransfer: new DataTransfer(), bubbles: true, cancelable: true };
+    source.dispatchEvent(new DragEvent('dragstart', event));
+    half.dispatchEvent(new DragEvent('dragover', event));
+    globalThis.stalePageDrop = { source, half, event };
+  })()`);
+  const originalInset = await evaluate(session, "parseFloat(getComputedStyle(document.querySelector('#split-drop')).left)");
+  await rpc('setSidebarWidth', originalInset + 1);
+  await until(() => evaluate(session, `parseFloat(getComputedStyle(document.querySelector('#split-drop')).left) === ${originalInset + 1}`), 'the drop zone to follow the resized sidebar');
+  await rpc('setSidebarWidth', originalInset);
+  await rpc('activate', b);
+  await active(b);
+  const hoveredTarget = await evaluate(session, `(async () => {
+    const { source, half, event } = stalePageDrop;
+    const dropToSplit = flecha.dropToSplit;
+    let args;
+    flecha.dropToSplit = (...values) => { args = values; };
+    try {
+      half.dispatchEvent(new DragEvent('drop', event));
+      source.dispatchEvent(new DragEvent('dragend', event));
+      if (args) await testInvoke('dropToSplit', ...args);
+      return args?.[2]?.tabId;
+    } finally {
+      flecha.dropToSplit = dropToSplit;
+      delete globalThis.stalePageDrop;
+    }
+  })()`);
+  assert.equal(hoveredTarget, a, 'the command names the page that was under the pointer');
+  await rpc('ready');
+  assert.equal(await evaluate(session, `testState.spaces.find(sp => sp.id === testState.activeSpaceId).splitMode`), 'responsive');
   await rpc('activate', mirror);
   await active(mirror);
   const overlay = await evaluate(session, `(() => {
@@ -744,13 +807,16 @@ try {
     phone.row.dispatchEvent(new DragEvent('dragend', { dataTransfer: phone.dataTransfer, bubbles: true }));
     const source = drag(${JSON.stringify(unrelated)});
     const desktopCanSplit = !splitDrop.hidden;
-    splitDrop.querySelector('.drop-half[data-side=right]').dispatchEvent(new DragEvent('drop', { dataTransfer: source.dataTransfer, bubbles: true }));
+    const half = splitDrop.querySelector('.drop-half[data-side=right]');
+    half.dispatchEvent(new DragEvent('dragover', { dataTransfer: source.dataTransfer, bubbles: true, cancelable: true }));
+    half.dispatchEvent(new DragEvent('drop', { dataTransfer: source.dataTransfer, bubbles: true }));
     source.row.dispatchEvent(new DragEvent('dragend', { dataTransfer: source.dataTransfer, bubbles: true }));
     return { phoneCanSplit, desktopCanSplit };
   })()`);
   assert.deepEqual(overlay, { phoneCanSplit: false, desktopCanSplit: true });
   const replaced = await stateWhere(`s => !s.tabs[${JSON.stringify(mirror)}] && !!s.spaces.find(sp => sp.id === s.activeSpaceId).split`);
   assert.deepEqual(replaced.spaces.find(sp => sp.id === replaced.activeSpaceId).split, [a, unrelated]);
+  await waitForNativeSplit(responsive.tabs[a].url, unrelatedUrl, panes.phoneId, 'the replacement native split to appear without the old phone tab');
   await rpc('exitSplit');
   await preserved('replacing the responsive split with a desktop tab');
   await rpc('activate', a);
@@ -766,7 +832,11 @@ try {
     const event = { dataTransfer: new DataTransfer(), bubbles: true, cancelable: true };
     row.dispatchEvent(new DragEvent('dragstart', event));
     const offered = !splitDrop.hidden;
-    if (offered) splitDrop.querySelector('.drop-half[data-side=right]').dispatchEvent(new DragEvent('drop', event));
+    if (offered) {
+      const half = splitDrop.querySelector('.drop-half[data-side=right]');
+      half.dispatchEvent(new DragEvent('dragover', event));
+      half.dispatchEvent(new DragEvent('drop', event));
+    }
     row.dispatchEvent(new DragEvent('dragend', event));
     return offered;
   })()`), true, 'a tab from a hidden split can be dropped on the visible page');
@@ -1576,6 +1646,11 @@ try {
     dataTransfer.setData('application/x-flecha-tab', ${JSON.stringify(secondTab)});
     const header = document.querySelector('#pinned-header');
     const event = { dataTransfer, bubbles: true, cancelable: true };
+    header.dispatchEvent(new DragEvent('dragenter', event));
+    if (document.querySelector('#pinned').hidden) return false;
+    header.dispatchEvent(new DragEvent('dragleave', event));
+    if (!document.querySelector('#pinned').hidden) return false;
+    header.dispatchEvent(new DragEvent('dragenter', event));
     if (header.dispatchEvent(new DragEvent('dragover', event))) return false;
     header.dispatchEvent(new DragEvent('drop', event));
     return true;

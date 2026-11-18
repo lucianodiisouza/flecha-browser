@@ -91,6 +91,7 @@ test('the agent restores focus and can replay console logs after idle on a share
   let logEnabled = false;
   let disableRuntime = Promise.withResolvers();
   let failSetup = false;
+  let readPending;
   const idleMessage = { type: 'error', args: [{ value: 'Logged while idle' }] };
   globalThis.chrome = {
     runtime: { connectNative: () => port },
@@ -121,7 +122,10 @@ test('the agent restores focus and can replay console logs after idle on a share
           logEnabled = true;
         }
         if (method === 'Log.disable') logEnabled = false;
-        if (method === 'Runtime.evaluate') return { result: { value: 'fixture body' } };
+        if (method === 'Runtime.evaluate') {
+          await readPending?.promise;
+          return { result: { value: 'fixture body' } };
+        }
       },
     },
   };
@@ -133,14 +137,20 @@ test('the agent restores focus and can replay console logs after idle on a share
   const phone = store.addTab(tab.url).id;
   assert.equal(await hold(tab.id, 'responsive'), true);
   const host = registerNativeHost({ store, broadcastState() {}, agentTabsChanged() {}, tabs: { chromeTab: async () => tab.id } });
+  readPending = Promise.withResolvers();
   port.onMessage.emit({ type: 'tool', id: 23, name: 'read_page', args: { tabId: phone } });
   await nextTurn();
   // Let Runtime replay messages, then advance to the native host's idle deadline.
   t.mock.timers.tick(100);
   await nextTurn();
+  t.mock.timers.tick(120_000);
+  await nextTurn();
+  assert.equal(emulatedFocus, true, 'an in-flight command keeps its debugger past the idle deadline');
+  readPending.resolve();
+  await nextTurn();
   assert.match(results.find(({ type }) => type === 'toolResult').result.content[0].text, /fixture body/);
   assert.equal(emulatedFocus, true);
-  t.mock.timers.tick(120_000 - 100);
+  t.mock.timers.tick(120_000);
   await nextTurn();
   assert.equal(emulatedFocus, false);
   assert.equal(logEnabled, false);
@@ -156,7 +166,7 @@ test('the agent restores focus and can replay console logs after idle on a share
   assert.match(results.find(({ id }) => id === 24).result.content[0].text, /Logged while idle/);
   await release(tab.id, 'responsive');
   assert.deepEqual(calls, [['attach', tab.id], ['disabled']]);
-  t.mock.timers.tick(120_000 - 100);
+  t.mock.timers.tick(120_000);
   await nextTurn();
   assert.deepEqual(calls, [['attach', tab.id], ['disabled'], ['disabled'], ['detach', tab.id]]);
 
@@ -197,6 +207,7 @@ test('releasing a debugger holder queued behind a detach cancels its attachment'
   const oldClaim = hold(12, 'same-holder');
   const cancelingAgain = release(12, 'same-holder');
   const newClaim = hold(12, 'same-holder');
+  chrome.debugger.onDetach.emit({ tabId: 12 }, 'target_closed');
   detach.resolve();
   assert.equal(await oldClaim, false);
   assert.equal(await newClaim, true);
@@ -206,7 +217,7 @@ test('releasing a debugger holder queued behind a detach cancels its attachment'
 
 test('the responsive split keeps the phone viewport width when the window grows', async () => {
   const { phoneSplitRatio, PHONE_WIDTH } = await loadModule('chromium/shell/lib/responsiveViewport.ts');
-  for (const total of [800, 1200]) {
+  for (const total of [800, 1200, 3760]) {
     const phoneWidth = total * (1 - phoneSplitRatio(total));
     assert.ok(Math.abs(phoneWidth - PHONE_WIDTH) < 1, 'split ratio rounds within a CSS pixel');
   }
@@ -217,11 +228,15 @@ test('responsive sizing waits for the native split, discards stale widths, and c
   const tabsUpdated = event();
   const ratioChanged = event();
   const ratios = [];
+  let write;
   let measure = async (id) => ({ splitViewId: id, width: 400 });
   globalThis.chrome = {
     flechaPrivate: {
       onSplitRatioChanged: ratioChanged,
-      setSplitRatio: async (id, ratio) => ratios.push([id, ratio]),
+      setSplitRatio: async (id, ratio) => {
+        ratios.push([id, ratio]);
+        await write?.promise;
+      },
     },
     tabs: { get: (id) => measure(id), onUpdated: tabsUpdated },
     windows: { onBoundsChanged: boundsChanged },
@@ -250,6 +265,7 @@ test('responsive sizing waits for the native split, discards stale widths, and c
   const stale = Promise.withResolvers();
   measure = () => stale.promise;
   boundsChanged.emit();
+  await nextTurn();
   measure = async () => ({ splitViewId: 3, width: 600 });
   boundsChanged.emit();
   await nextTurn();
@@ -268,6 +284,16 @@ test('responsive sizing waits for the native split, discards stale widths, and c
   assert.equal(ratios.length, 3, 'the Store update precedes native layout');
   measure = async () => ({ splitViewId: 3, width: 640 });
   frameResized(store.focusedWindowId);
+  await nextTurn();
+  assert.deepEqual(ratios.at(-1), [1, phoneSplitRatio(1280)]);
+  write = Promise.withResolvers();
+  measure = async () => ({ splitViewId: 3, width: 600 });
+  boundsChanged.emit();
+  await nextTurn();
+  measure = async () => ({ splitViewId: 3, width: 640 });
+  boundsChanged.emit();
+  assert.deepEqual(ratios.at(-1), [1, phoneSplitRatio(1200)]);
+  write.resolve();
   await nextTurn();
   assert.deepEqual(ratios.at(-1), [1, phoneSplitRatio(1280)]);
 });

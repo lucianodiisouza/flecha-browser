@@ -107,6 +107,8 @@ export interface DetectedBrowser {
 
 /** What one import brought over. Problems that didn't stop it are listed in `warnings`. */
 export interface ImportResult {
+  /** Whether anything was added, including an empty folder or a split. */
+  changed: boolean;
   /** New Spaces. */
   spaces: number;
   /** Existing Spaces that imported tabs were merged into. */
@@ -587,7 +589,7 @@ export interface FlechaApi {
   splitWith(tabId: string): void;
   /** While a tab is dragged, the sidebar UI covers the page so it can be dropped there. */
   setTabDragging(dragging: boolean): void;
-  dropToSplit(tabId: string, side: 'left' | 'right', withTabId?: string, spaceId?: string): void;
+  dropToSplit(tabId: string, side: 'left' | 'right', target: { kind: 'row' | 'page'; tabId: string; spaceId: string }): void;
   splitNew(input: string): void;
   closePeek(): void;
   openDownload(id: string): void;

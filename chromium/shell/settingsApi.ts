@@ -5,7 +5,7 @@
  */
 import type { RecordedKey, SettingsApi, SettingsView, TabsMenuAction, TabsView } from '../shared/types';
 import type { AskOptions, TabsMenuItem } from './lib/tabManager';
-import { cmd, invoke, on } from './client';
+import { cmd, invoke, on, onReconnect } from './client';
 import type { NotYet } from './settingsHandlers';
 import { askDialog, popupMenu, toast } from './settingsUi';
 import { isMac, primaryModifier } from './lib/platform';
@@ -94,7 +94,10 @@ const api: SettingsApi = {
     const picked = await popupMenu(items);
     return picked ? invoke<TabsMenuAction | undefined>('settings:tabs-menu-run', picked.run) : undefined;
   },
-  onTabs: (cb) => on('settings:tabs', cb),
+  onTabs: (cb) => {
+    on('settings:tabs', cb);
+    onReconnect(() => void api.tabs().then(cb, console.error));
+  },
   showTab: (tabId) => invoke('settings:show-tab', tabId).then(() => undefined),
   showEmojiPanel: () => invoke('settings:emoji-panel').then(tellNotYet).then(() => undefined),
 };

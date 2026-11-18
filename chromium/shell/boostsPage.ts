@@ -4,7 +4,7 @@
  * tabs), as saving the file did in Electron.
  */
 import './noPageMenu';
-import { invoke, on } from './client';
+import { invoke, on, onReconnect } from './client';
 import type { BoostFile } from './features/boosts';
 import { compileBoost } from './features/compileBoost';
 
@@ -26,7 +26,11 @@ function setStatus(text: string, error = false) {
 }
 
 async function renderList() {
-  const boosts = await invoke<BoostFile[]>('boosts:list');
+  const boosts = await invoke<BoostFile[]>('boosts:list').catch(() => {
+    setStatus('Couldn’t load Boosts.', true);
+    return undefined;
+  });
+  if (!boosts) return;
   list.replaceChildren(
     ...boosts.map((b) => {
       const li = document.createElement('li');
@@ -44,12 +48,21 @@ async function renderList() {
   $('empty').hidden = boosts.length > 0;
 }
 
-async function open(name: string) {
+async function open(name: string, reload = false) {
   if (dirty() && !confirm(`Discard your changes to ${current!.name}?`)) {
     history.replaceState(null, '', `#${encodeURIComponent(current!.name)}`);
     return;
   }
-  current = name ? await invoke<BoostFile | undefined>('boosts:get', name) : undefined;
+  const oldCode = code.value;
+  let file: BoostFile | undefined;
+  try {
+    file = name ? await invoke<BoostFile | undefined>('boosts:get', name) : undefined;
+  } catch {
+    setStatus('Couldn’t load this Boost.', true);
+    return;
+  }
+  if (selected() !== name || code.value !== oldCode) return;
+  current = file;
   main.classList.toggle('empty', !current);
   document.title = current ? `${current.name} · Boosts` : 'Boosts';
   if (current) {
@@ -57,15 +70,22 @@ async function open(name: string) {
     code.value = savedCode = current.code;
     if (current.error) setStatus(current.error, true);
     else setStatus(current.kind === 'styles' ? 'Applies as you save' : 'Open tabs of this site reload when you save');
-    code.focus();
+    if (!reload) code.focus();
   }
-  void renderList();
 }
 
 async function save() {
   if (!current) return;
-  const build = current.kind === 'script' ? compileBoost(current.name, code.value) : undefined;
-  const result = await invoke<BoostFile | undefined>('boosts:save', current.name, code.value, build);
+  const file = current;
+  let result: BoostFile | undefined;
+  try {
+    const build = file.kind === 'script' ? compileBoost(file.name, code.value) : undefined;
+    result = await invoke<BoostFile | undefined>('boosts:save', file.name, code.value, build);
+  } catch {
+    if (current === file) setStatus('Couldn’t save. Your edits are still here.', true);
+    return;
+  }
+  if (current !== file) return;
   if (!result) return setStatus('Couldn’t save', true);
   current = result;
   savedCode = result.code;
@@ -105,7 +125,12 @@ code.addEventListener('input', () => dirty() && setStatus('Not saved'));
 window.addEventListener('beforeunload', (e) => {
   if (dirty()) e.preventDefault();
 });
-window.addEventListener('hashchange', () => void open(selected()));
+async function refresh(reload = false) {
+  if (!reload || !dirty()) await open(selected(), reload);
+  await renderList();
+}
+window.addEventListener('hashchange', () => void refresh());
 on('boosts:changed', () => void renderList());
+onReconnect(() => void refresh(true));
 
-void open(selected());
+void refresh();

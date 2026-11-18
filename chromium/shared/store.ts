@@ -167,7 +167,9 @@ export class Store {
   closeWindow(windowId: string): string[] {
     const i = this.state.windows.findIndex((w) => w.id === windowId);
     if (i < 0 || this.state.windows.length === 1) return [];
-    const [win] = this.state.windows.splice(i, 1);
+    const win = this.state.windows[i];
+    for (const ws of Object.values(win.spaces)) this.discardResponsiveMirror(ws);
+    this.state.windows.splice(i, 1);
     // Pinned tabs and favorites it showed stay in the other windows' sidebars; only its Today tabs go with it.
     const closed: ClosedWindow = { ...win, spaces: {}, closedAt: Date.now() };
     // It comes back on a Today tab of its own: the one it showed, or the one used last.
@@ -203,6 +205,15 @@ export class Store {
     // Its Spaces may have been deleted since.
     for (const spaceId of Object.keys(win.spaces)) if (!this.savedSpace(spaceId)) delete win.spaces[spaceId];
     if (!this.savedSpace(win.activeSpaceId)) win.activeSpaceId = this.state.spaces[0].id;
+    // Earlier versions could save a generated phone in a closed window without its split.
+    for (const ws of Object.values(win.spaces)) {
+      for (const id of [...ws.today]) {
+        if (this.state.tabs[id]?.device !== 'mobile') continue;
+        ws.today.splice(ws.today.indexOf(id), 1);
+        delete this.state.tabs[id];
+      }
+      if (ws.activeTabId && !ws.today.includes(ws.activeTabId)) ws.activeTabId = ws.today[0];
+    }
     this.state.windows.unshift(win);
     this.changed();
     return win;
@@ -357,17 +368,29 @@ export class Store {
     if (loc.zone !== 'today') {
       if (tab.homeUrl) tab.url = tab.homeUrl;
       delete tab.history;
-      for (const win of this.state.windows) for (const ws of Object.values(win.spaces)) if (ws.activeTabId === tabId) ws.activeTabId = undefined;
+      for (const win of this.state.windows) for (const ws of Object.values(win.spaces)) {
+        const wasActive = ws.activeTabId === tabId;
+        if (ws.splitMode === 'responsive' && ws.split?.[0] === tabId) {
+          const phoneWasActive = ws.activeTabId === ws.split[1];
+          this.discardResponsiveMirror(ws);
+          delete ws.split;
+          delete ws.splitMode;
+          if (wasActive || phoneWasActive) ws.activeTabId = ws.today[0];
+        } else if (wasActive) ws.activeTabId = undefined;
+      }
       this.changed();
       return 'unloaded';
     }
 
     const ws = this.windowSpace(loc.space!.id, loc.windowId);
+    const source = ws.splitMode === 'responsive' ? ws.split?.[0] : undefined;
+    const active = ws.activeTabId === tabId || (source === tabId && ws.activeTabId === ws.split?.[1]);
+    if (source === tabId) this.discardResponsiveMirror(ws);
     const index = ws.today.indexOf(tabId);
     ws.today.splice(index, 1);
     this.archive(tab);
     delete this.state.tabs[tabId];
-    if (ws.activeTabId === tabId) ws.activeTabId = ws.today[Math.min(index, ws.today.length - 1)];
+    if (active) ws.activeTabId = tab.device === 'mobile' && source ? source : ws.today[Math.min(index, ws.today.length - 1)];
     this.changed();
     return 'removed';
   }
@@ -382,8 +405,10 @@ export class Store {
     const targetSpace = this.savedSpace(win.activeSpaceId) ?? this.state.spaces[0];
 
     if (target.zone === 'pinned') {
-      const list = target.folderId ? findFolder(targetSpace.pinned, target.folderId)?.children
-        : target.beforeTabId ? findParentList(targetSpace.pinned, target.beforeTabId) : targetSpace.pinned;
+      let list: PinnedNode[] | undefined;
+      if (target.folderId) list = findFolder(targetSpace.pinned, target.folderId)?.children;
+      else if (target.beforeTabId) list = findParentList(targetSpace.pinned, target.beforeTabId);
+      else list = targetSpace.pinned;
       if (!list) return;
       const i = target.beforeTabId ? list.findIndex((n) => n.kind === 'tab' && n.tabId === target.beforeTabId) : -1;
       if (target.beforeTabId && i < 0) return;
@@ -889,7 +914,7 @@ export class Store {
     const s = this.state;
     const pristine = spaces.length > 0 && this.dropPristineSpace();
     const win = this.window(opts.windowId);
-    const out: ImportOutcome = { spaces: 0, merged: 0, tabs: 0, splits: 0, pairs: 0, archived: 0, archiveDropped: 0 };
+    const out: ImportOutcome = { spaces: 0, merged: 0, tabs: 0, folders: 0, splits: 0, pairs: 0, archived: 0, archiveDropped: 0 };
     // Where a favorite is and where it started, as for pinned tabs.
     const favoriteUrls = new Set(s.favorites.flatMap((id) => (s.tabs[id] ? [s.tabs[id].url, s.tabs[id].homeUrl] : [])));
     let first: string | undefined;
@@ -940,7 +965,7 @@ export class Store {
       };
       const had = new Set(this.allTabIds(space, win.id));
       // Folders join only inside a Space Flecha had; a new Space keeps the other browser's folders as they were.
-      this.mergeNodes(space.pinned, imported.pinned, add, !!match);
+      out.folders += this.mergeNodes(space.pinned, imported.pinned, add, !!match);
       const ws = this.windowSpace(space.id, win.id);
       for (const t of imported.today) if (add(t)) ws.today.push(this.importTab(t, false));
 
@@ -1105,11 +1130,19 @@ export class Store {
           (id) => !heldElsewhere(id, win.id),
         );
         if (step.leftEmpty.has(`${win.id}:${spaceId}`) && !current.activeTabId && shown.includes(ws.activeTabId!)) current.activeTabId = ws.activeTabId;
-        if (step.endedSplits.has(`${win.id}:${spaceId}`) && !current.split && ws.split?.every((id) => shown.includes(id))) {
+        const canRestoreSplit = ws.splitMode !== 'responsive' || this.hasWindow(win.id);
+        if (canRestoreSplit && step.endedSplits.has(`${win.id}:${spaceId}`) && !current.split && ws.split?.every((id) => shown.includes(id))) {
           current.split = ws.split;
           if (ws.splitMode) current.splitMode = ws.splitMode;
         }
       }
+    }
+    const pairedMirrors = new Set(this.state.windows.flatMap((w) => Object.values(w.spaces)
+      .flatMap((ws) => ws.splitMode === 'responsive' && ws.split ? [ws.split[1]] : [])));
+    for (const [id, tab] of Object.entries(step.removed)) {
+      if (tab.device !== 'mobile' || pairedMirrors.has(id)) continue;
+      this.detachEverywhere(id);
+      delete this.state.tabs[id];
     }
     this.forgetMissingActive();
     this.changed();
@@ -1311,7 +1344,8 @@ export class Store {
    * name already there. `add` says whether a tab comes over. A folder all of whose tabs were already
    * there isn't added.
    */
-  private mergeNodes(list: PinnedNode[], nodes: ImportNode[], add: (t: ImportTab) => boolean, merge: boolean) {
+  private mergeNodes(list: PinnedNode[], nodes: ImportNode[], add: (t: ImportTab) => boolean, merge: boolean): number {
+    let folders = 0;
     for (const n of nodes) {
       if (n.kind === 'tab') {
         if (add(n)) list.push({ kind: 'tab', tabId: this.importTab(n, true) });
@@ -1320,9 +1354,13 @@ export class Store {
       const name = n.name.trim().toLowerCase();
       const same = merge ? list.find((f): f is Extract<PinnedNode, { kind: 'folder' }> => f.kind === 'folder' && f.name.trim().toLowerCase() === name) : undefined;
       const folder: Extract<PinnedNode, { kind: 'folder' }> = same ?? { kind: 'folder', id: randomUUID(), name: n.name, open: false, children: [] };
-      this.mergeNodes(folder.children, n.children, add, merge);
-      if (!same && (folder.children.length || !n.children.length)) list.push(folder);
+      folders += this.mergeNodes(folder.children, n.children, add, merge);
+      if (!same && (folder.children.length || !n.children.length)) {
+        list.push(folder);
+        folders++;
+      }
     }
+    return folders;
   }
 
   /** Addresses of a Space's pinned tabs (where they are and where they started) and its Today tabs in every window. */
@@ -1335,7 +1373,7 @@ export class Store {
   }
 
   private archive(tab: TabInfo | undefined) {
-    if (!tab || tab.url === 'about:blank') return;
+    if (!tab || tab.device === 'mobile' || tab.url === 'about:blank') return;
     const entry = { url: tab.url, title: tab.title, closedAt: Date.now() };
     this.state.archive.unshift(entry);
     this.recording?.archived.set(tab.id, entry);
