@@ -17,15 +17,21 @@ It is a Chromium 158 fork rather than an Electron app because Google blocks sign
 **Sidebar and tabs**
 - A vertical sidebar with favourites, pinned tabs (with folders) and Today tabs, per Space
 - Drag tabs between favourites, pinned, folders and Today
-- Today tabs archive themselves after 12 hours by default (1 day, 7 days, 30 days or never in Settings); the archive is searchable
-- Closing a pinned tab or favourite only unloads it and sends it back to its pinned URL
-- Per-site favicons, tab muting, duplicate, copy link or Markdown link, copy screenshot
+- Pinned tabs and favourites reorder by dragging; favourites fill their row, with a ring in the Space colour on the active one
+- Folders from the sidebar (New Folder on the Pinned header, Move to Folder in the tab menu); folders drag, nest and have their own right-click menu. Folders and pinned tabs can take an emoji icon
+- Select several tabs with ⌘-click or ⇧-click: ⌘⇧C copies all their links, ⌥⌘C as a Markdown list
+- Today tabs archive themselves after 12 hours by default (1 day, 7 days, 30 days or never in Settings). Settings › Archive searches them, reopens one, forgets one or clears it
+- Closing a pinned tab or favourite only unloads it and sends it back to its pinned URL (double-click a favourite to do the same)
+- Per-site favicons, tab muting, duplicate, copy link, Markdown link or the selection as a quote, copy a screenshot or capture the full page, Reveal Tab in Sidebar
+- While a tab plays audio or video, a media card above the footer goes to it, pauses it or plays it
 - On launch, the window comes back where it was
 
 **Spaces**
 - Spaces with their own colour and emoji; in dark mode the colour becomes a deep tint of the same hue
-- Right-click a Space, then Separate Cookies and Logins, to be signed in as different users side by side (a persistent storage partition per Space)
+- New Spaces keep their own cookies and logins (a persistent storage partition per Space), so you can be signed in as different users side by side. The switch sits under the Space's name; imported Spaces share logins, so imported cookies still apply
 - Switch with ⌃1 to ⌃9, or next and previous Space with ⌥⌘← and ⌥⌘→
+- Reset Pinned Tabs puts a Space's pinned tabs back to their URLs; Spaces export to a file and import back (Settings › Tabs & Spaces)
+- Air Traffic Control (Settings › Tabs): rules that send links from other apps to a Space, by site or site and path
 
 **Command bar**
 
@@ -38,12 +44,18 @@ It is a Chromium 158 fork rather than an Electron app because Google blocks sign
 
 **Peek, split view and Flechinha**
 - Peek: links that open a new tab from a pinned tab or favourite show in a floating preview; any link's right-click menu offers it too. Esc or a click outside closes it, Open turns it into a tab
-- Split view: right-click a tab, Open in Split View, or ⌃⇧= to split with a new tab (⌃⇧- exits)
+- Split view: right-click a tab, Open in Split View, drag a tab onto another tab's row, or ⌃⇧= to split with a new tab (⌃⇧- exits). Swap Sides, or drag one half to the other side, swaps them
 - Flechinha: a small standalone window for a quick page (⌥⌘N), which can be sent back into the main window
 
 <p align="center"><img src="docs/screenshots/peek.png" alt="An MDN page open in Peek over the current tab" width="720"></p>
 
 <p align="center"><img src="docs/screenshots/split.png" alt="Hacker News and web.dev side by side in split view" width="720"></p>
+
+**Menu bar and windows**
+- Flecha's own menus: **Spaces** (switch, new, edit, separate logins, reset pinned tabs), **Tabs** (pin, folder, copy link, duplicate, mute, split, clear Today) and **Archive** (the last 10 archived tabs, and the whole archive). Chromium's Tab and Bookmarks menus are gone
+- Stay On Top (Window menu or the command bar) keeps the window above other apps' windows; Settings floats with it
+- Automatic picture-in-picture: a video that's playing moves to a floating player when you switch tabs or Spaces, on any site, and comes back when you return
+- ⌘S slides the sidebar out and back in
 
 **Boosts**
 - Per-site TypeScript and CSS (`github.com.ts`, `github.com.css`, `all.css`), kept in Flecha and edited on the Boosts page. CSS applies live; scripts reload the page. ⌥⌘B edits the current site's boost
@@ -51,7 +63,7 @@ It is a Chromium 158 fork rather than an Electron app because Google blocks sign
 **For developers**
 - Console error badge: local tabs show how many console errors they have; clicking it opens the Console
 - Responsive view (⌥⌘M): the page as a phone (393px, touch, mobile user agent) next to desktop
-- Running locally: dev servers listening on this Mac show up in the sidebar, named after their project folder
+- Running locally: dev servers listening on this Mac show up in the sidebar, named after their project folder. The section collapses, × hides a port, and Settings › Tabs turns it off
 - Environments: group a project's origins (local, staging, production) in Settings; ⌥⌘E moves the page to the next one with the same path, and the address bar shows a LOCAL, STAGING or PROD badge
 - Chromium's DevTools (⌥⌘I), View source (⌥⌘U), zoom and Find in page
 - Coding agents (MCP): Settings, Coding agents turns on a local MCP server (127.0.0.1, token required) so Claude Code, Cursor and others can list tabs, read pages and console logs, take screenshots, click, type and run JavaScript. It needs the native host (see Install)
@@ -61,17 +73,23 @@ It is a Chromium 158 fork rather than an Electron app because Google blocks sign
 <p align="center"><img src="docs/screenshots/main-dark.png" alt="Flecha in dark mode, with the Space colour turned into a deep tint" width="720"></p>
 
 - Built-in ad and tracker blocking (EasyList and EasyPrivacy as declarativeNetRequest rules, plus element hiding), toggled in Settings
+- Block third-party cookies, and clear browsing data by time range (Spaces with their own logins included)
+- Flecha keeps its encryption key in its own Keychain item, "Flecha Safe Storage", rather than Chromium's shared one, so a Mac with Chromium or another fork isn't asked to let Flecha into that app's key. Profiles from 0.1.3 or earlier carry the old key over once: macOS asks one time after the update (Always Allow), and you stay signed in
 - Incognito windows get the same Flecha frame, with one in-memory Space that is forgotten when the last incognito window closes
-- Import bookmarks, history and cookies (so you stay signed in) from other browsers, and Arc's sidebar (needs the native host). Chromium browsers' cookies are decrypted with the key in your keychain, so macOS asks first
+- Import bookmarks, history and cookies (so you stay signed in) from other browsers, and Arc's sidebar (needs the native host): Spaces keep their colour and icon, and Spaces from other Arc profiles get their own logins. Chromium browsers' cookies are decrypted with the key in your keychain, so macOS asks first
 - Chrome extensions: install from the Chrome Web Store; their buttons appear under the address bar
 - Light, dark or system theme; Flecha's shortcuts can be re-recorded in Settings (except a few Chromium keeps, like ⌘T and ⌘W) (⌘/ lists them)
 - Settings (⌘,): importing from other browsers, search engine (Google, DuckDuckGo, Bing, Brave, Kagi, Ecosia), ad blocking, default browser, Peek behaviour, shortcuts, environments
 
 Not there yet in the Chromium build: choosing the downloads folder from Settings.
 
+### Netflix, Disney+ and other DRM sites
+
+Flecha doesn't include Widevine, the DRM that Netflix, Disney+, Prime Video, Max, Hulu, Apple TV+, Spotify's web player and other streaming services require. Google only licenses Widevine to browsers that pay for a certification (VMP), and Flecha is free and open source with no paid parts. On those sites the sidebar says so once and offers to open the page in Safari. Everything else plays as in Chrome, including YouTube, Twitch and H.264/AAC video such as X's.
+
 ## Install
 
-1. Download the latest `Flecha-<version>.dmg` from [Releases](https://github.com/lucianodiisouza/flecha-browser/releases). Releases are signed with a Developer ID and notarized by Apple. Take `Flecha-<version>.dmg` for Apple silicon or `Flecha-<version>-x64.dmg` for Intel. Flecha keeps itself up to date with Sparkle.
+1. Download the latest `Flecha-<version>.dmg` from [Releases](https://github.com/lucianodiisouza/flecha-browser/releases) (or [flecha.dev](https://flecha.dev)). Flecha runs on **Apple silicon and Intel Macs**, macOS 13 or newer: take `Flecha-<version>.dmg` for Apple silicon (M1 and later) or `Flecha-<version>-x64.dmg` for Intel. Releases are signed with a Developer ID and notarized by Apple. Flecha keeps itself up to date with Sparkle.
 2. Open the dmg and drag Flecha onto Applications.
 
 <p align="center"><img src="docs/screenshots/installer.png" alt="The Flecha disk image: the app beside the Applications folder" width="560"></p>
@@ -111,7 +129,7 @@ export FLECHA_NOTARY_PROFILE=flecha-notary   # made once with: xcrun notarytool 
 chromium/scripts/build-release.sh --dmg
 ```
 
-`build-release.sh` builds the shell, applies the patches, stages the shell into the checkout, writes `out/Release/args.gn` from `chromium/build/release.gn`, builds (3 to 6 hours, resumable) and calls `package-release.sh`. That copies the app, adds the native host with its Node, signs everything innermost first (hardened runtime, timestamp and Chromium's entitlements when `FLECHA_SIGN_IDENTITY` is set; ad hoc otherwise), makes the dmg with an installer window, and with `FLECHA_NOTARY_PROFILE` notarizes it and staples the ticket. Releases use `target_cpu = "arm64"` and include H.264 and AAC (`proprietary_codecs`, `ffmpeg_branding = "Chrome"`), since many sites only serve video in those formats.
+`build-release.sh` builds the shell, applies the patches, stages the shell into the checkout, writes `out/Release/args.gn` from `chromium/build/release.gn`, builds (3 to 6 hours, resumable) and calls `package-release.sh`. That copies the app, adds the native host with its Node, signs everything innermost first (hardened runtime, timestamp and Chromium's entitlements when `FLECHA_SIGN_IDENTITY` is set; ad hoc otherwise), makes the dmg with an installer window, and with `FLECHA_NOTARY_PROFILE` notarizes it and staples the ticket. Releases build for `target_cpu = "arm64"`; `FLECHA_ARCH=x64` builds the Intel app into `out/Release-x64` instead. Both include H.264 and AAC (`proprietary_codecs`, `ffmpeg_branding = "Chrome"`), since many sites only serve video in those formats.
 
 ## Repo layout
 
