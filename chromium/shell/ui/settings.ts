@@ -178,7 +178,8 @@ let environments: EnvironmentDraft[] = [];
 let savedEnvironments: EnvironmentDraft[] = [];
 const environmentDrafts = new Map<string, Partial<Record<EnvironmentField, FieldEdit>>>();
 const incompleteEnvironments = new Map<string, EnvironmentDraft>();
-const removingEnvironments = new Set<string>();
+const unconfirmedCreates = new Set<string>();
+const removingEnvironments = new Map<string, 'pending' | 'queued'>();
 const environmentErrors = new Map<string, string>();
 const environmentCards = new Map<string, ReturnType<typeof environmentCard>>();
 let environmentWrites = Promise.resolve();
@@ -282,12 +283,15 @@ function saveEnvironmentField(id: string, field: EnvironmentField, edit: FieldEd
     if (removingEnvironments.has(id) || (retry && environmentDrafts.get(id)?.[field] !== edit)) return;
     const previous = savedEnvironments.find((env) => env.id === id);
     const creating = !previous && incompleteEnvironments.has(id);
+    if (!previous && !creating) return;
     const submitted = creating ? edits : { [field]: edit };
     let view: SettingsView;
     try {
+      if (creating) unconfirmedCreates.add(id);
       view = await api.set({ environment: creating
         ? { op: 'create', id, name: local.name ?? '', targetsText: local.targetsText ?? '' }
         : { op: 'edit', id, field, value: edit.value } });
+      if (creating) unconfirmedCreates.delete(id);
     } catch (error) {
       const current = environmentDrafts.get(id);
       for (const key of environmentFields) {
@@ -319,15 +323,27 @@ function removeEnvironment(id: string) {
   environmentDrafts.delete(id);
   incompleteEnvironments.delete(id);
   environmentErrors.delete(id);
-  removingEnvironments.add(id);
+  if (unconfirmedCreates.has(id) || savedEnvironments.some((env) => env.id === id)) {
+    removingEnvironments.set(id, 'pending');
+    queueEnvironmentRemoval(id);
+  }
   reconcileEnvironments(savedEnvironments);
+}
+
+function queueEnvironmentRemoval(id: string) {
+  if (removingEnvironments.get(id) !== 'pending') return;
+  removingEnvironments.set(id, 'queued');
   queueEnvironmentWrite(async () => {
+    let view: SettingsView;
     try {
-      if (savedEnvironments.some((env) => env.id === id)) render(await api.set({ environment: { op: 'remove', id } }));
-    } finally {
-      removingEnvironments.delete(id);
-      reconcileEnvironments(savedEnvironments);
+      view = await api.set({ environment: { op: 'remove', id } });
+    } catch (error) {
+      removingEnvironments.set(id, 'pending');
+      throw error;
     }
+    unconfirmedCreates.delete(id);
+    removingEnvironments.delete(id);
+    render(view);
   });
 }
 
@@ -577,6 +593,9 @@ function refresh() {
     for (const pane of preferencePanes) pane.inert = false;
     loadError.hidden = true;
     loadStatus.textContent = '';
+    if (removingEnvironments.size) void environmentWrites.then(() => {
+      for (const id of removingEnvironments.keys()) queueEnvironmentRemoval(id);
+    });
   }, showLoadError).finally(() => { refreshing = undefined; });
 }
 

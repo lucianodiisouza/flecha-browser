@@ -312,6 +312,29 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
   assert.equal(code.value, 'unsaved draft');
   assert.equal(button.disabled, true);
   assert.equal(messages.filter(({ name }) => name === 'boosts:delete').length, deleteCount);
+
+  location.hash = '#third.css';
+  handlers.get('hashchange')();
+  await nextTurn();
+  reply(messages.filter(({ name }) => name === 'boosts:get').at(-1), { ...file, name: 'third.css' });
+  await nextTurn();
+  assert.equal(code.value, 'original');
+  node('delete').onclick();
+  await nextTurn();
+  port.onDisconnect.emit();
+  await nextTurn();
+  t.mock.timers.tick(5_000);
+  await nextTurn();
+  const cleanVerification = messages.filter(({ name }) => name === 'boosts:get').at(-1);
+  assert.deepEqual(cleanVerification.args, ['third.css']);
+  reply(cleanVerification, undefined);
+  await nextTurn();
+  const savesBefore = sentSaves().length;
+  button.onclick();
+  await nextTurn();
+  assert.equal(sentSaves().length, savesBefore, 'Save cannot recreate a clean Boost after deletion is confirmed');
+  assert.equal(code.value, '');
+  assert.equal(location.hash.slice(1), '');
 });
 
 test('the agent restores focus, replays idle logs, and recovers a stalled debugger', async (t) => {

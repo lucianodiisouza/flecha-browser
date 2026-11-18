@@ -31,7 +31,7 @@ let reconnectSelection: { name: string; fallback: string } | undefined;
 const writes = new Map<string, Promise<void>>();
 const writeRevisions = new Map<string, symbol>();
 const deleting = new Set<string>();
-const unconfirmedDeletes = new Map<string, symbol>();
+const unconfirmedDeletes = new Set<string>();
 let checkingDeletes: Promise<void> | undefined;
 let deletedDraft: symbol | undefined;
 
@@ -49,6 +49,14 @@ function updateEditorActions() {
 function setStatus(text: string, error = false) {
   status.textContent = text;
   status.classList.toggle('error', error);
+}
+
+function clearEditor() {
+  current = undefined;
+  editorSession = Symbol();
+  savedCode = code.value = '';
+  main.classList.add('empty');
+  document.title = 'Boosts';
 }
 
 async function renderList() {
@@ -178,17 +186,11 @@ deleteButton.onclick = () => {
   queueWrite(file.name, async () => {
     try {
       await invoke('boosts:delete', file.name);
-      if (editorSession === session) {
-        current = undefined;
-        editorSession = Symbol();
-        savedCode = code.value = '';
-        main.classList.add('empty');
-        document.title = 'Boosts';
-      }
+      if (editorSession === session) clearEditor();
       if (selected() === file.name) location.hash = '';
     } catch (error) {
       if (error instanceof ConnectionError && error.sent) {
-        unconfirmedDeletes.set(file.name, session);
+        unconfirmedDeletes.add(file.name);
         if (editorSession === session) setStatus('Couldn’t confirm deletion. Flecha will check after reconnecting.', true);
       } else if (editorSession === session) setStatus('Couldn’t delete this Boost.', true);
     } finally {
@@ -202,15 +204,20 @@ function verifyDeletes() {
   if (checkingDeletes) return checkingDeletes;
   if (!unconfirmedDeletes.size) return Promise.resolve();
   retryDeleteCheck.disabled = true;
-  checkingDeletes = Promise.all([...unconfirmedDeletes].map(([name, session]) =>
+  checkingDeletes = Promise.all([...unconfirmedDeletes].map((name) =>
     invoke<BoostFile | undefined>('boosts:get', name).then((file) => {
+      if (!file) writeRevisions.set(name, Symbol());
       unconfirmedDeletes.delete(name);
       deleting.delete(name);
-      if (editorSession === session) {
-        if (!file && dirty()) {
-          deletedDraft = session;
+      if (current?.name === name) {
+        if (file) setStatus('This Boost is still here.');
+        else if (dirty()) {
+          deletedDraft = editorSession;
           setStatus('This Boost was deleted. You can still copy your draft.', true);
-        } else if (file) setStatus('This Boost is still here.');
+        } else {
+          clearEditor();
+          if (selected() === name) history.replaceState(null, '', '#');
+        }
       }
       updateEditorActions();
       return true;
