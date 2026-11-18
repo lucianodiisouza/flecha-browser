@@ -1,0 +1,16 @@
+--- a/chrome/browser/metrics/tab_stats/tab_stats_tracker.cc
++++ b/chrome/browser/metrics/tab_stats/tab_stats_tracker.cc
+@@ -732,6 +732,13 @@
+   if (!web_contents_usage_observers_.contains(web_contents)) {
+     for (TabStatsObserver& tab_stats_observer : tab_stats_observers_) {
+       tab_stats_observer.OnTabAdded(web_contents);
++      // Flecha: a page can join the tab strip already playing (a promoted
++      // Peek). WebContentsUsageObserver starts out knowing that, so the
++      // observers have to hear about it too, or the stop that follows is one
++      // they never saw start (TabUsageScenarioTracker CHECKs on it).
++      if (web_contents->GetCurrentlyPlayingVideoCount()) {
++        tab_stats_observer.OnVideoStartedPlaying(web_contents);
++      }
+     }
+     web_contents_usage_observers_.insert(std::make_pair(
+         web_contents,
