@@ -154,9 +154,13 @@ export async function applyBrowserImport(
     result.details = skippedLines(data, out.pairs, out.archiveDropped);
   }
   if (data.history.length) {
-    const { added, failed } = await history.merge(data.history);
-    result.history = added;
-    if (failed) result.warnings.push(`Couldn’t import ${plural(failed, 'page')} from history.`);
+    try {
+      const { added, failed } = await history.merge(data.history);
+      result.history = added;
+      if (failed) result.warnings.push(`Couldn’t import ${plural(failed, 'page')} from history.`);
+    } catch {
+      result.warnings.push('Couldn’t finish importing browser history.');
+    }
   }
   result.changed ||= result.history > 0;
   return result;

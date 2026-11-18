@@ -25,6 +25,8 @@ export interface NativeContext {
   chromeTabId?(flechaId: string): number | undefined;
   /** The Flecha tab of a Chromium tab. */
   flechaTabId?(chromeId: number): string | undefined;
+  /** The Flecha window of a Chromium window. */
+  flechaWindowId?(chromeId: number): string | undefined;
   /**
    * Forgets a Flecha tab's Chromium tab without closing it (it moved into a Flechinha), then
    * closes the Flecha tab. background.ts: `live.delete(id); rememberLive(); store.closeTab(id)`.
@@ -41,13 +43,19 @@ const api = () => (chrome as { flechaPrivate?: typeof chrome.flechaPrivate }).fl
 const has = <K extends keyof typeof chrome.flechaPrivate>(name: K) => typeof api()?.[name] === 'function';
 
 /**
- * The windows with a Peek open, from onPeekChanged. Kept across background restarts: the
- * browser can't be asked (patch 0026), and a ⌘W that wakes the background must still find the Peek.
+ * The last Peek in each window, from onPeekChanged. The browser can't be asked (patch 0026).
  */
 const PEEKS_KEY = sessionKey('peeks');
-const peeks = new Set<number>();
+const peeks = new Map<number, chrome.flechaPrivate.PeekState | undefined>();
 const peeksLoaded = has('openPeek')
-  ? chrome.storage.session.get(PEEKS_KEY).then((saved) => (saved[PEEKS_KEY] as number[] | undefined)?.forEach((id) => peeks.add(id)))
+  ? chrome.storage.session.get(PEEKS_KEY).then((saved) => {
+    const entries = saved[PEEKS_KEY];
+    if (!Array.isArray(entries)) return;
+    for (const entry of entries) {
+      if (typeof entry === 'number') peeks.set(entry, undefined);
+      else if (Array.isArray(entry) && typeof entry[0] === 'number') peeks.set(entry[0], entry[1] ?? undefined);
+    }
+  })
   : Promise.resolve();
 
 // Events go on in the module's first turn, or Chromium drops the one that woke the
@@ -122,24 +130,28 @@ export function runInPeek(command: string, windowId: number | undefined) {
   return true;
 }
 
+export async function currentPeek(windowId: number) {
+  await ready;
+  return peeks.has(windowId) ? peeks.get(windowId) : null;
+}
+
 // The frame pages draw Peek's backdrop and toolbar from the 'peek' event, as in Electron's
 // sendPeek(); while a Peek is open the browser keeps the frame over the whole window.
 if (has('openPeek')) {
-  const rememberPeek = (windowId: number, open: boolean) => {
-    if (open === peeks.has(windowId)) return;
-    if (open) peeks.add(windowId);
-    else peeks.delete(windowId);
+  const rememberPeek = (windowId: number, peek?: chrome.flechaPrivate.PeekState) => {
+    if (peek) peeks.set(windowId, peek);
+    else if (!peeks.delete(windowId)) return;
     void chrome.storage.session.set({ [PEEKS_KEY]: [...peeks] });
   };
   chrome.flechaPrivate.onPeekChanged.addListener(
     when((_ctx, windowId: number, peek?: chrome.flechaPrivate.PeekState) => {
-      rememberPeek(windowId, !!peek);
+      rememberPeek(windowId, peek);
       // Each window has its own Peek, and its own toolbar for it.
       broadcastTo(windowId, 'peek', peek ?? null, windowId);
     }),
   );
   // A window closes without saying its Peek did.
-  chrome.windows.onRemoved.addListener(when((_ctx, windowId: number) => rememberPeek(windowId, false)));
+  chrome.windows.onRemoved.addListener(when((_ctx, windowId: number) => rememberPeek(windowId)));
   chrome.contextMenus.onClicked.addListener(
     when((_ctx, info: chrome.contextMenus.OnClickData, tab?: chrome.tabs.Tab) => {
       if (info.menuItemId === PEEK_MENU_ID && info.linkUrl) void openLinkInPeek(info.linkUrl, tab);
@@ -301,6 +313,7 @@ if (has('setSplitRatio')) {
 function registerSplitRatio(ctx: NativeContext) {
   const { store, chromeTabId } = ctx;
   if (!has('setSplitRatio') || !chromeTabId) return;
+  const splitAreaResized = chrome.flechaPrivate.onSplitAreaResized;
   const measurements = new Map<string, {
     request?: symbol;
     needsReset?: boolean;
@@ -338,10 +351,12 @@ function registerSplitRatio(ctx: NativeContext) {
     if (space.splitMode === 'responsive') {
       if (!desktop.width || !other.width) return;
       ratio = phoneSplitRatio(desktop.width + other.width);
+      if (!splitAreaResized) ratio = Math.min(0.9, ratio);
     }
     const previous = measurement.applied;
     if (previous?.splitId === splitId && previous.ratio === ratio) return;
-    measurement.writing = chrome.flechaPrivate.setSplitRatio(left, ratio)
+    const write = ratio > 0.9 ? chrome.flechaPrivate.setSplitRatio(left, ratio, true) : chrome.flechaPrivate.setSplitRatio(left, ratio);
+    measurement.writing = write
       .then(() => { measurement.applied = { splitId, ratio }; })
       .catch(() => { measurement.applied = undefined; })
       .finally(() => { measurement.writing = undefined; });
@@ -363,6 +378,11 @@ function registerSplitRatio(ctx: NativeContext) {
   });
   chrome.windows.onBoundsChanged.addListener(apply);
 }
+
+chrome.flechaPrivate?.onSplitAreaResized?.addListener(when((ctx, chromeWindowId: number) => {
+  const windowId = ctx.flechaWindowId?.(chromeWindowId);
+  if (windowId) frameResized(windowId);
+}));
 
 // ---- theme (patch 0018) ------------------------------------------------------------------
 

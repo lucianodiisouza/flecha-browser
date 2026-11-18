@@ -108,6 +108,7 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
     for (const key of Object.keys(globals)) delete globalThis[key];
   });
   await loadModule('chromium/shell/boostsPage.ts');
+  await nextTurn();
   const file = { name: 'first.css', host: 'first', kind: 'styles', code: 'original' };
   const reply = (message, value) => port.onMessage.emit({ type: 'result', id: message.id, value });
   reply(messages.find(({ name }) => name === 'boosts:get'), file);
@@ -116,12 +117,12 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
   const editorStatus = node('status').textContent;
   port.onMessage.emit({ type: 'result', id: listRead.id, error: 'Couldn’t read the list' });
   await nextTurn();
-  assert.equal(node('list-error').hidden, false);
+  assert.match(node('list-error').textContent, /Couldn’t load Boosts/);
   assert.equal(node('status').textContent, editorStatus);
   port.onMessage.emit({ type: 'event', name: 'boosts:changed', args: [] });
   reply(messages.filter(({ name }) => name === 'boosts:list').at(-1), [file]);
   await nextTurn();
-  assert.equal(node('list-error').hidden, true);
+  assert.equal(node('list-error').textContent, '');
   const code = node('code');
   const button = node('save');
   const sentSaves = () => messages.filter(({ name }) => name === 'boosts:save');
@@ -143,11 +144,53 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
 
   location.hash = '#second.css';
   handlers.get('hashchange')();
+  await nextTurn();
   code.value = 'retained draft';
   reply(messages.find(({ args }) => args[0] === 'second.css'), { ...file, name: 'second.css' });
   await nextTurn();
   assert.equal(code.value, 'retained draft');
   assert.equal(location.hash, '#first.css');
+
+  code.value = 'new revision';
+  button.onclick();
+  code.value = 'newest revision';
+  button.onclick();
+  await nextTurn();
+  location.hash = '#second.css';
+  handlers.get('hashchange')();
+  await nextTurn();
+  const second = { ...file, name: 'second.css', code: 'second file' };
+  reply(messages.filter(({ name }) => name === 'boosts:get').at(-1), second);
+  await nextTurn();
+  location.hash = '#first.css';
+  handlers.get('hashchange')();
+  await nextTurn();
+  assert.equal(messages.filter(({ name }) => name === 'boosts:get').at(-1).args[0], 'second.css');
+  reply(sentSaves().at(-1), { ...file, code: 'new revision' });
+  await nextTurn();
+  assert.equal(messages.filter(({ name }) => name === 'boosts:get').at(-1).args[0], 'second.css');
+  reply(sentSaves().at(-1), { ...file, code: 'newest revision' });
+  await nextTurn();
+  reply(messages.filter(({ name }) => name === 'boosts:get').at(-1), { ...file, code: 'newest revision' });
+  await nextTurn();
+  assert.equal(code.value, 'newest revision');
+
+  node('delete').onclick();
+  location.hash = '#second.css';
+  handlers.get('hashchange')();
+  await nextTurn();
+  reply(messages.find(({ name }) => name === 'boosts:delete'), undefined);
+  await nextTurn();
+  assert.equal(location.hash, '#second.css');
+  port.onDisconnect.emit();
+  await nextTurn();
+  assert.equal(location.hash, '#second.css');
+  t.mock.timers.tick(100);
+  await nextTurn();
+  assert.equal(messages.filter(({ name }) => name === 'boosts:get').at(-1).args[0], 'second.css');
+  reply(messages.filter(({ name }) => name === 'boosts:get').at(-1), second);
+  await nextTurn();
+  assert.equal(code.value, 'second file');
 });
 
 test('the agent restores focus and can replay console logs after idle on a shared debugger', async (t) => {
@@ -209,12 +252,12 @@ test('the agent restores focus and can replay console logs after idle on a share
   readPending = Promise.withResolvers();
   port.onMessage.emit({ type: 'tool', id: 23, name: 'read_page', args: { tabId: phone } });
   await nextTurn();
-  // Let Runtime replay messages, then advance to the native host's idle deadline.
+  // Let Runtime replay messages, then approach the host's tool deadline.
   t.mock.timers.tick(100);
   await nextTurn();
-  t.mock.timers.tick(120_000);
+  t.mock.timers.tick(59_000);
   await nextTurn();
-  assert.equal(emulatedFocus, true, 'an in-flight command keeps its debugger past the idle deadline');
+  assert.equal(emulatedFocus, true, 'a tool retains its debugger while the host still waits');
   readPending.resolve();
   await nextTurn();
   assert.match(results.find(({ type }) => type === 'toolResult').result.content[0].text, /fixture body/);
@@ -237,7 +280,7 @@ test('the agent restores focus and can replay console logs after idle on a share
   assert.deepEqual(calls, [['attach', tab.id], ['disabled']]);
   t.mock.timers.tick(120_000);
   await nextTurn();
-  assert.deepEqual(calls, [['attach', tab.id], ['disabled'], ['disabled'], ['detach', tab.id]]);
+  assert.deepEqual(calls, [['attach', tab.id], ['disabled'], ['detach', tab.id]]);
 
   failSetup = true;
   disableRuntime = Promise.withResolvers();
@@ -252,6 +295,36 @@ test('the agent restores focus and can replay console logs after idle on a share
   await nextTurn();
   assert.match(results.find(({ id }) => id === 25).result.content[0].text, /Fixture setup failed/);
   assert.match(results.find(({ id }) => id === 26).result.content[0].text, /fixture body/);
+
+  readPending = Promise.withResolvers();
+  port.onMessage.emit({ type: 'tool', id: 27, name: 'read_page', args: { tabId: phone } });
+  await nextTurn();
+  t.mock.timers.tick(60_000);
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 27).result.content[0].text, /didn’t answer read_page within 60s/);
+  t.mock.timers.tick(120_000);
+  await nextTurn();
+  assert.equal(host.agentTabsInUse().has(tab.id), false);
+  assert.deepEqual(calls.at(-1), ['detach', tab.id]);
+
+  assert.equal(await hold(tab.id, 'responsive'), true);
+  disableRuntime = Promise.withResolvers();
+  port.onMessage.emit({ type: 'tool', id: 28, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  t.mock.timers.tick(100);
+  await nextTurn();
+  t.mock.timers.tick(120_000);
+  await nextTurn();
+  t.mock.timers.tick(60_000);
+  await nextTurn();
+  port.onMessage.emit({ type: 'tool', id: 29, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  t.mock.timers.tick(100);
+  await nextTurn();
+  assert.equal(results.find(({ id }) => id === 29)?.result.isError, undefined);
+  assert.ok(results.some(({ id }) => id === 29), 'a stalled reset does not block the next request');
+  disableRuntime.resolve();
+  await release(tab.id, 'responsive');
 });
 
 test('releasing a debugger holder queued behind a detach cancels its attachment', async (t) => {
@@ -279,14 +352,14 @@ test('releasing a debugger holder queued behind a detach cancels its attachment'
   chrome.debugger.onDetach.emit({ tabId: 12 }, 'target_closed');
   detach.resolve();
   assert.equal(await oldClaim, false);
-  assert.equal(await newClaim, true);
+  assert.equal(await newClaim, false);
   await Promise.all([closingAgain, cancelingAgain]);
-  assert.equal(attach.mock.callCount(), 3);
+  assert.equal(attach.mock.callCount(), 2);
 });
 
 test('the responsive split keeps the phone viewport width when the window grows', async () => {
   const { phoneSplitRatio, PHONE_WIDTH } = await loadModule('chromium/shell/lib/responsiveViewport.ts');
-  for (const total of [800, 1200, 3760]) {
+  for (const total of [800, 1200, 3760, 5000]) {
     const phoneWidth = total * (1 - phoneSplitRatio(total));
     assert.ok(Math.abs(phoneWidth - PHONE_WIDTH) < 1, 'split ratio rounds within a CSS pixel');
   }
@@ -296,14 +369,16 @@ test('responsive sizing waits for the native split, discards stale widths, and c
   const boundsChanged = event();
   const tabsUpdated = event();
   const ratioChanged = event();
+  const splitResized = event();
   const ratios = [];
   let write;
   let measure = async (id) => ({ splitViewId: id, width: 400 });
   globalThis.chrome = {
     flechaPrivate: {
       onSplitRatioChanged: ratioChanged,
-      setSplitRatio: async (id, ratio) => {
-        ratios.push([id, ratio]);
+      onSplitAreaResized: splitResized,
+      setSplitRatio: async (...args) => {
+        ratios.push(args);
         await write?.promise;
       },
     },
@@ -322,6 +397,7 @@ test('responsive sizing waits for the native split, discards stale widths, and c
     store,
     chromeTabId: (id) => ids.get(id),
     flechaTabId: (id) => id === 1 ? desktop.id : phone,
+    flechaWindowId: (id) => id === 10 ? store.focusedWindowId : undefined,
   });
   await nextTurn();
   assert.deepEqual(ratios, []);
@@ -365,4 +441,8 @@ test('responsive sizing waits for the native split, discards stale widths, and c
   write.resolve();
   await nextTurn();
   assert.deepEqual(ratios.at(-1), [1, phoneSplitRatio(1280)]);
+  measure = async () => ({ splitViewId: 3, width: 2500 });
+  splitResized.emit(10);
+  await nextTurn();
+  assert.deepEqual(ratios.at(-1), [1, phoneSplitRatio(5000), true]);
 });

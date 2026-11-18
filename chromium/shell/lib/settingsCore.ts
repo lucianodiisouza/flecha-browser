@@ -5,7 +5,7 @@
 import type { SettingsPatch, SettingsView } from '../../shared/types';
 import type { Store } from '../../shared/store';
 import { SEARCH_ENGINES } from './url';
-import { sanitize as sanitizeEnvironments } from './environments';
+import { formatTargets, sanitize as sanitizeEnvironments } from './environments';
 import { SHORTCUTS, defaultKeys, displayKeys, fixedShortcuts, isShortcutId, keysFor, sameKeys, shortcutList } from './shortcuts';
 
 /** A modifier and a key, or a function key alone: "Alt+Cmd+K", "F5". */
@@ -51,7 +51,7 @@ export function settingsView(store: Store, env: SettingsEnvironment): SettingsVi
     environments: (s.environments ?? []).map((e) => ({
       id: e.id,
       name: e.name,
-      targetsText: e.targets.map((t) => `${t.label} ${t.origin}`).join('\n'),
+      targetsText: formatTargets(e.targets),
     })),
     searchEngines: Object.entries(SEARCH_ENGINES).map(([id, e]) => ({ id: id as keyof typeof SEARCH_ENGINES, name: e.name })),
   };

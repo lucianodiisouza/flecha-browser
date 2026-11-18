@@ -769,6 +769,7 @@ try {
   await rpc('setOverlay', 'responsive-test', false);
   await rpc('activate', mirror);
   await active(mirror);
+  await domWhere(`() => !!document.querySelector('.row.active[data-tab-id="' + CSS.escape(${JSON.stringify(mirror)}) + '"]')`);
   await evaluate(session, `(() => {
     const source = document.querySelector('.row[data-tab-id="' + CSS.escape(${JSON.stringify(unrelated)}) + '"]');
     const half = document.querySelector('#split-drop .drop-half[data-side=right]');
@@ -803,6 +804,7 @@ try {
   assert.equal(await evaluate(session, `testState.spaces.find(sp => sp.id === testState.activeSpaceId).splitMode`), 'responsive');
   await rpc('activate', mirror);
   await active(mirror);
+  await domWhere(`() => !!document.querySelector('.row.active[data-tab-id="' + CSS.escape(${JSON.stringify(mirror)}) + '"]')`);
   const overlay = await evaluate(session, `(() => {
     const drag = id => {
       const row = document.querySelector('.row[data-tab-id="' + CSS.escape(id) + '"]');
@@ -847,6 +849,7 @@ try {
   await until(() => evaluate(session, "document.body.dataset.sidebar === 'docked'"), 'the sidebar to dock again');
   await rpc('activate', unrelated);
   await active(unrelated);
+  await domWhere(`() => !!document.querySelector('.row.active[data-tab-id="' + CSS.escape(${JSON.stringify(unrelated)}) + '"]')`);
   assert.equal(await evaluate(session, `(() => {
     const row = document.querySelector('.row[data-tab-id="' + CSS.escape(${JSON.stringify(a)}) + '"]');
     const splitDrop = document.querySelector('#split-drop');
@@ -1674,8 +1677,18 @@ try {
   })()`);
   await rpc('switchSpace', otherSpace);
   await until(() => evaluate(session, `document.querySelector('#space-title').dataset.spaceId === ${JSON.stringify(otherSpace)}`), 'the destination window to switch Spaces');
-  await evaluate(session, "document.querySelector('#pinned-header').dispatchEvent(new DragEvent('drop', staleHeaderDrop)); delete globalThis.staleHeaderDrop");
-  await rpc('ready');
+  assert.equal(await evaluate(session, `(() => {
+    const moveTab = flecha.moveTab;
+    let moved = false;
+    flecha.moveTab = () => { moved = true; };
+    try {
+      document.querySelector('#pinned-header').dispatchEvent(new DragEvent('drop', staleHeaderDrop));
+      return moved;
+    } finally {
+      flecha.moveTab = moveTab;
+      delete globalThis.staleHeaderDrop;
+    }
+  })()`), false);
   assert.ok(todayOf(await otherWindow.state('s => true')).includes(secondTab));
   assert.equal(await evaluate(session, `testState.spaces.find(sp => sp.id === ${JSON.stringify(otherSpace)}).pinned.some(item => item.tabId === ${JSON.stringify(secondTab)})`), false);
   await rpc('switchSpace', firstState.activeSpaceId);

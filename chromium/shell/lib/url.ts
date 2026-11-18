@@ -46,11 +46,12 @@ export function webAddress(raw: string, { allowBareHost = false } = {}): string 
     const url = new URL(`https://${input}`);
     const hostname = url.hostname.replace(/\.$/, '');
     const ipv4 = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(hostname);
+    const ipv6 = hostname.startsWith('[');
     // WHATWG URL also accepts numeric shorthand and octal IPv4. Keep the typed endpoint unambiguous.
     if (ipv4 && hostname !== host.replace(/\.$/, '')) return undefined;
     const localHost = hostname === '[::1]' || /^(?:[a-z0-9.-]+\.)?localhost$/i.test(hostname);
     const domain = /\.[a-z]{2,}$/i.test(hostname);
-    if (!localHost && !ipv4 && (/\s/.test(input) || (!domain && !allowBareHost))) return undefined;
+    if (!localHost && !ipv4 && (/\s/.test(input) || (!domain && !ipv6 && !allowBareHost))) return undefined;
     const [first, second] = ipv4 ? hostname.split('.').map(Number) : [];
     // Implicit HTTP is for loopback, the wildcard bind address and RFC 1918 networks.
     const localIp = ipv4 && (first === 127 || first === 10 || (first === 172 && second >= 16 && second <= 31) ||

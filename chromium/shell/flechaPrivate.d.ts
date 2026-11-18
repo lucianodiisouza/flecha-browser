@@ -80,13 +80,15 @@ declare namespace chrome.flechaPrivate {
    * drag handle), each with 10px round corners; no inset, padding, outline or mini toolbar.
    * The left pane is round((width − 8) × ratio) wide, as in Electron's layout().
    *
-   * setSplitRatio sets the left pane's share (clamped to 0.1–0.9); `tabId` is either tab of
-   * the split. Rejects while the tab isn't in a split yet.
+   * setSplitRatio sets the left pane's share (clamped to 0.1–0.9). Patch 0084 supports a
+   * higher ratio for Responsive View. `tabId` is either tab of the split.
    */
-  function setSplitRatio(tabId: number, ratio: number): Promise<void>;
+  function setSplitRatio(tabId: number, ratio: number, responsive?: boolean): Promise<void>;
 
   /** The user finished dragging the gap: `tabId` is the left pane's tab. */
   const onSplitRatioChanged: chrome.events.Event<(tabId: number, ratio: number) => void>;
+  /** The browser laid out a different width for a visible split. */
+  const onSplitAreaResized: chrome.events.Event<(windowId: number) => void> | undefined;
 
   /**
    * Flechinha (patch 0023), Flecha's small window for one page, as the Electron version had:

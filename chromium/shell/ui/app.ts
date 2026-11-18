@@ -36,6 +36,8 @@ const SPACE_DRAG_TYPE = 'application/x-flecha-space';
 /** The Space whose button is being dragged: drag events only say what kind of thing it is. */
 let draggedSpace: string | undefined;
 let draggedTab: { id: string; spaceId: string } | undefined;
+let incomingDrop: { element: HTMLElement; spaceId: string } | undefined;
+let deferredRows = false;
 let externalPinnedDrag = false;
 
 let state: UiState | undefined;
@@ -140,7 +142,9 @@ function render(s: UiState) {
   // never draws the empty state, the new tab page always does.
   renderEmptyState(s, space, surface === 'newtab' || (!active && surface !== 'panel'));
 
-  if (!draggedTab) $('favorites').replaceChildren(
+  if (incomingDrop && incomingDrop.spaceId !== space.id) incomingDrop = undefined;
+  const preserveRows = !!draggedTab || !!incomingDrop;
+  if (!preserveRows) $('favorites').replaceChildren(
     ...s.favorites
       .map((id) => s.tabs[id])
       .filter(Boolean)
@@ -162,10 +166,13 @@ function render(s: UiState) {
   $('space-isolated').hidden = !space.isolated;
 
   // Keep the native drag source and any name being typed in place.
-  if (!draggedTab && !document.querySelector('#scroll [contenteditable="true"]')) {
+  if (!preserveRows && !document.querySelector('#scroll [contenteditable="true"]')) {
     $('pinned').replaceChildren(...space.pinned.map((node) => renderNode(node, space, undefined)));
     $('today').replaceChildren(...todayRows(s, space));
     renderAgentFolder(s, space);
+    deferredRows = false;
+  } else if (incomingDrop) {
+    deferredRows = true;
   }
   $('pinned-header').hidden = incognito;
   $('scroll').style.visibility = draggedTab && draggedTab.spaceId !== space.id ? 'hidden' : '';
@@ -665,6 +672,14 @@ function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-ove
     hoveredSpaceId = undefined;
     el.classList.remove(hoverClass, 'drop-split-left', 'drop-split-right');
   };
+  const endHover = () => {
+    clear();
+    if (incomingDrop?.element !== el) return;
+    incomingDrop = undefined;
+    queueMicrotask(() => {
+      if (!incomingDrop && deferredRows && state) render(state);
+    });
+  };
   const currentTarget = () => (!draggedTab || draggedTab.spaceId === state?.activeSpaceId) &&
     (!target.spaceId || target.spaceId === state?.activeSpaceId);
   const splitSide = (e: DragEvent): 'left' | 'right' | undefined => {
@@ -683,13 +698,16 @@ function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-ove
     if (!currentTarget()) return;
     e.preventDefault();
     hoveredSpaceId = state?.activeSpaceId;
+    if (!draggedTab && hoveredSpaceId) incomingDrop = { element: el, spaceId: hoveredSpaceId };
     const side = splitSide(e);
     el.classList.add(side ? `drop-split-${side}` : hoverClass);
   });
-  el.addEventListener('dragleave', clear);
+  el.addEventListener('dragleave', (e) => {
+    if (!(e.relatedTarget instanceof Node) || !el.contains(e.relatedTarget)) endHover();
+  });
   el.addEventListener('drop', (e) => {
     const spaceId = hoveredSpaceId;
-    clear();
+    endHover();
     const id = e.dataTransfer?.getData(DRAG_TYPE);
     if (!id) return;
     e.preventDefault();
@@ -1550,7 +1568,7 @@ let hoveredPageDrop: { half: HTMLElement; target: Parameters<FlechaApi['dropToSp
 /** Drop zones over the page while a tab is dragged, unless it's the tab already on screen. */
 function showSplitDrop(tabId: string) {
   const space = state?.spaces.find((s) => s.id === state!.activeSpaceId);
-  if (!state || !space || draggedTab?.spaceId !== space.id || !canDropToSplit(state.tabs, tabId, pageSplitTarget(space, tabId))) return hideSplitDrop();
+  if (surface !== 'window' || !state || !space || draggedTab?.spaceId !== space.id || !canDropToSplit(state.tabs, tabId, pageSplitTarget(space, tabId))) return hideSplitDrop();
   if (!splitDrop.hidden) return;
   splitDrop.hidden = false;
   api.setTabDragging(true);

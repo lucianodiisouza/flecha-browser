@@ -6,7 +6,7 @@ import { loadModule } from './load-module.mjs';
 
 const { displayUrl, historyQuery, inlineCompletion, matchQuality, rank, score } = await loadModule('chromium/shell/lib/commandBar.ts');
 const { SEARCH_ENGINES, resolveInput, webAddress } = await loadModule('chromium/shell/lib/url.ts');
-const { describe, parseTargets } = await loadModule('chromium/shell/lib/environments.ts');
+const { describe, formatTargets, parseTargets } = await loadModule('chromium/shell/lib/environments.ts');
 const { devSuggestions } = await loadModule('chromium/shell/ui/devCommands.ts');
 
 test('typed development addresses open directly and environment badges follow explicit labels', () => {
@@ -18,6 +18,7 @@ test('typed development addresses open directly and environment badges follow ex
   assert.equal(resolveInput('localhost:443/my notes'), 'http://localhost:443/my%20notes');
   assert.equal(resolveInput('[0:0:0:0:0:0:0:1]:8080'), 'http://[0:0:0:0:0:0:0:1]:8080');
   assert.equal(resolveInput('203.0.113.9:3000'), 'https://203.0.113.9:3000');
+  assert.equal(resolveInput('[fd00::1]:8443'), 'https://[fd00::1]:8443');
   for (const broken of ['300.10.0.1', '192.168.1.010:3000', 'localhost: 3000', 'localhost:65536', 'localhost:3000@example.com']) {
     assert.equal(webAddress(broken), undefined, broken);
   }
@@ -26,8 +27,8 @@ test('typed development addresses open directly and environment badges follow ex
   assert.deepEqual(targets.map(({ origin }) => origin), ['https://staging.example.com', 'http://app.localhost:3030', 'https://flecha.dev', 'https://latest.example.com', 'http://[::1]:8080', 'http://0.0.0.0:8000', 'https://staging2.example.com', 'https://qa01.example.com']);
   assert.deepEqual(targets.map(({ origin }) => describe(origin, envs).tone), ['production', 'local', 'production', 'production', 'local', 'local', 'staging', 'staging']);
   assert.deepEqual(parseTargets('203.0.113.9:3000\n192.168.1.010:3000\ntel:1234\nInternal intranet'), [
-    { label: '203.0.113.9:3000', origin: 'https://203.0.113.9:3000' },
-    { label: 'Internal', origin: 'https://intranet' },
+    { label: '203.0.113.9:3000', origin: 'https://203.0.113.9:3000', autoLabel: true },
+    { label: 'Internal', origin: 'https://intranet', autoLabel: false },
   ]);
   const extra = parseTargets('[fd00::1]:8443\nstaging:8443\nlocalhost-tools.example.com\nexample.test.com\napp.local');
   assert.deepEqual(extra.map(({ origin }) => origin), [
@@ -42,6 +43,11 @@ test('typed development addresses open directly and environment badges follow ex
   ]);
   assert.deepEqual(qualified.map(({ origin }) => describe(origin, [{ id: 'qualified', name: 'Qualified', targets: qualified }]).tone),
     ['staging', 'production', 'staging', 'local', 'production', 'local']);
+  const text = 'Local http://local\nhttps://staging.example.de\nhttps://qa.appspot.com\nhttps://qa.project.appspot.com';
+  const projects = parseTargets(text);
+  assert.equal(formatTargets(projects), text);
+  assert.deepEqual(projects.map(({ origin }) => describe(origin, [{ id: 'projects', name: 'Projects', targets: projects }]).tone),
+    ['local', 'staging', 'production', 'staging']);
 });
 
 test('developer command lookup ignores inherited properties and decodes UTF-8 JWTs', () => {

@@ -443,9 +443,23 @@ searchEngine.addEventListener('change', async () =>
 );
 adBlock.addEventListener('change', async () => render(await api.set({ adBlock: adBlock.checked })));
 
+const loadError = document.getElementById('settings-load-error')!;
+const preferencePanes = document.querySelectorAll<HTMLElement>('[data-preferences]');
+let prefsLoaded = false;
+let refreshing: Promise<void> | undefined;
 function refresh() {
-  void api.get().then(render, console.error);
+  refreshing ??= api.get().then((view) => {
+    render(view);
+    prefsLoaded = true;
+    for (const pane of preferencePanes) pane.inert = false;
+    loadError.hidden = true;
+  }, () => {
+    if (prefsLoaded) return;
+    loadError.hidden = false;
+    loadError.querySelector('[role="status"]')!.textContent = 'Couldn’t load your preferences. Retry or reload Settings.';
+  }).finally(() => { refreshing = undefined; });
 }
 
+loadError.querySelector('button')!.addEventListener('click', refresh);
 onReconnect(refresh);
 refresh();

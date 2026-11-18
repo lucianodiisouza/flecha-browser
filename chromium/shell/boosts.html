@@ -20,7 +20,7 @@
         <button class="button">Add</button>
       </form>
       <ul id="list"></ul>
-      <p id="list-error" class="hint error" role="status" hidden>Couldn’t load Boosts.</p>
+      <p id="list-error" class="hint error" role="status"></p>
       <p id="empty" class="hint" hidden>No boosts yet. Press <kbd>⌥⌘B</kbd> on any site, or add one above.</p>
     </nav>
     <main>
@@ -32,7 +32,10 @@
         <button id="save" class="button primary">Save <kbd>⌘S</kbd></button>
       </header>
       <textarea id="code" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
-      <p id="nothing" class="hint">Pick a boost on the left.</p>
+      <div id="nothing" class="hint">
+        <p>Pick a boost on the left.</p>
+        <p id="open-error" class="error" role="status"></p>
+      </div>
     </main>
     <script type="module" src="boostsPage.js"></script>
   </body>

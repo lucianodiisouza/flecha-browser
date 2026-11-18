@@ -52,6 +52,9 @@ function setRecording(on: boolean) {
   recording = on;
   cmd('settings:recording')(on);
 }
+onReconnect(() => {
+  if (recording) cmd('settings:recording')(true);
+});
 
 // The background (Flecha's ⌘F, say) can ask for the search field too.
 on('settings:find', () => {

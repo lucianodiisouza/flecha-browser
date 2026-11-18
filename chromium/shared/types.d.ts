@@ -182,6 +182,8 @@ export interface DownloadInfo {
 export interface EnvironmentTarget {
   label: string;
   origin: string;
+  /** Whether the address supplied the label. Absent in older saved targets. */
+  autoLabel?: boolean;
 }
 
 /** One project's origins, e.g. local → staging → production. */

@@ -276,9 +276,8 @@ test('taking a pinned target from a responsive split disposes of its phone mirro
 test('a stale sidebar destination leaves the dragged tab in its original Space', () => {
   const { store, first, personal, work } = twoWindows();
   const source = store.addTab('https://example.com/source', { windowId: first });
-  const oldFolder = store.newFolder('Original folder', {}, first);
   store.switchSpace(work, first);
-  store.moveTab(source.id, { zone: 'pinned', spaceId: personal, folderId: oldFolder }, first);
+  store.moveTab(source.id, { zone: 'pinned', spaceId: personal }, first);
   store.moveTab(source.id, { zone: 'today', spaceId: work, beforeTabId: 'gone' }, first);
   assert.deepEqual(store.activeSpaceIn(first).today, []);
   assert.equal(store.locate(source.id).space.id, personal);
@@ -347,6 +346,49 @@ test('undo restores a phone mirror only with its responsive pair', () => {
   assert.ok(store.state.tabs[desktop.id]);
   assert.equal(store.state.tabs[mirror], undefined);
   assert.equal(store.activeSpaceIn(first).today.includes(mirror), false);
+});
+
+test('undoing a responsive desktop deletion restores selection in a closed window', () => {
+  const { store, second, work } = twoWindows();
+  store.switchSpace(work, second);
+  store.addTab('https://example.com/other-space', { windowId: second });
+  store.switchSpace(store.state.spaces[0].id, second);
+  const desktop = store.addTab('https://example.com/desktop', { windowId: second });
+  const phone = store.openResponsive(second);
+  store.activate(phone, { windowId: second });
+  store.removeTabs([desktop.id]);
+  store.closeWindow(second);
+  store.undo();
+  assert.equal(store.reopenWindow().id, second);
+  assert.equal(store.activeTabIn(second)?.id, desktop.id);
+  assert.equal(store.state.tabs[phone], undefined);
+});
+
+test('loading responsive metadata checks the panes against the window’s Space', () => {
+  const { store, first, personal, work } = twoWindows();
+  const left = store.addTab('https://example.com/left', { windowId: first });
+  const right = store.addTab('https://example.com/right', { windowId: first });
+  store.switchSpace(work, first);
+  const elsewhere = store.addTab('https://example.com/elsewhere', { windowId: first });
+  store.togglePin(elsewhere.id, first);
+  store.switchSpace(personal, first);
+  store.splitWith(right.id, 'right', first, left.id);
+  const snapshot = JSON.parse(store.serialize());
+  const win = snapshot.windows.find((window) => window.id === first);
+  const ws = win.spaces[personal];
+  ws.splitMode = 'responsive';
+  const load = () => new Store({ load: () => decodeState(JSON.stringify(snapshot)), save: () => {} });
+  const ordinary = load();
+  assert.equal(ordinary.activeSpaceIn(first).splitMode, undefined);
+  assert.deepEqual(ordinary.activeSpaceIn(first).split, [left.id, right.id]);
+  snapshot.tabs[right.id].device = 'mobile';
+  ws.split = [elsewhere.id, right.id];
+  ws.activeTabId = right.id;
+  const unrelated = load();
+  assert.equal(unrelated.activeSpaceIn(first).split, undefined);
+  assert.equal(unrelated.activeTabIn(first), undefined);
+  assert.equal(unrelated.state.tabs[right.id], undefined);
+  assert.equal(unrelated.state.tabs[elsewhere.id].url, elsewhere.url);
 });
 
 test('each window hides or shows its own sidebar; new windows start as the last choice', () => {

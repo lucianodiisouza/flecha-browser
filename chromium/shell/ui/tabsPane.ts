@@ -347,7 +347,7 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
     const finish = async (keep: boolean) => {
       if (done) return;
       done = true;
-      const error = keep ? await save() : undefined;
+      const error = keep ? await save().catch(() => 'Couldn’t confirm the save. Press Escape to cancel or Enter to try again.') : undefined;
       if (error) {
         done = false;
         const row = inputs[0].closest('.tm-editor')!;

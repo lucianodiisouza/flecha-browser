@@ -12,8 +12,7 @@ const detaching = new Map<number, Promise<void>>();
 const detachListeners: Array<(tabId: number, reason: string) => void> = [];
 
 chrome.debugger.onDetach.addListener((source, reason) => {
-  // During a release Chromium can report detachment of the old session before its reply.
-  if (source.tabId === undefined || detaching.has(source.tabId)) return;
+  if (source.tabId === undefined) return;
   holders.delete(source.tabId);
   for (const fn of detachListeners) fn(source.tabId, reason);
 });
@@ -75,6 +74,8 @@ export async function release(tabId: number, holder: string) {
 }
 
 export const isHeld = (tabId: number, holder: string) => !!holders.get(tabId)?.has(holder);
+
+export const isShared = (tabId: number) => (holders.get(tabId)?.size ?? 0) > 1;
 
 export function send<T = unknown>(tabId: number, method: string, params: object = {}): Promise<T | undefined> {
   return chrome.debugger.sendCommand({ tabId }, method, params as Record<string, unknown>).then(

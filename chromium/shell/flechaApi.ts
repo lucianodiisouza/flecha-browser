@@ -78,11 +78,13 @@ function applyFrame() {
     const apply = chrome.flechaPrivate.setFrame({ sidebar, overlay, background, sidebarWidth }, id);
     // Patch 0072; a browser without it lays out a page's full screen as the sidebar's mode says.
     const fullscreen = chrome.flechaPrivate.setSidebarInPageFullscreen?.(sidebarInPageFullscreen, id);
-    void Promise.all([apply, fullscreen]).then(() => {
-      if (!measure || measuredLayout === layout) return;
-      measuredLayout = layout;
-      requestAnimationFrame(measure);
-    }).catch(() => undefined);
+    void Promise.allSettled(fullscreen ? [apply, fullscreen] : [apply]).then((results) => {
+      if (!measure || (!incognito && chrome.flechaPrivate.onSplitAreaResized) || measuredLayout === layout) return;
+      if (!results.some((result) => result.status === 'fulfilled')) return;
+      if (results.every((result) => result.status === 'fulfilled')) measuredLayout = layout;
+      // Older builds invalidate native layout without reporting the new pane bounds.
+      requestAnimationFrame(() => requestAnimationFrame(measure));
+    });
   });
 }
 on('frame', (state) => {

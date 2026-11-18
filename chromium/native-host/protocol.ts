@@ -6,6 +6,9 @@
 
 /** The host's name in its manifest and in chrome.runtime.connectNative. */
 export const HOST_NAME = 'dev.oprimo.flecha.host';
+/** How long the host waits for the shell to answer a tool. */
+export const TOOL_TIMEOUT = 60_000;
+export const toolTimeout = (timeoutMs: unknown) => TOOL_TIMEOUT + (typeof timeoutMs === 'number' ? timeoutMs : 0);
 
 /** Things only Node can do, which the shell asks for and the host answers with a `reply`. */
 export interface HostMethods {

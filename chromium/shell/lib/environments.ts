@@ -1,4 +1,5 @@
 const randomUUID = () => crypto.randomUUID();
+import { getSubdomain } from 'tldts';
 import type { ActiveEnvironment, Environment, EnvironmentTarget } from '../../shared/types';
 import { webAddress } from './url';
 
@@ -45,19 +46,25 @@ export function describe(url: string, environments: Environment[] = []): ActiveE
 }
 
 /** Production is red so it is never mistaken for a safe place to click around. */
+function autoLabel(target: EnvironmentTarget) {
+  return target.autoLabel ?? target.label.toLowerCase() === target.origin.replace(/^[a-z]+:\/\//i, '').toLowerCase();
+}
+
+export function formatTargets(targets: EnvironmentTarget[]): string {
+  return targets.map((target) => autoLabel(target) ? target.origin : `${target.label} ${target.origin}`).join('\n');
+}
+
 function tone(target: EnvironmentTarget): ActiveEnvironment['tone'] {
   const address = target.origin.replace(/^[a-z]+:\/\//i, '').toLowerCase();
-  const label = target.label.toLowerCase() === address ? '' : target.label.toLowerCase();
+  const label = autoLabel(target) ? '' : target.label.toLowerCase();
   const staging = /\b(stag(e|ing)|preview|qa|test(ing)?|dev(elop(ment)?)?|sandbox|uat)\d*\b/;
   if (/\bprod(uction)?\b/.test(label)) return 'production';
   if (/\blocal\b/.test(label)) return 'local';
   if (staging.test(label)) return 'staging';
   const hostname = address.replace(/:\d+$/, '').replace(/\.$/, '');
-  if (/^(localhost|\[::1\]|0\.0\.0\.0|127(?:\.\d+){3})$|\.(localhost|test|local)$/i.test(hostname)) return 'local';
-  // Country-code registries can delegate below more than one suffix label. Use explicit labels there.
-  if (/\.[a-z]{2}$/.test(hostname)) return 'production';
-  const subdomains = hostname.includes('.') ? hostname.split('.').slice(0, -2).join('.') : hostname;
-  if (staging.test(subdomains)) return 'staging';
+  if (/^(local|localhost|\[::1\]|0\.0\.0\.0|127(?:\.\d+){3})$|\.(localhost|test|local)$/i.test(hostname)) return 'local';
+  const subdomains = hostname.includes('.') ? getSubdomain(hostname, { allowPrivateDomains: true }) : hostname;
+  if (subdomains && staging.test(subdomains)) return 'staging';
   return 'production';
 }
 
@@ -73,8 +80,9 @@ export function parseTargets(text: string): EnvironmentTarget[] {
       if (!address) continue;
       const url = new URL(address);
       if (url.protocol !== 'http:' && url.protocol !== 'https:') continue;
-      const label = parts.length > 1 ? parts.slice(0, -1).join(' ') : url.host;
-      targets.push({ label, origin: url.origin });
+      const autoLabel = parts.length === 1;
+      const label = autoLabel ? url.host : parts.slice(0, -1).join(' ');
+      targets.push({ label, origin: url.origin, autoLabel });
     } catch {
       // Skip lines that aren't a URL.
     }

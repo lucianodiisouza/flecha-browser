@@ -1036,6 +1036,11 @@ code {
   color: var(--text-3);
 }
 
+.tm-empty[hidden],
+#settings-load-error[hidden] {
+  display: none;
+}
+
 .tm-none {
   margin: 40px 0;
   text-align: center;

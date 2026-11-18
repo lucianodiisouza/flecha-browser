@@ -1,0 +1,85 @@
+--- a/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
++++ b/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
+@@ -321,7 +321,8 @@
+   if (!tab || !tab->GetSplit() || !tab->GetBrowserWindowInterface()) {
+     return RespondNow(Error(kNotSplitError));
+   }
++  const double max_ratio = params->responsive.value_or(false) ? 1.0 : 0.9;
+   tab->GetBrowserWindowInterface()->GetTabStripModel()->UpdateSplitRatio(
+-      *tab->GetSplit(), std::clamp(params->ratio, 0.1, 0.9));
++      *tab->GetSplit(), std::clamp(params->ratio, 0.1, max_ratio));
+   return RespondNow(NoArguments());
+ }
+--- a/chrome/browser/ui/views/frame/multi_contents_view.cc
++++ b/chrome/browser/ui/views/frame/multi_contents_view.cc
+@@ -10,9 +10,12 @@
+ #include <cstdlib>
+ 
+ #include "base/check_deref.h"
+ #include "base/notreached.h"
++#include "base/values.h"
+ #include "chrome/browser/actor/ui/actor_overlay_web_view.h"
+ #include "chrome/browser/browser_process.h"
++#include "chrome/browser/flecha/flecha_shell_events.h"
+ #include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser.h"
+ #include "chrome/browser/ui/browser_element_identifiers.h"
+ #include "chrome/browser/ui/color/chrome_color_id.h"
+@@ -264,7 +267,24 @@
+ bool MultiContentsView::IsFlechaFlatSplit() const {
+   return FlechaHidesTopChrome(browser_view_->browser());
+ }
+ 
++void MultiContentsView::OnBoundsChanged(const gfx::Rect& previous_bounds) {
++  views::View::OnBoundsChanged(previous_bounds);
++  if (width() == previous_bounds.width() || !IsInSplitView() ||
++      !IsFlechaFlatSplit()) {
++    return;
++  }
++  auto* browser = browser_view_->browser();
++  Profile* const profile = browser->GetProfile();
++  if (profile->IsOffTheRecord()) {
++    return;
++  }
++  base::ListValue args;
++  args.Append(browser->GetSessionID().id());
++  DispatchFlechaShellEvent(profile,
++                           "flechaPrivate.onSplitAreaResized", std::move(args));
++}
++
+ void MultiContentsView::SetWebContentsAtIndex(
+     content::WebContents* web_contents,
+     int index) {
+--- a/chrome/browser/ui/views/frame/multi_contents_view.h
++++ b/chrome/browser/ui/views/frame/multi_contents_view.h
+@@ -249,6 +249,8 @@
+   static constexpr int kConstrainedMinWebContentsSize = 50;
+   static constexpr double kMinWebContentsSizePercentage = 0.1;
+ 
++  void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
++
+   // LayoutDelegate:
+   views::ProposedLayout CalculateProposedLayout(
+       const views::SizeBounds& size_bounds) const override;
+--- a/chrome/common/extensions/api/flecha_private.idl
++++ b/chrome/common/extensions/api/flecha_private.idl
+@@ -205,7 +205,9 @@
+-    // Sets how much of a split view the first (left) pane takes, 0.1 to 0.9.
++    // Sets the first pane's share, 0.1 to 0.9. Responsive mode can use a
++    // higher ratio to keep the phone pane narrow on a wide display.
+     // <code>tabId</code> is either tab of the split.
+     static void setSplitRatio(
+         long tabId,
+         double ratio,
++        optional boolean responsive,
+         optional DoneCallback callback);
+ 
+@@ -414,5 +416,8 @@
+     static void onSplitRatioChanged(long tabId, double ratio);
+ 
++    // The available width of the visible split changed.
++    static void onSplitAreaResized(long windowId);
++
+     // A window's Peek opened, moved, navigated or closed (no
+     // <code>peek</code>).
+     static void onPeekChanged(long windowId, optional PeekState peek);

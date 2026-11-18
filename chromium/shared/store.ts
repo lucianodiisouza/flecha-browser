@@ -1126,8 +1126,11 @@ export class Store {
         const shown = (this.hasWindow(win.id) ? this.allTabIds({ id: spaceId, pinned: this.savedSpace(spaceId)?.pinned ?? [] }, win.id) : current.today).filter(
           (id) => !heldElsewhere(id, win.id),
         );
-        if (step.leftEmpty.has(`${win.id}:${spaceId}`) && !current.activeTabId && shown.includes(ws.activeTabId!)) current.activeTabId = ws.activeTabId;
         const canRestoreSplit = ws.splitMode !== 'responsive' || this.hasWindow(win.id);
+        const selection = !canRestoreSplit && ws.activeTabId === ws.split?.[1] ? ws.split?.[0] : ws.activeTabId;
+        if (step.leftEmpty.has(`${win.id}:${spaceId}`) && !current.activeTabId && selection && shown.includes(selection)) {
+          current.activeTabId = selection;
+        }
         if (canRestoreSplit && step.endedSplits.has(`${win.id}:${spaceId}`) && !current.split && ws.split?.every((id) => shown.includes(id))) {
           current.split = ws.split;
           if (ws.splitMode) current.splitMode = ws.splitMode;
@@ -1201,20 +1204,24 @@ export class Store {
   /** Preserves saved links and removes phone mirrors that have no live responsive pair. */
   private normalizePhoneTabs() {
     const mobile = Object.values(this.state.tabs).filter((tab) => tab.device === 'mobile');
-    if (!mobile.length) return;
     const shared = new Set([...this.state.favorites, ...this.state.spaces.flatMap((space) => pinnedTabIds(space.pinned))]);
     const mirrors = new Set<string>();
+    const removed = new Set<string>();
     for (const win of this.state.windows) {
-      for (const ws of Object.values(win.spaces)) {
+      for (const space of this.state.spaces) {
+        const ws = win.spaces[space.id];
+        if (ws?.splitMode !== 'responsive') continue;
         const desktop = ws.split?.[0], phone = ws.split?.[1];
-        if (ws.splitMode !== 'responsive' || !desktop || !phone) continue;
-        if (!shared.has(phone) && this.state.tabs[desktop] && ws.today.includes(phone) && this.state.tabs[phone]?.device === 'mobile') {
+        const placed = this.allTabIds(space, win.id);
+        const eligibleDesktop = desktop && this.state.tabs[desktop] && this.state.tabs[desktop].device !== 'mobile' && placed.includes(desktop);
+        if (phone && eligibleDesktop && !shared.has(phone) && ws.today.includes(phone) && this.state.tabs[phone]?.device === 'mobile') {
           mirrors.add(phone);
-        } else {
-          delete ws.split;
-          delete ws.splitMode;
-          if (ws.activeTabId === phone) ws.activeTabId = desktop;
+          continue;
         }
+        // Two ordinary tabs can still form a regular split.
+        if (!eligibleDesktop || !phone || desktop === phone || !placed.includes(phone) || this.state.tabs[phone]?.device === 'mobile') delete ws.split;
+        delete ws.splitMode;
+        if (phone && ws.activeTabId === phone && this.state.tabs[phone]?.device === 'mobile') ws.activeTabId = eligibleDesktop ? desktop : undefined;
       }
     }
     for (const tab of mobile) {
@@ -1222,13 +1229,20 @@ export class Store {
       else if (!mirrors.has(tab.id)) {
         this.detachEverywhere(tab.id);
         delete this.state.tabs[tab.id];
+        removed.add(tab.id);
       }
     }
-    this.forgetMissingActive();
+    for (const win of this.state.windows) {
+      for (const ws of Object.values(win.spaces)) {
+        if (ws.activeTabId && removed.has(ws.activeTabId)) delete ws.activeTabId;
+      }
+    }
     this.state.closedWindows = this.state.closedWindows.filter((win) => {
       for (const [spaceId, ws] of Object.entries(win.spaces)) {
         if (!ws.today.length) delete win.spaces[spaceId];
-        else if (!ws.activeTabId || !ws.today.includes(ws.activeTabId)) ws.activeTabId = ws.today[0];
+        else if (!ws.activeTabId || !ws.today.includes(ws.activeTabId)) {
+          ws.activeTabId = this.byRecency(ws.today)[0];
+        }
       }
       return Object.keys(win.spaces).length > 0;
     });

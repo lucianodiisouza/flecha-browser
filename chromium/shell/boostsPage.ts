@@ -14,13 +14,15 @@ const main = document.querySelector('main')!;
 const code = $<HTMLTextAreaElement>('code');
 const status = $('status');
 const listError = $('list-error');
+const openError = $('open-error');
 
 let current: BoostFile | undefined;
 let savedCode = '';
 let editorSession = Symbol();
 let navigation: symbol | undefined;
-let saves = Promise.resolve();
-let deleting = false;
+let discard: { name: string; draft: string } | undefined;
+const writes = new Map<string, Promise<void>>();
+const deleting = new Set<string>();
 
 const dirty = () => !!current && code.value !== savedCode;
 const selected = () => decodeURIComponent(location.hash.slice(1));
@@ -32,12 +34,12 @@ function setStatus(text: string, error = false) {
 
 async function renderList() {
   const boosts = await invoke<BoostFile[]>('boosts:list').catch(() => {
-    listError.hidden = false;
+    listError.textContent = 'Couldn’t load Boosts.';
     $('empty').hidden = true;
     return undefined;
   });
   if (!boosts) return;
-  listError.hidden = true;
+  listError.textContent = '';
   list.replaceChildren(
     ...boosts.map((b) => {
       const li = document.createElement('li');
@@ -61,22 +63,30 @@ async function open(name: string, reload = false) {
   const restoreHash = () => {
     if (current) history.replaceState(null, '', `#${encodeURIComponent(current.name)}`);
   };
-  if (dirty() && !confirm(`Discard your changes to ${current!.name}?`)) {
-    restoreHash();
-    return;
-  }
   const oldCode = code.value;
+  if (dirty() && (discard?.name !== name || discard.draft !== oldCode)) {
+    if (!confirm(`Discard your changes to ${current!.name}?`)) {
+      discard = undefined;
+      restoreHash();
+      return;
+    }
+    discard = { name, draft: oldCode };
+  }
   let file: BoostFile | undefined;
   try {
+    await writes.get(name);
+    if (!stillSelected()) return;
     file = name ? await invoke<BoostFile | undefined>('boosts:get', name) : undefined;
   } catch {
     if (!stillSelected()) return;
-    restoreHash();
-    setStatus('Couldn’t load this Boost.', true);
+    if (current) setStatus('Couldn’t load this Boost.', true);
+    else openError.textContent = 'Couldn’t load this Boost.';
     return;
   }
   if (!stillSelected()) return;
   if (code.value !== oldCode) return restoreHash();
+  discard = undefined;
+  openError.textContent = '';
   if (!reload || current?.name !== file?.name) editorSession = Symbol();
   current = file;
   main.classList.toggle('empty', !current);
@@ -91,11 +101,11 @@ async function open(name: string, reload = false) {
 }
 
 function save() {
-  if (!current || deleting) return;
+  if (!current || deleting.has(current.name)) return;
   const file = current;
   const session = editorSession;
   const draft = code.value;
-  saves = saves.then(async () => {
+  queueWrite(file.name, async () => {
     try {
       const build = file.kind === 'script' ? compileBoost(file.name, draft) : undefined;
       const result = await invoke<BoostFile | undefined>('boosts:save', file.name, draft, build);
@@ -112,24 +122,30 @@ function save() {
   });
 }
 
+function queueWrite(name: string, write: () => Promise<void>) {
+  const pending = (writes.get(name) ?? Promise.resolve()).then(write).finally(() => {
+    if (writes.get(name) === pending) writes.delete(name);
+  });
+  writes.set(name, pending);
+}
+
 $('save').onclick = () => void save();
-$('delete').onclick = async () => {
-  if (!current || deleting || !confirm(`Delete ${current.name}?`)) return;
+$('delete').onclick = () => {
+  if (!current || deleting.has(current.name) || !confirm(`Delete ${current.name}?`)) return;
   const file = current;
   const session = editorSession;
-  deleting = true;
-  try {
-    await saves;
-    await invoke('boosts:delete', file.name);
-    if (editorSession === session) {
-      savedCode = code.value;
-      location.hash = '';
+  deleting.add(file.name);
+  queueWrite(file.name, async () => {
+    try {
+      await invoke('boosts:delete', file.name);
+      if (editorSession === session) savedCode = code.value;
+      if (selected() === file.name) location.hash = '';
+    } catch {
+      if (editorSession === session) setStatus('Couldn’t delete this Boost.', true);
+    } finally {
+      deleting.delete(file.name);
     }
-  } catch {
-    if (editorSession === session) setStatus('Couldn’t delete this Boost.', true);
-  } finally {
-    deleting = false;
-  }
+  });
 };
 
 $<HTMLFormElement>('new').onsubmit = async (e) => {
@@ -156,7 +172,8 @@ window.addEventListener('beforeunload', (e) => {
   if (dirty()) e.preventDefault();
 });
 async function refresh(reload = false) {
-  if (!reload || !dirty()) await open(selected(), reload);
+  const name = selected();
+  if (!reload || !dirty() || name !== current?.name) await open(name, reload);
   await renderList();
 }
 window.addEventListener('hashchange', () => void refresh());

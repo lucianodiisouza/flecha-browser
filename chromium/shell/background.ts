@@ -10,7 +10,7 @@
  * active Space and Today tabs. Pinned tabs and favorites are shared: one opened in a window
  * moves there, page and all, from whichever window had it.
  */
-import { Store, type StatePersistence } from '../shared/store';
+import { Store, pinnedTabIds, type StatePersistence } from '../shared/store';
 import { decodeState, loadSavedState, setAsideBeforeImport, stateBeforeImport, STATE_KEY } from '../shared/savedState';
 import { pinnableAddress, resolveInput, sameAddress, searchEngine } from './lib/url';
 import { canDropToSplit, pageSplitTarget } from './lib/splitDrop';
@@ -26,7 +26,7 @@ import { SiteIcons } from './siteIcons';
 // Loaded on the first turn: its modules add webNavigation and message listeners as they load.
 import { registerFeatures, type Features } from './features';
 // Also loaded on the first turn, for the shortcut event that may have woken the background.
-import { defaultBrowserState, frameResized, isFlechinha, isFlechinhaWindow, registerNative, runInPeek } from './native';
+import { currentPeek, defaultBrowserState, frameResized, isFlechinha, isFlechinhaWindow, registerNative, runInPeek } from './native';
 import { registerDownloads } from './downloads';
 import { registerSiteControls } from './siteControls';
 import { Favicons } from './favicons';
@@ -658,14 +658,16 @@ async function start() {
 
   /** Pairs confirmed in Chromium, so an old pane's removal can't clear a pending replacement. */
   const nativePairs = new WeakSet<[string, string]>();
+  const creatingSplits = new Map<number, [number, number]>();
 
   async function syncSplits(windowId: string, chromeWindowId: number) {
+    const tabs = await chrome.tabs.query({ windowId: chromeWindowId });
+    if (!store.hasWindow(windowId)) return;
     const wanted = new Map<string, { native: [number, number]; store: [string, string] }>();
     for (const space of store.windowView(windowId).spaces) {
       const pair = space.split?.map((id) => live.get(id));
       if (space.split && pair?.[0] !== undefined && pair[1] !== undefined) wanted.set(pair.join(','), { store: space.split, native: [pair[0], pair[1]] });
     }
-    const tabs = await chrome.tabs.query({ windowId: chromeWindowId });
     const splits = new Map<number, chrome.tabs.Tab[]>();
     for (const tab of tabs) {
       if (tab.splitViewId === undefined || tab.splitViewId < 0) continue;
@@ -691,13 +693,21 @@ async function start() {
       // Split tabs must be next to each other, left first.
       await chrome.tabs.move(left, { index: -1 }).catch(() => undefined);
       await chrome.tabs.move(right, { index: -1 }).catch(() => undefined);
-      const created = await chrome.tabs.createSplit([left, right]).then(() => true, (err) => {
-        console.warn('Flecha shell: split failed', err);
-        return false;
-      });
-      if (created) {
+      const stillWanted = () => store.hasWindow(windowId) && store.windowView(windowId).spaces.some((space) => space.split === pair);
+      if (!stillWanted()) continue;
+      creatingSplits.set(chromeWindowId, [left, right]);
+      try {
+        const splitId = await chrome.tabs.createSplit([left, right]);
+        if (!stillWanted()) {
+          await chrome.tabs.unsplit(splitId).catch(() => undefined);
+          continue;
+        }
         nativePairs.add(pair);
         if (store.activeSpaceIn(windowId).splitMode === 'responsive') broadcastTo(chromeWindowId, 'split-layout');
+      } catch (err) {
+        console.warn('Flecha shell: split failed', err);
+      } finally {
+        creatingSplits.delete(chromeWindowId);
       }
     }
   }
@@ -708,6 +718,7 @@ async function start() {
     const windowId = windowOf(chromeWindowId);
     if (!id || !windowId) return;
     const pair = store.activeSpaceIn(windowId).split;
+    const creating = creatingSplits.get(chromeWindowId);
     // An old pane can report removal before its replacement exists in Chromium.
     if (splitViewId < 0 && (!pair?.includes(id) || !nativePairs.has(pair))) return;
     const tabs = await chrome.tabs.query({ windowId: chromeWindowId }).catch(() => undefined);
@@ -718,19 +729,22 @@ async function start() {
       exitSplit(windowId);
       return;
     }
-    const members = tabs
+    const nativeMembers = tabs
       .filter((t) => t.splitViewId === splitViewId)
-      .sort((a, b) => a.index - b.index)
-      .map((t) => flechaIdFor(t.id!));
+      .sort((a, b) => a.index - b.index);
+    const members = nativeMembers.map((t) => flechaIdFor(t.id!));
     const active = store.activeSpaceIn(windowId).activeTabId;
     if (members.length !== 2 || !members.every(Boolean) || !active || !members.includes(active)) return;
     if (pair && members.every((m) => pair.includes(m!))) {
       nativePairs.add(pair);
       return;
     }
+    if (creating && nativeMembers.every((tab) => creating.includes(tab.id!))) return;
     if (pair && !nativePairs.has(pair)) return;
     const other = members.find((m) => m !== active)!;
     store.splitWith(other, members[0] === other ? 'left' : 'right', windowId, active);
+    const adopted = store.activeSpaceIn(windowId).split;
+    if (adopted && members.every((member) => adopted.includes(member!))) nativePairs.add(adopted);
   }
 
   function exitSplit(windowId = here()) {
@@ -750,7 +764,11 @@ async function start() {
     const space = store.activeSpaceIn(windowId);
     if (destination?.spaceId !== space.id) return;
     const target = destination.tabId;
-    if (destination.kind === 'page' && target !== pageSplitTarget(space, tabId)) return;
+    if (destination.kind === 'page') {
+      if (target !== pageSplitTarget(space, tabId)) return;
+    } else if (destination.kind === 'row') {
+      if (!space.today.includes(target) && !pinnedTabIds(space.pinned).includes(target)) return;
+    } else return;
     if (!canDropToSplit(store.state.tabs, tabId, target)) return;
     const ids = store.allTabIds(space, windowId);
     if (!ids.includes(tabId) || !ids.includes(target)) return;
@@ -1476,6 +1494,11 @@ async function start() {
 
   onConnect((_port, chromeWindowId) => {
     sendState();
+    if (chromeWindowId !== undefined) {
+      void currentPeek(chromeWindowId).then((peek) => {
+        if (peek !== undefined) broadcastTo(chromeWindowId, 'peek', peek, chromeWindowId);
+      });
+    }
     void siteIcons.all().then((icons) => broadcastTo(chromeWindowId, 'site-icons', icons));
   });
 
@@ -1502,6 +1525,7 @@ async function start() {
     released: () => endRecentRun(),
     chromeTabId: (id) => live.get(id),
     flechaTabId: (chromeId) => flechaIdFor(chromeId),
+    flechaWindowId: windowOf,
     run: (command, windowId) => {
       // A window that isn't one of Flecha's may be a Flechinha the browser opened (a link from
       // another app) that this background hasn't seen yet, so the browser is asked first.

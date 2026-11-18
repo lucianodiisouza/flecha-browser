@@ -85,6 +85,19 @@ test('a history-only import reports failed writes without counting them as impor
   assert.deepEqual(result.warnings, ['Couldn’t import 1 page from history.']);
 });
 
+test('a history adapter failure preserves the imported bookmarks in the result', async () => {
+  const store = new Store({ load: () => undefined, save: () => {} });
+  const url = 'https://example.com/';
+  const data = { name: 'Chrome', bookmarkCount: 1, bookmarks: [{ kind: 'tab', url, title: 'Example' }], history: [{ url }], warnings: [] };
+  const history = { merge: async () => { throw new Error('History store failed'); } };
+  const result = await applyBrowserImport(data, { mode: 'merge', isolate: [] }, store, history);
+  assert.equal(result.changed, true);
+  assert.equal(result.bookmarks, 1);
+  assert.equal(result.history, 0);
+  assert.match(result.warnings[0], /importing browser history/);
+  assert.ok(Object.values(store.state.tabs).some(tab => tab.url === url));
+});
+
 /** A one-Space sidebar whose Today holds `items` (id/object pairs) listed by `today`. */
 const oneSpace = (items, today, space = {}) => ({
   sidebar: {
