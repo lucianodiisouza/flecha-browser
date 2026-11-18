@@ -3,6 +3,7 @@ export type Message =
   | { type: 'cmd'; name: string; args: unknown[] }
   | { type: 'invoke'; id: number; name: string; args: unknown[] }
   | { type: 'result'; id: number; value?: unknown; error?: string }
+  | { type: 'startup-failed' }
   | { type: 'event'; name: string; args: unknown[] }
   /** Keeps the background awake while a page is open (it sleeps after 30s of silence). */
   | { type: 'ping' };

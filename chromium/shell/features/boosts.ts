@@ -60,9 +60,15 @@ const loaded = (async () => {
 })();
 
 let writes = loaded;
+let commits = loaded;
 
-function writeBoosts(change: (nextFiles: typeof files, nextCompiled: typeof compiled) => boolean) {
-  const write = writes.then(async () => {
+function writeBoosts(
+  name: string,
+  parsed: { host: string; kind: BoostKind },
+  reload: boolean,
+  change: (nextFiles: typeof files, nextCompiled: typeof compiled) => boolean,
+) {
+  const commit = writes.then(async () => {
     const nextFiles = { ...files };
     const nextCompiled = { ...compiled };
     if (!change(nextFiles, nextCompiled)) return false;
@@ -70,6 +76,18 @@ function writeBoosts(change: (nextFiles: typeof files, nextCompiled: typeof comp
     files = nextFiles;
     compiled = nextCompiled;
     return true;
+  });
+  commits = commit.then(() => undefined, () => undefined);
+  const write = commit.then(async (changed) => {
+    const saved = get(name);
+    if (changed) {
+      if (parsed.kind === 'script') {
+        registered = registered.then(registerUserScripts);
+        await registered;
+      }
+      await refreshPages(parsed, reload).catch((error) => console.warn('Flecha boosts: couldn’t refresh pages', error));
+    }
+    return saved;
   });
   writes = write.then(() => undefined, () => undefined);
   return write;
@@ -213,7 +231,8 @@ export function boostedHosts(): string[] {
   return [...new Set(Object.keys(files).flatMap((name) => parseBoostName(name)?.host ?? []))];
 }
 
-export function list(): BoostFile[] {
+export async function list(): Promise<BoostFile[]> {
+  await commits;
   return Object.keys(files)
     .sort()
     .flatMap((name) => {
@@ -230,7 +249,7 @@ export function get(name: string): BoostFile | undefined {
 
 /** A reconnect read may arrive while a previous port's write is still committing. */
 export async function getCommitted(name: string) {
-  await writes;
+  await commits;
   return get(name);
 }
 
@@ -258,32 +277,25 @@ export async function create(host: string, kind: BoostKind) {
 export async function save(name: string, code: string, { reload = true, build, onlyIfMissing }: { reload?: boolean; build?: CompiledBoost; onlyIfMissing?: boolean } = {}): Promise<BoostFile | undefined> {
   const parsed = parseBoostName(name);
   if (incognito || !parsed || !/^[a-z0-9.-]+$/i.test(parsed.host)) return undefined;
-  const changed = await writeBoosts((nextFiles, nextCompiled) => {
+  return writeBoosts(name, parsed, reload, (nextFiles, nextCompiled) => {
     if (onlyIfMissing && Object.hasOwn(nextFiles, name)) return false;
     nextFiles[name] = String(code);
     // The editor sends the compiled output; a new template has nothing to run.
     if (parsed.kind === 'script') nextCompiled[name] = build ? { code: build.code && String(build.code), error: build.error && String(build.error) } : {};
     return true;
   });
-  if (!changed) return get(name);
-  if (parsed.kind === 'script') registered = registerUserScripts();
-  await refreshPages(parsed, reload);
-  return get(name);
 }
 
 export async function remove(name: string) {
   const parsed = parseBoostName(name);
   if (incognito || !parsed) return;
-  const changed = await writeBoosts((nextFiles, nextCompiled) => {
+  // Unstyle pages now; a removed script stays until the page reloads, as in Electron.
+  await writeBoosts(name, parsed, false, (nextFiles, nextCompiled) => {
     if (!Object.hasOwn(nextFiles, name)) return false;
     delete nextFiles[name];
     delete nextCompiled[name];
     return true;
   });
-  if (!changed) return;
-  if (parsed.kind === 'script') registered = registerUserScripts();
-  // Unstyle pages now; a removed script stays until the page reloads, as in Electron.
-  await refreshPages(parsed, false);
 }
 
 async function refreshPages({ host, kind }: { host: string; kind: BoostKind }, reload: boolean) {

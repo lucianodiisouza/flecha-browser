@@ -40,6 +40,7 @@ let draggedSpace: string | undefined;
 let draggedTab: { id: string; spaceId: string } | undefined;
 let incomingDrop: { element: HTMLElement; spaceId: string } | undefined;
 let incomingDropTimer: ReturnType<typeof setTimeout> | undefined;
+let pinnedHoverTimer: ReturnType<typeof setTimeout> | undefined;
 let clearDropTarget: (() => void) | undefined;
 let deferredRows = false;
 let externalPinnedDrag = false;
@@ -681,7 +682,6 @@ function refreshIncomingDrop() {
   clearTimeout(incomingDropTimer);
   incomingDropTimer = setTimeout(() => {
     if (incomingDrop) clearDropTarget?.();
-    externalPinExpansion(false);
   }, INCOMING_DROP_IDLE_MS);
 }
 
@@ -694,6 +694,7 @@ function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-ove
     if (clearDropTarget === endHover) clearDropTarget = undefined;
     el.classList.remove(hoverClass, 'drop-split-left', 'drop-split-right');
     if (incomingDrop?.element !== el) return;
+    clearTimeout(incomingDropTimer);
     incomingDrop = undefined;
     queueMicrotask(() => {
       if (!incomingDrop && deferredRows && state) render(state);
@@ -1839,21 +1840,25 @@ acceptDrops($('pinned'), { zone: 'pinned' });
 acceptDrops($('pinned-header'), { zone: 'pinned' });
 const pinnedSection = $('pinned-section');
 function externalPinExpansion(expanded: boolean) {
+  if (!expanded) clearTimeout(pinnedHoverTimer);
   if (externalPinnedDrag === expanded) return;
   externalPinnedDrag = expanded;
   const space = state?.spaces.find((item) => item.id === state?.activeSpaceId);
   if (space) updatePinnedVisibility(space);
 }
-pinnedSection.addEventListener('dragenter', (event) => {
+function refreshPinnedHover(event: DragEvent) {
   if (!draggedTab && event.dataTransfer?.types.includes(DRAG_TYPE)) {
     externalPinExpansion(true);
-    refreshIncomingDrop();
+    clearTimeout(pinnedHoverTimer);
+    pinnedHoverTimer = setTimeout(() => externalPinExpansion(false), INCOMING_DROP_IDLE_MS);
   }
-});
+}
+pinnedSection.addEventListener('dragenter', refreshPinnedHover);
+pinnedSection.addEventListener('dragover', refreshPinnedHover, true);
+pinnedSection.addEventListener('drop', () => queueMicrotask(() => externalPinExpansion(false)), true);
 pinnedSection.addEventListener('dragleave', (event) => {
   if (!(event.relatedTarget instanceof Node) || !pinnedSection.contains(event.relatedTarget)) externalPinExpansion(false);
 });
-pinnedSection.addEventListener('drop', () => externalPinExpansion(false), true);
 $('btn-toggle-pinned').onclick = () => {
   const space = state?.spaces.find((item) => item.id === state?.activeSpaceId);
   if (space) api.updateSpace(space.id, { pinnedCollapsed: !space.pinnedCollapsed });

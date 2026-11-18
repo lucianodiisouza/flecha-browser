@@ -214,22 +214,24 @@ async function loaded(session, urlPrefix) {
 }
 function startBrowser(...addresses) {
   browserConnectionError = undefined;
-  browser = spawn(binary, [`--user-data-dir=${profile}`, `--flecha-shell-dir=${shellDir}`, '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--ozone-platform=x11', '--password-store=basic', '--remote-debugging-pipe', // Google, the default search engine, is out of reach: its suggestions come from this test's server.
+  const child = browser = spawn(binary, [`--user-data-dir=${profile}`, `--flecha-shell-dir=${shellDir}`, '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--ozone-platform=x11', '--password-store=basic', '--remote-debugging-pipe', // Google, the default search engine, is out of reach: its suggestions come from this test's server.
     '--host-resolver-rules=MAP *.flecha.test 127.0.0.1, MAP www.google.com ~NOTFOUND',`--load-extension=${testExtension},${quietExtension}`, '--disable-features=DisableLoadExtensionCommandLineSwitch',
     // Chromium doesn't freeze a page for 5 minutes after it was on screen; 3 s for this run.
     '--enable-features=CPUMeasurementInFreezingPolicy:freezing_visible_protection_time/3s', ...addresses], { env, stdio: ['ignore', 'ignore', 'inherit', 'pipe', 'pipe'] });
   const failConnection = (error) => {
+    if (browser !== child) return;
     browserConnectionError ??= error;
     for (const call of pending.values()) call.reject(browserConnectionError);
     pending.clear();
   };
-  browser.once('error', failConnection);
-  browser.once('exit', (code, signal) => failConnection(new Error(`Browser exited ${code ?? signal}`)));
-  for (const pipe of [browser.stdio[3], browser.stdio[4]]) {
+  child.once('error', failConnection);
+  child.once('exit', (code, signal) => failConnection(new Error(`Browser exited ${code ?? signal}`)));
+  for (const pipe of [child.stdio[3], child.stdio[4]]) {
     pipe.on('error', (error) => failConnection(new Error(`Browser debugging pipe failed: ${error.message}`, { cause: error })));
   }
   let buffer = '';
-  browser.stdio[4].on('data', (data) => {
+  child.stdio[4].on('data', (data) => {
+    if (browser !== child) return;
     buffer += data.toString();
     const messages = buffer.split('\0');
     buffer = messages.pop();

@@ -13,6 +13,7 @@ let nextId = 1;
 let current: Connection | undefined;
 let retryDelay = 0;
 let invalidated = false;
+let startupFailure: string | undefined;
 const heartbeat = setInterval(() => post({ type: 'ping' }), 20_000);
 const contextInvalidated = (message?: string) => message === 'Extension context invalidated.';
 // Use upstream's backoff when the service worker repeatedly drops the connection.
@@ -32,7 +33,9 @@ function stop() {
 function disconnected(connection: Connection, terminal = false) {
   if (current !== connection) return;
   current = undefined;
-  for (const reply of connection.replies.values()) reply.reject(new ConnectionError(true, 'Flecha’s background restarted'));
+  for (const reply of connection.replies.values()) {
+    reply.reject(new ConnectionError(!startupFailure, startupFailure ?? 'Flecha’s background restarted'));
+  }
   connection.replies.clear();
   if (terminal) stop();
   else scheduleRetry(Date.now() - connection.openedAt >= STABLE_MS);
@@ -55,7 +58,12 @@ function connect() {
   });
   port.onMessage.addListener((message: Message) => {
     if (current !== connection) return;
-    if (message.type === 'result') {
+    if (message.type === 'startup-failed') {
+      startupFailure = 'Flecha’s background couldn’t start. Restart Flecha and try again.';
+      disconnected(connection, true);
+      port.disconnect();
+      toast(startupFailure);
+    } else if (message.type === 'result') {
       const reply = connection.replies.get(message.id);
       connection.replies.delete(message.id);
       if (message.error) reply?.reject(new Error(message.error));
@@ -70,7 +78,7 @@ function connect() {
 function post(message: Message, reply?: Reply) {
   const connection = current;
   if (!connection) {
-    reply?.reject(new ConnectionError(false, 'Flecha’s background can’t be reached'));
+    reply?.reject(new ConnectionError(false, startupFailure ?? 'Flecha’s background can’t be reached'));
     return false;
   }
   if (message.type === 'invoke' && reply) connection.replies.set(message.id, reply);
@@ -111,7 +119,7 @@ export const cmd =
   (name: string) =>
   (...args: unknown[]) => {
     const sent = post({ type: 'cmd', name, args });
-    if (!sent) toast(invalidated ? 'Flecha didn’t send this command. Reload this page.' : 'Flecha didn’t send this command. Try again.');
+    if (!sent) toast(startupFailure ?? (invalidated ? 'Flecha didn’t send this command. Reload this page.' : 'Flecha didn’t send this command. Try again.'));
     return sent;
   };
 

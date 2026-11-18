@@ -28,6 +28,11 @@ test('typed addresses open directly with encoded paths and queries', () => {
   const query = 'example.com? section=release notes&token=fixture';
   assert.equal(new URL(resolveInput(query)).searchParams.get('token'), 'fixture');
   assert.equal(suggestable(query), false);
+  const localQuery = 'localhost? access token=fixture';
+  const localAddress = new URL(resolveInput(localQuery));
+  assert.equal(localAddress.hostname, 'localhost');
+  assert.equal(localAddress.searchParams.get(' access token'), 'fixture');
+  assert.equal(suggestable(localQuery), false);
   for (const address of ['例子.中国', 'xn--fsqu00a.xn--fiqs8s']) assert.equal(resolveInput(address), `https://${address}`);
 });
 
@@ -63,6 +68,7 @@ test('rejected addresses keep credentials and private paths out of search', () =
     'example.com: bad/api?token=fixture',
     'example.com: bad?token=fixture',
     'example.com: bad? token=fixture',
+    'localhost: bad? access token=fixture',
     'example.com: /api?token=fixture',
     'example.com :65536/private?token=fixture',
     '%65xample%2ecom:65536/api?token=fixture',
@@ -88,9 +94,10 @@ test('rejected addresses keep credentials and private paths out of search', () =
 
 test('prose still searches when its topic looks like a host', () => {
   assert.equal(suggestable('re: meet @ noon'), true);
-  const question = 'example.com? What is this';
-  assert.equal(new URL(resolveInput(question)).searchParams.get('q'), question);
-  assert.equal(suggestable(question), true);
+  for (const question of ['example.com? What is this', 'example.com? Why?']) {
+    assert.equal(new URL(resolveInput(question)).searchParams.get('q'), question);
+    assert.equal(suggestable(question), true);
+  }
   assert.equal(resolveInput('contact fixture@example.com'), 'https://www.google.com/search?q=contact%20fixture%40example.com');
   for (const prose of ['email: alice@example.com', 'contact: alice@example.com', 'work email: alice@example.com']) {
     assert.equal(new URL(resolveInput(prose)).searchParams.get('q'), prose);

@@ -132,12 +132,13 @@ export function listen(ready: Promise<unknown>) {
     const started = await startup;
     port.onMessage.removeListener(buffer);
     if (!connected) return;
-    if (!started) {
-      port.disconnect();
-      return;
-    }
     const windowId = windowOf(port);
     ports.set(port, windowId);
+    if (!started) {
+      post(port, { type: 'startup-failed' });
+      ports.delete(port);
+      return;
+    }
     const dispatch = async (message: Message) => {
       if (!ports.has(port)) return;
       if (message.type === 'ping') return;

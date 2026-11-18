@@ -11,10 +11,13 @@ const holders = new Map<number, Map<Holder, symbol>>();
 const attaching = new Map<number, Promise<void>>();
 const detaching = new Map<number, Promise<void>>();
 const resetting = new Map<symbol, Promise<void>>();
+const externallyDetached = new WeakSet<Map<Holder, symbol>>();
 const detachListeners: Array<(tabId: number, reason: string) => void> = [];
 
 chrome.debugger.onDetach.addListener((source, reason) => {
   if (source.tabId === undefined) return;
+  const owners = holders.get(source.tabId);
+  if (owners) externallyDetached.add(owners);
   holders.delete(source.tabId);
   for (const fn of detachListeners) fn(source.tabId, reason);
 });
@@ -29,8 +32,9 @@ export async function acquire(tabId: number, holder: Holder): Promise<void> {
   let owners = holders.get(tabId);
   const existing = owners?.get(holder);
   const cleanup = existing && resetting.get(existing);
-  if (cleanup) {
+  if (owners && cleanup) {
     await cleanup.catch(() => undefined);
+    if (externallyDetached.has(owners)) throw new Error('Debugger attachment was released');
     return acquire(tabId, holder);
   }
   if (!owners) {

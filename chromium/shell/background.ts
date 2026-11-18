@@ -708,11 +708,19 @@ async function start() {
       if (have.has(key) || !here.has(left) || !here.has(right)) continue;
       const stillWanted = () => store.hasWindow(windowId) && live.get(pair[0]) === left && live.get(pair[1]) === right &&
         store.windowView(windowId).spaces.some((space) => space.split === pair);
-      // Split tabs must be next to each other, left first.
-      if (!stillWanted()) continue;
-      await chrome.tabs.move(left, { index: -1 }).catch(() => undefined);
-      if (!stillWanted()) continue;
-      await chrome.tabs.move(right, { index: -1 }).catch(() => undefined);
+      const inWindow = async (id: number) => (await chrome.tabs.get(id)).windowId === chromeWindowId;
+      try {
+        if (!(await inWindow(left)) || !stillWanted()) continue;
+        await chrome.tabs.move(left, { index: -1 });
+        if (!stillWanted() || !(await inWindow(right)) || !stillWanted()) continue;
+        await chrome.tabs.move(right, { index: -1 });
+        const [first, second] = await Promise.all([chrome.tabs.get(left), chrome.tabs.get(right)]);
+        // Split tabs must be in this window and next to each other, left first.
+        if (first.windowId !== chromeWindowId || second.windowId !== chromeWindowId || second.index !== first.index + 1) continue;
+      } catch (error) {
+        console.warn('Flecha shell: could not position split tabs', error);
+        continue;
+      }
       if (!stillWanted()) continue;
       creatingSplits.set(chromeWindowId, [left, right]);
       try {

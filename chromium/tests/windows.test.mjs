@@ -429,18 +429,23 @@ test('loading a moved legacy phone tab preserves its history and its destination
 });
 
 test('the saved-state decoder drops a responsive mirror whose source no longer exists', () => {
-  const { store, first, personal } = twoWindows();
+  const { store, first, second, personal, work } = twoWindows();
   const desktop = store.addTab('https://example.com/desktop', { windowId: first });
   const phone = store.openResponsive(first);
   store.activate(phone, { windowId: first });
   const snapshot = JSON.parse(store.serialize());
   delete snapshot.tabs[desktop.id];
+  const other = snapshot.windows.find((win) => win.id === second);
+  other.spaces[work] = { today: [], activeTabId: phone, split: [phone, desktop.id] };
   const loaded = decodeState(JSON.stringify(snapshot));
   const space = loaded.windows.find((win) => win.id === first).spaces[personal];
   assert.equal(loaded.tabs[phone], undefined);
   assert.equal(space.activeTabId, undefined);
   assert.equal(space.split, undefined);
   assert.deepEqual(space.today, []);
+  const otherSpace = loaded.windows.find((win) => win.id === second).spaces[work];
+  assert.equal(otherSpace.activeTabId, undefined);
+  assert.equal(otherSpace.split, undefined);
 });
 
 test('a hidden Space does not protect the unselected half of a split from auto-archive', () => {
@@ -466,6 +471,20 @@ test('auto-archive keeps both visible panes when the phone is selected', () => {
   assert.deepEqual(store.archiveStale(), [other.id]);
   assert.deepEqual(store.activeSpaceIn(first).split, [desktop.id, phone]);
   assert.equal(store.activeTabIn(first)?.id, phone);
+});
+
+test('archiving a hidden responsive split removes its selected mirror without archiving it', () => {
+  const { store, first, personal, work } = twoWindows();
+  const desktop = store.addTab('https://example.com/desktop', { windowId: first });
+  const phone = store.openResponsive(first);
+  store.activate(phone, { windowId: first });
+  store.switchSpace(work, first);
+  desktop.lastActive = 1;
+  assert.deepEqual(store.archiveStale(), [desktop.id, phone]);
+  assert.deepEqual(store.state.archive.map((entry) => entry.url), [desktop.url]);
+  store.switchSpace(personal, first);
+  assert.equal(store.activeTabIn(first), undefined);
+  assert.equal(store.activeSpaceIn(first).split, undefined);
 });
 
 test('each window hides or shows its own sidebar; new windows start as the last choice', () => {

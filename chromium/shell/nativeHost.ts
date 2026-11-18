@@ -307,6 +307,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
         signal,
         async tab(chromeId, deadline = signal) {
           deadline.throwIfAborted();
+          checkDebuggerRecovery(chromeId);
           const previous = tabOperations.get(chromeId) ?? Promise.resolve();
           const finished = new Promise<void>((resolve) => { unlock = resolve; });
           const tail = previous.then(() => finished);
@@ -741,11 +742,10 @@ export function registerNativeHost(ctx: NativeHostContext) {
       pressSucceeded = true;
     } finally {
       if (isHeld(chromeId, DEBUG_HOLDER)) {
-        try {
-          await withDeadline(TOOL_TIMEOUT, (signal) => use.command(method, up, signal));
-        } catch (error) {
-          if (pressSucceeded) throw error;
-        }
+        const released = withDeadline(TOOL_TIMEOUT, (signal) => use.command(method, up, signal));
+        if (pressSucceeded) await released;
+        // The tab queue still tracks the release command after returning the press failure.
+        else void released.catch(() => undefined);
       }
     }
   }

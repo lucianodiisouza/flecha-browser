@@ -137,27 +137,46 @@ test('an unserializable reply fails only its own invoke', async (t) => {
   ]);
 });
 
-test('failed startup closes the port and stops buffering invokes', async (t) => {
+test('failed startup tells the page to restart and does not reconnect or run buffered invokes', async (t) => {
   const connecting = event();
-  globalThis.chrome = { runtime: { onConnect: connecting } };
-  t.after(() => delete globalThis.chrome);
+  const toast = {};
+  globalThis.window = { addEventListener() {}, setTimeout: (...args) => setTimeout(...args) };
+  globalThis.document = { querySelector: () => toast };
+  const disconnect = t.mock.fn(() => {
+    client.onDisconnect.emit();
+    server.onDisconnect.emit();
+  });
+  const client = {
+    onMessage: event(), onDisconnect: event(), disconnect,
+    postMessage: (message) => server.onMessage.emit(message),
+  };
+  const server = {
+    name: 'flecha', onMessage: event(), onDisconnect: event(), disconnect,
+    postMessage: (message) => client.onMessage.emit(message),
+  };
+  const connect = t.mock.fn(() => { connecting.emit(server); return client; });
+  globalThis.chrome = { runtime: { onConnect: connecting, connect } };
+  t.after(() => {
+    delete globalThis.chrome;
+    delete globalThis.window;
+    delete globalThis.document;
+  });
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   t.mock.method(console, 'error', () => {});
   const { handle, listen } = await loadModule('chromium/shell/hub.ts');
   const startup = Promise.withResolvers();
   const invoked = t.mock.fn();
   handle({ startupProbe: invoked });
   listen(startup.promise);
-  const port = {
-    name: 'flecha', onMessage: event(), onDisconnect: event(),
-    disconnect: t.mock.fn(() => port.onDisconnect.emit()),
-  };
-  const removed = t.mock.method(port.onMessage, 'removeListener');
-  connecting.emit(port);
-  port.onMessage.emit({ type: 'invoke', name: 'startupProbe', id: 1, args: [] });
+  const { invoke } = await loadModule('chromium/shell/client.ts', { fresh: true });
+  const rejected = assert.rejects(invoke('startupProbe'), { sent: false, message: /Restart Flecha/ });
   startup.reject(new Error('Failed to load preferences'));
-  await nextTurn();
-  assert.equal(port.disconnect.mock.callCount(), 1);
-  assert.equal(removed.mock.callCount(), 1);
+  await rejected;
+  assert.match(toast.textContent, /Restart Flecha/);
+  assert.equal(disconnect.mock.callCount(), 1);
+  await assert.rejects(invoke('startupProbe'), { sent: false, message: /Restart Flecha/ });
+  t.mock.timers.tick(20_000);
+  assert.equal(connect.mock.callCount(), 1);
   assert.equal(invoked.mock.callCount(), 0);
 });
 
@@ -185,21 +204,26 @@ test('a reconnect reads the committed Boost when deletion is delayed or rejected
   assert.equal(setting.mock.callCount(), 1);
   const read = t.mock.fn();
   const reconnect = boosts.getCommitted(name).then(read);
+  const list = t.mock.fn();
+  const reloadingList = boosts.list().then(list);
   await nextTurn();
   assert.equal(read.mock.callCount(), 0);
-  assert.equal(boosts.list()[0].name, name);
+  assert.equal(list.mock.callCount(), 0);
   write.reject(new Error('Storage write failed'));
   await failed;
-  await reconnect;
+  await Promise.all([reconnect, reloadingList]);
   assert.equal(read.mock.calls[0].arguments[0].name, name);
+  assert.equal(list.mock.calls[0].arguments[0][0].name, name);
   assert.equal(saved.boosts[name], 'body {}');
 
   write = Promise.withResolvers();
   const retry = boosts.remove(name);
   const confirming = boosts.getCommitted(name);
+  const confirmingList = boosts.list();
   write.resolve();
   await retry;
   assert.equal(await confirming, undefined);
+  assert.deepEqual(await confirmingList, []);
   assert.equal(saved.boosts[name], undefined);
 });
 
@@ -211,6 +235,37 @@ test('agent wait validation leaves room for the transport watchdog', async () =>
   assert.equal(value.safeParse(MAX_TOOL_WAIT).success, true);
   assert.equal(toolWatchdog(2_147_483_647), 2_147_483_647);
   assert.ok(toolWatchdog(MAX_TOOL_WAIT) > toolTimeout(MAX_TOOL_WAIT));
+});
+
+test('a Boost save returns its own result before the queued deletion updates Chrome', async (t) => {
+  const refresh = Promise.withResolvers();
+  const unregister = t.mock.fn(async () => {});
+  const register = t.mock.fn(async () => {});
+  const persist = t.mock.fn(async () => {});
+  globalThis.chrome = {
+    extension: { inIncognitoContext: false },
+    storage: { local: { get: async () => ({}), set: persist } },
+    tabs: { query: t.mock.fn(() => refresh.promise), onRemoved: event() },
+    webNavigation: { onCommitted: event(), onDOMContentLoaded: event() },
+    debugger: { onDetach: event() },
+    userScripts: { getScripts: async () => [], unregister, register },
+  };
+  t.after(() => delete globalThis.chrome);
+  const boosts = await loadModule('chromium/shell/features/boosts.ts', { fresh: true });
+  const name = 'kept.example.ts';
+  const saved = boosts.save(name, 'source', { build: { code: 'built' } });
+  assert.equal((await boosts.getCommitted(name)).code, 'source');
+  await nextTurn();
+  assert.equal(register.mock.callCount(), 1);
+  const deleting = boosts.remove(name);
+  await nextTurn();
+  assert.equal(persist.mock.callCount(), 1);
+  assert.equal(unregister.mock.callCount(), 2, 'startup and save only while save refresh is pending');
+  refresh.resolve([]);
+  assert.equal((await saved).code, 'source');
+  await deleting;
+  assert.equal(unregister.mock.callCount(), 3);
+  assert.deepEqual(await boosts.list(), []);
 });
 
 test('Boosts serializes saves and keeps the editor address aligned with a retained draft', async (t) => {
@@ -787,11 +842,26 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   assert.match(results.find(({ id }) => id === 57).result.content[0].text, /Release failed/);
   inputFailures.clear();
 
+  inputFailures.set('rawKeyDown', 'Press failed before release stalled');
+  keyUp = Promise.withResolvers();
+  port.onMessage.emit({ type: 'tool', id: 101, name: 'press_key', args: { tabId: phone, key: 'Escape' } });
+  await nextTurn();
+  assert.deepEqual(calls.slice(-2), [['rawKeyDown'], ['keyUp']]);
+  assert.match(results.find(({ id }) => id === 101)?.result.content[0].text ?? '', /Press failed before release stalled/);
+  port.onMessage.emit({ type: 'tool', id: 102, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  assert.equal(results.some(({ id }) => id === 102), false, 'the failed press keeps the tab locked while release is pending');
+  keyUp.reject(new Error('Late release failure'));
+  keyUp = undefined;
+  inputFailures.clear();
+  await nextTurn();
+  assert.ok(results.some(({ id, result }) => id === 102 && !result.isError));
+
   readPending = Promise.withResolvers();
   detachPending = Promise.withResolvers();
   port.onMessage.emit({ type: 'tool', id: 58, name: 'evaluate', args: { tabId: phone, expression: 'fixture' } });
   await nextTurn();
-  for (const _ of [1, 2, 3]) {
+  for (const _ of [1, 2]) {
     t.mock.timers.tick(60_000);
     await nextTurn();
   }
@@ -800,6 +870,8 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   port.onMessage.emit({ type: 'tool', id: 59, name: 'console_logs', args: { tabId: phone } });
   await nextTurn();
   assert.match(results.find(({ id }) => id === 59)?.result.content[0].text ?? '', /has not confirmed the debugger reset/);
+  t.mock.timers.tick(60_000);
+  await nextTurn();
   assert.deepEqual(calls.at(-1), ['detach', tab.id], 'the agent cannot reattach before reset is confirmed');
   detachPending.resolve();
   readPending = undefined;
@@ -900,6 +972,26 @@ test('debugger cleanup keeps a replacement holder and waits for an incomplete at
   setup.resolve();
   await Promise.all([attaching, reset]);
   assert.deepEqual(detached, [12, 14, 13], 'the reset closes the session created by the pending attach');
+});
+
+test('canceling a debugger attachment invalidates reacquisition queued behind shared cleanup', async (t) => {
+  const onDetach = event();
+  const attach = t.mock.fn(async () => {});
+  globalThis.chrome = { debugger: { onDetach, attach, detach: async () => {} } };
+  t.after(() => delete globalThis.chrome);
+  const { hold, release } = await loadModule('chromium/shell/features/debuggee.ts', { fresh: true });
+  assert.equal(await hold(12, 'agent'), true);
+  assert.equal(await hold(12, 'responsive'), true);
+  const cleanup = Promise.withResolvers();
+  const leaving = release(12, 'agent', () => cleanup.promise);
+  const renewing = hold(12, 'agent');
+  onDetach.emit({ tabId: 12 }, 'canceled_by_user');
+  cleanup.resolve();
+  await leaving;
+  assert.equal(await renewing, false);
+  assert.equal(attach.mock.callCount(), 1);
+  assert.equal(await hold(12, 'agent'), true);
+  assert.equal(attach.mock.callCount(), 2);
 });
 
 test('the responsive split keeps the phone viewport width when the window grows', async () => {

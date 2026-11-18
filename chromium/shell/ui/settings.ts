@@ -298,6 +298,10 @@ function saveEnvironmentField(id: string, field: EnvironmentField, edit: FieldEd
   const edits = environmentDrafts.get(id);
   queueEnvironmentWrite(async () => {
     if (removingEnvironments.has(id) || (retry && environmentDrafts.get(id)?.[field] !== edit)) return;
+    if (!savedEnvironments.some((env) => env.id === id) && unconfirmedCreates.has(id)) {
+      render(await api.get());
+      if (removingEnvironments.has(id) || environmentDrafts.get(id)?.[field] !== edit) return;
+    }
     const previous = savedEnvironments.find((env) => env.id === id);
     const creating = !previous && incompleteEnvironments.has(id);
     if (!previous && !creating) return;

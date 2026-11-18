@@ -20,7 +20,8 @@ async function showExtensionActions() {
     return { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) };
   };
   // A browser without patch 0071 has no extensions menu to show.
-  let hasMenu = typeof chrome.flechaPrivate.showExtensionsMenu === 'function';
+  const hasMenu = typeof chrome.flechaPrivate.showExtensionsMenu === 'function';
+  let showUnpinned = !hasMenu;
   menuButton.hidden = !hasMenu;
   let collapsed = false;
   toggle.addEventListener('click', () => {
@@ -66,10 +67,10 @@ async function showExtensionActions() {
       .then((all) => all.filter((action) => action.id !== chrome.runtime.id))
       .then((actions) => {
         for (const id of buttons.keys()) if (!actions.some((action) => action.id === id)) buttons.delete(id);
-        const row = actions.filter((action) => !hasMenu || action.pinned).map(show);
+        const row = actions.filter((action) => showUnpinned || action.pinned).map(show);
         // Moved only when the order changed, so a press on a button stays on it.
         if (row.length !== pins.children.length || row.some((button, i) => pins.children[i] !== button)) pins.replaceChildren(...row);
-        toggle.hidden = !hasMenu || !row.length;
+        toggle.hidden = showUnpinned || !row.length;
         list.hidden = !actions.length;
       })
       .catch((err) => console.error('Flecha shell: extension actions failed', err))
@@ -81,16 +82,25 @@ async function showExtensionActions() {
         }
       });
   };
-  if (hasMenu) menuButton.addEventListener('click', () => {
-    void chrome.flechaPrivate.showExtensionsMenu(windowId, anchor(menuButton)).catch(() => {
-      hasMenu = false;
-      menuButton.hidden = true;
+  if (hasMenu) menuButton.addEventListener('click', async () => {
+    const button = menuButton as HTMLButtonElement;
+    button.disabled = true;
+    try {
+      await chrome.flechaPrivate.showExtensionsMenu(windowId, anchor(button));
+      if (showUnpinned) {
+        showUnpinned = false;
+        refresh();
+      }
+    } catch {
+      showUnpinned = true;
       collapsed = false;
       pins.hidden = false;
       toggle.setAttribute('aria-expanded', 'true');
       refresh();
       toast('Couldn’t open the Extensions menu. Extensions are shown in the sidebar.');
-    });
+    } finally {
+      button.disabled = false;
+    }
   });
   chrome.flechaPrivate.onExtensionActionsChanged.addListener((id) => id === windowId && refresh());
   // Icons and badges are per tab.
