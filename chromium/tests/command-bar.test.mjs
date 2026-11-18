@@ -55,12 +55,16 @@ test('typed development addresses open directly and environment badges follow ex
     '%ZZxample%2ecom:65536/api?token=fixture',
     '[::gg]:80/api?token=fixture',
     'staging:65536/api?token=fixture',
+    'staging:bad/api?token=fixture',
+    'build123: bad? token=fixture',
+    'staging:/api?token=fixture',
   ]) {
     assert.equal(resolveInput(malformed), 'about:blank');
     assert.equal(suggestable(malformed), false);
   }
   assert.equal(suggestable('re: meet @ noon'), true);
   assert.match(resolveInput('re: meet @ noon'), /[?&]q=re%3A%20meet%20%40%20noon/);
+  assert.equal(resolveInput('re: read? Where next'), 'https://www.google.com/search?q=re%3A%20read%3F%20Where%20next');
   assert.equal(resolveInput('node.js: tutorial'), 'https://www.google.com/search?q=node.js%3A%20tutorial');
   assert.equal(suggestable('node.js: tutorial'), true);
   assert.equal(resolveInput('node.js: 2024 tutorial'), 'https://www.google.com/search?q=node.js%3A%202024%20tutorial');

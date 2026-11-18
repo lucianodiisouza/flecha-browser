@@ -41,12 +41,11 @@ export function looksLikeRejectedAddress(input: string): boolean {
   const port = colon < 0 ? '' : authority.slice(colon + 1).trim();
   // A separated question in prose is different from a path or query attached to the authority.
   const addressTail = /^[/?#\\]\S/.test(tail) || /[?#]\s*[^=\s&#/?]+=/.test(tail);
-  const startsWithPortNumber = /^[+-]?\d/.test(port);
-  const numericPort = startsWithPortNumber && !/\s/.test(port);
+  const numericPort = /^[+-]?\d/.test(port) && !/\s/.test(port);
   if (/^localhost$|^[^\s.@]+\.[^\s@]+$/i.test(host)) {
     return colon < 0 ? !!tail : !/\s/.test(typed) || addressTail || numericPort;
   }
-  return !!tail && (numericPort || (addressTail && startsWithPortNumber)) && /^[a-z\d-]*[a-z][a-z\d-]*$/i.test(host);
+  return colon >= 0 && !!tail && (addressTail || numericPort) && /^[a-z\d-]*[a-z][a-z\d-]*$/i.test(host);
 }
 
 /** Turns whatever was typed in the command bar into a URL to load. */
