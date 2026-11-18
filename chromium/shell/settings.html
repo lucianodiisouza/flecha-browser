@@ -129,6 +129,20 @@
             </div>
             <input type="checkbox" id="openLinksInFlechinha" class="switch" />
           </label>
+          <label class="row">
+            <div class="row-text">
+              <strong>Show servers running locally</strong>
+              <small id="localServersNote">Dev servers on this Mac, at the top of the sidebar. Hover one and click × to hide its port.</small>
+            </div>
+            <input type="checkbox" id="showLocalServers" class="switch" />
+          </label>
+          <div class="row" id="ignoredPortsRow" hidden>
+            <div class="row-text">
+              <strong>Hidden ports</strong>
+              <small id="ignoredPorts"></small>
+            </div>
+            <button type="button" id="showIgnoredPorts" class="button">Show Again</button>
+          </div>
         </div>
       </section>
 

@@ -948,6 +948,33 @@ body {
   font-weight: 500;
 }
 
+.local-server-hide {
+  display: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-inline-start: 2px;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+}
+
+.local-server:hover .local-server-hide {
+  display: grid;
+}
+
+.local-server:hover .port {
+  display: none;
+}
+
+.local-server-hide:hover {
+  background: var(--fill-hover);
+  color: var(--text);
+}
+
+#local-server-list[hidden] {
+  display: none;
+}
+
 /* ---- footer ------------------------------------------------------------- */
 
 footer {
