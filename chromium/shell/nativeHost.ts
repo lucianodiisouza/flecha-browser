@@ -15,7 +15,7 @@ import type { AgentResult, AgentTab, AgentToolName } from '../shared/agentTools'
 import { applyBrowserImport, importOptions, previewBrowserImport, type BrowserImportData } from '../shared/importApply';
 import { HOST_NAME, TOOL_TIMEOUT, toolTimeout, type HostMethods, type ToHost, type ToShell } from '../native-host/protocol';
 import { broadcast, handle } from './hub';
-import { acquire, isShared, release, send } from './features/debuggee';
+import { acquire, isHeld, release, send } from './features/debuggee';
 
 export interface NativeHostContext {
   store: Store;
@@ -285,32 +285,51 @@ export function registerNativeHost(ctx: NativeHostContext) {
     return tabs;
   }
 
-  type UseTab = { signal: AbortSignal; tab(chromeId: number): void };
+  type UseTab = { signal: AbortSignal; tab(chromeId: number): Promise<void>; track<T>(command: Promise<T>): Promise<T> };
+  const tabOperations = new Map<number, Promise<void>>();
 
   async function runTool(name: AgentToolName, args: Record<string, any>): Promise<AgentResult> {
-    const used = new Set<number>();
+    const commands = new Set<Promise<unknown>>();
+    let work: Promise<AgentResult> | undefined;
+    let runningTab: number | undefined;
+    let unlock: (() => void) | undefined;
     const timeout = toolTimeout(args.timeoutMs);
     try {
-      return await withDeadline(timeout, (signal) => tools[name](args, {
+      return await withDeadline(timeout, (signal) => (work = tools[name](args, {
         signal,
-        tab(chromeId) {
+        async tab(chromeId) {
           signal.throwIfAborted();
-          if (used.has(chromeId)) return;
-          used.add(chromeId);
-          working.set(chromeId, (working.get(chromeId) ?? 0) + 1);
+          const previous = tabOperations.get(chromeId) ?? Promise.resolve();
+          const finished = new Promise<void>((resolve) => { unlock = resolve; });
+          const tail = previous.then(() => finished);
+          tabOperations.set(chromeId, tail);
+          void tail.then(() => { if (tabOperations.get(chromeId) === tail) tabOperations.delete(chromeId); });
+          await untilAborted(previous, signal);
+          signal.throwIfAborted();
+          runningTab = chromeId;
+          working.add(chromeId);
           if (attached.has(chromeId)) keepAttached(chromeId);
         },
-      }));
+        track(command) {
+          commands.add(command);
+          const settled = () => commands.delete(command);
+          void command.then(settled, settled);
+          return command;
+        },
+      })));
     } catch (err) {
       if (err instanceof AgentTimeout) return fail(`Flecha didn’t answer ${name} within ${timeout / 1000}s`);
       return fail(err instanceof Error ? err.message : String(err));
     } finally {
-      for (const chromeId of used) {
-        const count = working.get(chromeId)! - 1;
-        if (count) working.set(chromeId, count);
-        else working.delete(chromeId);
-        if (attached.has(chromeId)) keepAttached(chromeId);
-      }
+      // A timeout stops the caller's wait. Chrome may still be running a command.
+      void Promise.allSettled([work]).then(async () => {
+        await Promise.allSettled(commands);
+        if (runningTab !== undefined) {
+          working.delete(runningTab);
+          if (attached.has(runningTab)) keepAttached(runningTab);
+        }
+        unlock?.();
+      });
     }
   }
 
@@ -323,7 +342,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     showActivity(tabId, action);
     const chromeId = await ctx.tabs.chromeTab(tabId);
     if (chromeId === undefined) throw new Error(`Tab ${tabId} couldn’t be opened`);
-    use.tab(chromeId);
+    await use.tab(chromeId);
     // A tab tab sleep discarded needs nothing more: attaching the debugger brings its page back
     // (native-agent.mjs checks it).
     return { tabId, chromeId };
@@ -372,29 +391,28 @@ export function registerNativeHost(ctx: NativeHostContext) {
         links: '[...document.links].map((a) => `${a.innerText.trim().slice(0, 80)} -> ${a.href}`).join("\\n")',
       }[format as 'text' | 'html' | 'links'];
       if (!code) return fail(`Unknown format ${format}`);
-      const content = String(await evaluate(t.chromeId, code, use.signal));
+      const content = String(await evaluate(t.chromeId, code, use));
       const tab = await chrome.tabs.get(t.chromeId);
       return text(`# ${tab.title}\n${tab.url}\n\n${content.slice(0, maxChars)}`);
     },
     screenshot: async ({ tabId }, use) => {
       const t = await target(tabId, 'taking a screenshot', use);
       // Chromium has a tab that isn't on screen draw a frame for this (page_handler.cc).
-      const shot = (await debug(t.chromeId, 'Page.captureScreenshot', { format: 'png' }, use.signal)) as { data: string };
+      const shot = (await debug(t.chromeId, 'Page.captureScreenshot', { format: 'png' }, use)) as { data: string };
       return { content: [{ type: 'image', data: await shrink(shot.data, 1280), mimeType: 'image/png' }] };
     },
     console_logs: async ({ tabId, level, limit = 50 }, use) => {
       const t = await target(tabId, 'reading the console', use);
-      await attach(t.chromeId);
+      await attach(t.chromeId, use);
       const entries = (consoleLogs.get(t.chromeId) ?? []).filter((e) => !level || e.level === level);
       return text(entries.slice(-limit).map((e) => `[${e.level}] ${e.message}${e.source ? `  (${e.source})` : ''}`).join('\n') || '(no messages)');
     },
     click: async ({ tabId, selector }, use) => {
       const t = await target(tabId, `clicking ${selector}`, use);
-      const point = (await evaluate(t.chromeId, centerOf(String(selector)), use.signal)) as { x: number; y: number } | undefined;
+      const point = (await evaluate(t.chromeId, centerOf(String(selector)), use)) as { x: number; y: number } | undefined;
       if (!point) return fail(`No visible element matches ${selector}`);
-      for (const type of ['mousePressed', 'mouseReleased']) {
-        await debug(t.chromeId, 'Input.dispatchMouseEvent', { type, x: point.x, y: point.y, button: 'left', clickCount: 1 }, use.signal);
-      }
+      const button = { x: point.x, y: point.y, button: 'left', clickCount: 1 };
+      await dispatchInput(t.chromeId, 'Input.dispatchMouseEvent', { ...button, type: 'mousePressed' }, { ...button, type: 'mouseReleased' }, use);
       await settle(t.chromeId);
       return text({ clicked: selector, url: (await chrome.tabs.get(t.chromeId)).url });
     },
@@ -410,24 +428,24 @@ export function registerNativeHost(ctx: NativeHostContext) {
             el.focus();
             if (${!!clear} && 'value' in el) { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); }
             return true;
-          })()`, use.signal,
+          })()`, use,
         );
         if (!found) return fail(`No element matches ${selector}`);
       }
-      await debug(t.chromeId, 'Input.insertText', { text: String(value) }, use.signal);
-      if (submit) await pressKey(t.chromeId, 'Enter', use.signal);
+      await debug(t.chromeId, 'Input.insertText', { text: String(value) }, use);
+      if (submit) await pressKey(t.chromeId, 'Enter', use);
       await settle(t.chromeId);
       return text('ok');
     },
     press_key: async ({ tabId, key }, use) => {
       const t = await target(tabId, `pressing ${key}`, use);
-      await pressKey(t.chromeId, String(key), use.signal);
+      await pressKey(t.chromeId, String(key), use);
       await settle(t.chromeId);
       return text('ok');
     },
     evaluate: async ({ tabId, expression }, use) => {
       const t = await target(tabId, 'running JavaScript', use);
-      const result = await evaluate(t.chromeId, String(expression), use.signal);
+      const result = await evaluate(t.chromeId, String(expression), use);
       return text(result === undefined ? 'undefined' : result);
     },
     wait_for: async ({ tabId, selector, timeoutMs = 10000 }, use) => {
@@ -436,7 +454,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
       while (Date.now() < deadline) {
         use.signal.throwIfAborted();
         const ready = selector
-          ? await evaluate(t.chromeId, `!!document.querySelector(${JSON.stringify(selector)})`, use.signal).catch(() => false)
+          ? await evaluate(t.chromeId, `!!document.querySelector(${JSON.stringify(selector)})`, use).catch(() => false)
           : (await chrome.tabs.get(t.chromeId)).status !== 'loading';
         if (ready) return text('ready');
         await wait(200);
@@ -453,8 +471,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
   const DEBUG_IDLE = 120_000;
   const DEBUG_HOLDER = 'agent';
   const attached = new Map<number, ReturnType<typeof setTimeout> | undefined>();
-  const working = new Map<number, number>();
-  const attaching = new Map<number, Promise<void>>();
+  const working = new Set<number>();
   const releasing = new Map<number, Promise<void>>();
   const consoleLogs = new Map<number, Array<{ level: string; message: string; source: string; time: number }>>();
 
@@ -473,14 +490,13 @@ export function registerNativeHost(ctx: NativeHostContext) {
     if (was) void ctx.agentTabsChanged();
   }
 
-  function releaseAgent(chromeId: number) {
+  function releaseAgent(chromeId: number, reset = true) {
     // A responsive view can keep the session open. The next agent call must set up after these resets.
-    const reset = isShared(chromeId) ? withDeadline(TOOL_TIMEOUT, () => Promise.all([
+    const released = release(chromeId, DEBUG_HOLDER, reset ? () => Promise.all([
       send(chromeId, 'Emulation.setFocusEmulationEnabled', { enabled: false }),
       send(chromeId, 'Runtime.disable'),
       send(chromeId, 'Log.disable'),
-    ])).catch(() => undefined) : Promise.resolve();
-    const released = reset.then(() => release(chromeId, DEBUG_HOLDER))
+    ]) : undefined)
       .finally(() => releasing.delete(chromeId));
     releasing.set(chromeId, released);
     forget(chromeId);
@@ -535,70 +551,60 @@ export function registerNativeHost(ctx: NativeHostContext) {
     );
   }
 
-  function attach(chromeId: number): Promise<void> {
+  async function attach(chromeId: number, use: UseTab) {
     const cleanup = releasing.get(chromeId);
-    if (cleanup) {
-      const previous = attaching.get(chromeId);
-      return Promise.all([cleanup, previous?.catch(() => undefined)]).then(() => attach(chromeId));
-    }
-    // Attached counts from the debugger's attach, but commands wait until the tab is awake and set
-    // up: a call during that time waits for it too.
-    let pending = attaching.get(chromeId);
-    if (pending) return pending;
+    if (cleanup) await untilAborted(cleanup, use.signal);
+    use.signal.throwIfAborted();
     if (attached.has(chromeId)) {
       keepAttached(chromeId);
-      return Promise.resolve();
+      return;
     }
-    pending = (async () => {
-      await acquire(chromeId, DEBUG_HOLDER);
-      keepAttached(chromeId);
-      consoleLogs.set(chromeId, []);
-      try {
-        await withDeadline(TOOL_TIMEOUT, async (signal) => {
-          const setup = (method: string, params?: object) => {
-            signal.throwIfAborted();
-            return untilAborted(chrome.debugger.sendCommand({ tabId: chromeId }, method, params), signal);
-          };
-          // A frozen tab answers nothing; tab sleep wakes it before any command.
-          await untilAborted(ctx.agentTabsChanged(), signal);
-          await setup('Emulation.setFocusEmulationEnabled', { enabled: true });
-          await setup('Runtime.enable');
-          await setup('Log.enable');
-          // The replayed messages arrive right after enabling.
-          await wait(100);
-        });
-      } catch (error) {
-        // A tab left half set up would skip the setup on later calls; let go so the next call
-        // starts over. onDetach doesn't fire for our own detach, so forget it here.
-        await releaseAgent(chromeId);
-        throw error;
-      }
-    })()
-      .catch(async (error: unknown) => {
-        throw await attachRefused(chromeId, error);
-      })
-      .finally(() => attaching.delete(chromeId));
-    attaching.set(chromeId, pending);
-    return pending;
+    let acquired = false;
+    let settingUp: Promise<unknown> | undefined;
+    try {
+      await withDeadline(TOOL_TIMEOUT, async (deadline) => {
+        const signal = AbortSignal.any([use.signal, deadline]);
+        await untilAborted(acquire(chromeId, DEBUG_HOLDER), signal);
+        signal.throwIfAborted();
+        acquired = true;
+        keepAttached(chromeId);
+        consoleLogs.set(chromeId, []);
+        const setup = (method: string, params?: object) => {
+          signal.throwIfAborted();
+          settingUp = use.track(chrome.debugger.sendCommand({ tabId: chromeId }, method, params));
+          return untilAborted(settingUp, signal);
+        };
+        await untilAborted(ctx.agentTabsChanged(), signal);
+        await setup('Emulation.setFocusEmulationEnabled', { enabled: true });
+        await setup('Runtime.enable');
+        await setup('Log.enable');
+        await untilAborted(wait(100), signal);
+      });
+    } catch (error) {
+      // Keep the old attachment owned while a command could still change its domains.
+      const releaseWhenSafe = () => releaseAgent(chromeId, acquired);
+      if (settingUp) void settingUp.then(releaseWhenSafe, releaseWhenSafe);
+      else void releaseWhenSafe();
+      throw await attachRefused(chromeId, error);
+    }
   }
 
-  async function debug(chromeId: number, method: string, params: object, signal: AbortSignal) {
-    signal.throwIfAborted();
-    await untilAborted(attach(chromeId), signal);
-    signal.throwIfAborted();
+  async function debug(chromeId: number, method: string, params: object, use: UseTab) {
+    await attach(chromeId, use);
+    use.signal.throwIfAborted();
     // Chromium also lets go of a tab when another extension's frame loads in it mid-command.
-    return untilAborted(chrome.debugger.sendCommand({ tabId: chromeId }, method, params), signal).catch(async (error: unknown) => {
+    return untilAborted(use.track(chrome.debugger.sendCommand({ tabId: chromeId }, method, params)), use.signal).catch(async (error: unknown) => {
       throw await attachRefused(chromeId, error);
     });
   }
 
-  async function evaluate(chromeId: number, expression: string, signal: AbortSignal): Promise<unknown> {
+  async function evaluate(chromeId: number, expression: string, use: UseTab): Promise<unknown> {
     const result = (await debug(chromeId, 'Runtime.evaluate', {
       expression,
       awaitPromise: true,
       returnByValue: true,
       userGesture: true,
-    }, signal)) as { result?: { value?: unknown }; exceptionDetails?: { text?: string; exception?: { description?: string } } };
+    }, use)) as { result?: { value?: unknown }; exceptionDetails?: { text?: string; exception?: { description?: string } } };
     if (result.exceptionDetails) {
       throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text ?? 'The script threw');
     }
@@ -628,7 +634,21 @@ export function registerNativeHost(ctx: NativeHostContext) {
   chrome.debugger.onDetach.addListener((source) => source.tabId !== undefined && forget(source.tabId));
   chrome.tabs.onRemoved.addListener((chromeId) => forget(chromeId));
 
-  async function pressKey(chromeId: number, key: string, signal: AbortSignal) {
+  async function dispatchInput(chromeId: number, method: string, down: object, up: object, use: UseTab) {
+    await attach(chromeId, use);
+    use.signal.throwIfAborted();
+    const target = { tabId: chromeId };
+    const pressed = use.track(chrome.debugger.sendCommand(target, method, down));
+    try {
+      await untilAborted(pressed, use.signal);
+    } finally {
+      if (isHeld(chromeId, DEBUG_HOLDER)) {
+        await withDeadline(TOOL_TIMEOUT, () => use.track(chrome.debugger.sendCommand(target, method, up)));
+      }
+    }
+  }
+
+  async function pressKey(chromeId: number, key: string, use: UseTab) {
     const named: Record<string, [code: string, keyCode: number, text?: string]> = {
       Enter: ['Enter', 13, '\r'],
       Tab: ['Tab', 9],
@@ -648,8 +668,9 @@ export function registerNativeHost(ctx: NativeHostContext) {
     const [code, keyCode, keyText] =
       named[key] ?? (key.length === 1 ? [`Key${key.toUpperCase()}`, key.toUpperCase().charCodeAt(0), key] : [key, 0]);
     const base = { key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode };
-    await debug(chromeId, 'Input.dispatchKeyEvent', { type: keyText ? 'keyDown' : 'rawKeyDown', ...base, text: keyText, unmodifiedText: keyText }, signal);
-    await debug(chromeId, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base }, signal);
+    await dispatchInput(chromeId, 'Input.dispatchKeyEvent',
+      { type: keyText ? 'keyDown' : 'rawKeyDown', ...base, text: keyText, unmodifiedText: keyText },
+      { type: 'keyUp', ...base }, use);
   }
 
   return {

@@ -2,7 +2,7 @@
  * The page side of the shell's messaging: what a Flecha page uses in place of Electron's
  * ipcRenderer. cmd() fires a command, invoke() awaits a reply, on() listens for events.
  */
-import type { Message } from './protocol';
+import { ConnectionError, type Message } from './protocol';
 import { toast } from './settingsUi';
 
 type Reply = { resolve: (value: unknown) => void; reject: (error: Error) => void };
@@ -32,7 +32,7 @@ function stop() {
 function disconnected(connection: Connection, terminal = false) {
   if (current !== connection) return;
   current = undefined;
-  for (const reply of connection.replies.values()) reply.reject(new Error('Flecha’s background restarted'));
+  for (const reply of connection.replies.values()) reply.reject(new ConnectionError(true, 'Flecha’s background restarted'));
   connection.replies.clear();
   if (terminal) stop();
   else scheduleRetry(Date.now() - connection.openedAt >= STABLE_MS);
@@ -70,7 +70,7 @@ function connect() {
 function post(message: Message, reply?: Reply) {
   const connection = current;
   if (!connection) {
-    reply?.reject(new Error('Flecha’s background can’t be reached'));
+    reply?.reject(new ConnectionError(false, 'Flecha’s background can’t be reached'));
     return false;
   }
   if (message.type === 'invoke' && reply) connection.replies.set(message.id, reply);
@@ -82,6 +82,10 @@ function post(message: Message, reply?: Reply) {
     // GinPort also throws for serialization failures, which leave the port usable.
     const terminal = contextInvalidated(reason.message);
     if (terminal || reason.message === 'Attempting to use a disconnected port object') {
+      if (message.type === 'invoke' && reply) {
+        connection.replies.delete(message.id);
+        reply.reject(new ConnectionError(false, reason.message));
+      }
       disconnected(connection, terminal);
       try {
         connection.port.disconnect();

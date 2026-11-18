@@ -2219,7 +2219,8 @@ body[data-sidebar='floating'] #sidebar.peek-leaving {
   animation: fade var(--fast) var(--ease);
 }
 
-body[data-sidebar='docked'] #split-drop {
+body[data-sidebar='docked'] #split-drop,
+body[data-sidebar='floating'] #split-drop {
   left: var(--sidebar);
 }
 

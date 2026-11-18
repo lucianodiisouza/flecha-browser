@@ -1041,6 +1041,10 @@ code {
   display: none;
 }
 
+#settings-load-status:empty {
+  margin: 0;
+}
+
 .tm-none {
   margin: 40px 0;
   text-align: center;

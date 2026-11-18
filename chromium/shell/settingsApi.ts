@@ -98,8 +98,18 @@ const api: SettingsApi = {
     return picked ? invoke<TabsMenuAction | undefined>('settings:tabs-menu-run', picked.run) : undefined;
   },
   onTabs: (cb, onError) => {
-    on('settings:tabs', cb);
-    onReconnect(() => void api.tabs().then(cb, onError));
+    let generation = 0;
+    on('settings:tabs', (view: TabsView) => {
+      generation++;
+      cb(view);
+    });
+    onReconnect(() => {
+      const request = ++generation;
+      void api.tabs().then(
+        (view) => { if (request === generation) cb(view); },
+        () => { if (request === generation) onError?.(); },
+      );
+    });
   },
   showTab: (tabId) => invoke('settings:show-tab', tabId).then(() => undefined),
   showEmojiPanel: () => invoke('settings:emoji-panel').then(tellNotYet).then(() => undefined),

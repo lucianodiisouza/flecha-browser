@@ -37,6 +37,7 @@ const SPACE_DRAG_TYPE = 'application/x-flecha-space';
 let draggedSpace: string | undefined;
 let draggedTab: { id: string; spaceId: string } | undefined;
 let incomingDrop: { element: HTMLElement; spaceId: string } | undefined;
+let clearDropTarget: (() => void) | undefined;
 let deferredRows = false;
 let externalPinnedDrag = false;
 
@@ -228,11 +229,11 @@ function renderEmptyState(s: UiState, space: Space, show: boolean) {
   // History changes as you browse, so the tiles are fetched each time the page becomes empty.
   if (!fetchingTopSites && (wasHidden || Date.now() - topSitesFetched > 60_000)) {
     fetchingTopSites = true;
+    topSitesFetched = Date.now();
     void api.topSites().then((sites) => {
-      topSitesFetched = Date.now();
       topSites = sites;
       if (state) render(state);
-    }, () => { topSitesFetched = 0; }).finally(() => { fetchingTopSites = false; });
+    }, () => undefined).finally(() => { fetchingTopSites = false; });
   }
   // Drawn on every update so icons appear as they are fetched.
   $('empty-top').hidden = !topSites.length;
@@ -657,6 +658,7 @@ function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget | undefined) 
     showSplitDrop(tab.id);
   });
   el.addEventListener('dragend', () => {
+    clearDropTarget?.();
     if (draggedTab?.id !== tab.id) return;
     draggedTab = undefined;
     $('favorites').classList.remove('show-empty');
@@ -668,12 +670,12 @@ function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget | undefined) 
 
 function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-over', splitTarget?: string) {
   let hoveredSpaceId: string | undefined;
-  const clear = () => {
-    hoveredSpaceId = undefined;
-    el.classList.remove(hoverClass, 'drop-split-left', 'drop-split-right');
-  };
+  let hoveredSide: 'left' | 'right' | undefined;
   const endHover = () => {
-    clear();
+    hoveredSpaceId = undefined;
+    hoveredSide = undefined;
+    if (clearDropTarget === endHover) clearDropTarget = undefined;
+    el.classList.remove(hoverClass, 'drop-split-left', 'drop-split-right');
     if (incomingDrop?.element !== el) return;
     incomingDrop = undefined;
     queueMicrotask(() => {
@@ -694,26 +696,28 @@ function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-ove
   el.addEventListener('dragover', (e) => {
     if (!e.dataTransfer?.types.includes(DRAG_TYPE)) return;
     e.stopPropagation();
-    clear();
+    clearDropTarget?.();
     if (!currentTarget()) return;
     e.preventDefault();
     hoveredSpaceId = state?.activeSpaceId;
     if (!draggedTab && hoveredSpaceId) incomingDrop = { element: el, spaceId: hoveredSpaceId };
-    const side = splitSide(e);
-    el.classList.add(side ? `drop-split-${side}` : hoverClass);
+    hoveredSide = splitSide(e);
+    clearDropTarget = endHover;
+    el.classList.add(hoveredSide ? `drop-split-${hoveredSide}` : hoverClass);
   });
   el.addEventListener('dragleave', (e) => {
     if (!(e.relatedTarget instanceof Node) || !el.contains(e.relatedTarget)) endHover();
   });
   el.addEventListener('drop', (e) => {
     const spaceId = hoveredSpaceId;
+    const side = hoveredSide;
     endHover();
     const id = e.dataTransfer?.getData(DRAG_TYPE);
     if (!id) return;
     e.preventDefault();
     e.stopPropagation();
     if (!spaceId || spaceId !== state?.activeSpaceId || !currentTarget()) return;
-    const side = splitSide(e);
+    if (side !== splitSide(e) || (side && id !== draggedTab?.id)) return;
     hideSplitDrop();
     if (side && splitTarget) api.dropToSplit(id, side, { kind: 'row', tabId: splitTarget, spaceId });
     else api.moveTab(id, { ...target, spaceId });

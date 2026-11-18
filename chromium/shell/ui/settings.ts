@@ -6,6 +6,7 @@ import { setupDebugPane } from './debugPane.js';
 import { isEnter } from '../lib/keys';
 import { importFromBrowser } from '../windowUi';
 import { onReconnect } from '../client';
+import { toast } from '../settingsUi';
 
 declare global {
   interface Window {
@@ -24,7 +25,7 @@ function icon(name: IconName) {
   return el;
 }
 
-setupTabsPane(icon);
+setupTabsPane(icon, toast);
 
 for (const el of document.querySelectorAll<HTMLElement>('i[data-icon]')) el.replaceWith(icon(el.dataset.icon as IconName));
 
@@ -170,12 +171,28 @@ const makeDefault = document.getElementById('makeDefault') as HTMLButtonElement;
 const defaultStatus = document.getElementById('defaultBrowserStatus')!;
 
 type EnvironmentDraft = SettingsView['environments'][number];
+type EnvironmentField = 'name' | 'targetsText';
 let environments: EnvironmentDraft[] = [];
+let savedEnvironments: EnvironmentDraft[] = [];
+const environmentDrafts = new Map<string, Partial<EnvironmentDraft>>();
+let environmentWrites = Promise.resolve();
 const environmentList = document.getElementById('environmentList')!;
+
+function reconcileEnvironments(saved: EnvironmentDraft[]) {
+  savedEnvironments = saved;
+  const known = new Set(saved.map((env) => env.id));
+  const visible = saved.map((env) => ({ ...env, ...environmentDrafts.get(env.id) }));
+  for (const [id, draft] of environmentDrafts) {
+    if (!known.has(id)) visible.push({ id, name: '', targetsText: '', ...draft });
+  }
+  if (JSON.stringify(environments) === JSON.stringify(visible)) return;
+  environments = visible;
+  renderEnvironments();
+}
 
 function renderEnvironments() {
   environmentList.replaceChildren(
-    ...environments.map((env, i) => {
+    ...environments.map((env) => {
       const card = document.createElement('div');
       card.className = 'card env-card';
       const name = Object.assign(document.createElement('input'), { value: env.name, placeholder: 'Project name', className: 'env-name' });
@@ -188,11 +205,13 @@ function renderEnvironments() {
       });
       const remove = Object.assign(document.createElement('button'), { className: 'icon-button', title: 'Remove project' });
       remove.append(icon('close'));
-      name.addEventListener('change', () => saveEnvironments({ ...env, name: name.value }, i));
-      targets.addEventListener('change', () => saveEnvironments({ ...env, targetsText: targets.value }, i));
+      wireEnvironmentField(env.id, 'name', name);
+      wireEnvironmentField(env.id, 'targetsText', targets);
       remove.addEventListener('click', () => {
-        environments.splice(i, 1);
-        void persistEnvironments();
+        environmentDrafts.delete(env.id);
+        if (savedEnvironments.some((item) => item.id === env.id)) {
+          updateEnvironments((saved) => saved.filter((item) => item.id !== env.id));
+        } else reconcileEnvironments(savedEnvironments);
       });
       const header = document.createElement('div');
       header.className = 'env-header';
@@ -203,22 +222,47 @@ function renderEnvironments() {
   );
 }
 
-function saveEnvironments(updated: EnvironmentDraft, index: number) {
-  environments[index] = updated;
-  void persistEnvironments();
+function wireEnvironmentField(id: string, field: EnvironmentField, input: HTMLInputElement | HTMLTextAreaElement) {
+  input.addEventListener('input', () => {
+    environmentDrafts.set(id, { ...environmentDrafts.get(id), [field]: input.value });
+    const visible = environments.find((env) => env.id === id);
+    if (visible) visible[field] = input.value;
+  });
+  input.addEventListener('change', () => {
+    const value = input.value;
+    const draft = environmentDrafts.get(id);
+    if (draft) {
+      delete draft[field];
+      if (!Object.keys(draft).length) environmentDrafts.delete(id);
+    }
+    const local = environments.find((env) => env.id === id);
+    updateEnvironments((saved) => {
+      const previous = saved.find((env) => env.id === id);
+      const edited = { id, name: '', targetsText: '', ...(previous ?? local), [field]: value };
+      return previous ? saved.map((env) => env.id === id ? edited : env) : [...saved, edited];
+    }, id);
+  });
 }
 
-async function persistEnvironments() {
-  // Drafts without a valid URL yet stay on screen; the main process only keeps complete ones.
-  const drafts = environments;
-  const view = await api.set({ environments: drafts });
-  environments = drafts.map((d) => view.environments.find((e) => e.id === d.id) ?? d);
-  renderEnvironments();
+function updateEnvironments(edit: (saved: EnvironmentDraft[]) => EnvironmentDraft[], editedId?: string) {
+  environmentWrites = environmentWrites.then(async () => {
+    const submitted = edit(savedEnvironments);
+    try {
+      const view = await api.set({ environments: submitted });
+      if (editedId && !view.environments.some((env) => env.id === editedId)) {
+        const edited = submitted.find((env) => env.id === editedId);
+        if (edited) environmentDrafts.set(editedId, { ...edited, ...environmentDrafts.get(editedId) });
+      }
+      render(view);
+    } catch {
+      showLoadError();
+    }
+  });
 }
 
 document.getElementById('addEnvironment')!.addEventListener('click', () => {
-  environments.push({ id: crypto.randomUUID(), name: '', targetsText: '' });
-  renderEnvironments();
+  environmentDrafts.set(crypto.randomUUID(), {});
+  reconcileEnvironments(savedEnvironments);
   environmentList.querySelector<HTMLInputElement>('.env-card:last-child .env-name')?.focus();
 });
 
@@ -230,12 +274,12 @@ const openLinksInFlechinha = document.getElementById('openLinksInFlechinha') as 
 const sidebarInPageFullscreen = document.getElementById('sidebarInPageFullscreen') as HTMLInputElement;
 
 for (const card of document.querySelectorAll<HTMLElement>('.theme-card')) {
-  card.addEventListener('click', async () => render(await api.set({ theme: card.dataset.theme as SettingsView['theme'] })));
+  card.addEventListener('click', () => void setPreference({ theme: card.dataset.theme as SettingsView['theme'] }));
 }
-archiveAfter.addEventListener('change', async () => render(await api.set({ archiveAfterHours: Number(archiveAfter.value) })));
-peekPinnedLinks.addEventListener('change', async () => render(await api.set({ peekPinnedLinks: peekPinnedLinks.checked })));
-openLinksInFlechinha.addEventListener('change', async () => render(await api.set({ openLinksInFlechinha: openLinksInFlechinha.checked })));
-sidebarInPageFullscreen.addEventListener('change', async () => render(await api.set({ sidebarInPageFullscreen: sidebarInPageFullscreen.checked })));
+archiveAfter.addEventListener('change', () => void setPreference({ archiveAfterHours: Number(archiveAfter.value) }));
+peekPinnedLinks.addEventListener('change', () => void setPreference({ peekPinnedLinks: peekPinnedLinks.checked }));
+openLinksInFlechinha.addEventListener('change', () => void setPreference({ openLinksInFlechinha: openLinksInFlechinha.checked }));
+sidebarInPageFullscreen.addEventListener('change', () => void setPreference({ sidebarInPageFullscreen: sidebarInPageFullscreen.checked }));
 
 // ---- keyboard shortcuts: click a key cap, press the new keys --------------------------
 
@@ -277,7 +321,7 @@ function renderShortcuts() {
         if (item.changed) {
           const reset = Object.assign(document.createElement('button'), { className: 'shortcut-reset', title: 'Back to the default' });
           reset.append(icon('reload'));
-          reset.addEventListener('click', async () => applyShortcuts(await api.set({ shortcut: { id: item.id, keys: 'default' } })));
+          reset.addEventListener('click', () => void setPreference({ shortcut: { id: item.id, keys: 'default' } }, applyShortcuts));
           actions.append(reset);
         }
         if (item.fixed) {
@@ -316,7 +360,7 @@ api.onKey(async (key) => {
   const keys = removing ? null : acceleratorFor(key);
   if (keys === undefined) return showNotice('Use a modifier with a key, or a function key.');
   await startRecording(undefined);
-  applyShortcuts(await api.set({ shortcut: { id, keys } }));
+  await setPreference({ shortcut: { id, keys } }, applyShortcuts);
 });
 
 function applyShortcuts(view: SettingsView) {
@@ -333,7 +377,7 @@ function showNotice(text: string | undefined) {
   if (text) noticeTimer = window.setTimeout(() => (shortcutNotice.hidden = true), 5000);
 }
 
-document.getElementById('resetShortcuts')!.addEventListener('click', async () => applyShortcuts(await api.set({ resetShortcuts: true })));
+document.getElementById('resetShortcuts')!.addEventListener('click', () => void setPreference({ resetShortcuts: true }, applyShortcuts));
 // Leaving the pane or the window ends recording.
 window.addEventListener('blur', () => recordingId && void startRecording(undefined));
 for (const item of document.querySelectorAll<HTMLElement>('.nav-item')) item.addEventListener('click', () => recordingId && void startRecording(undefined));
@@ -360,12 +404,13 @@ async function copied(button: HTMLButtonElement, text: string) {
   setTimeout(() => (button.textContent = label), 1200);
 }
 
-agentEnabled.addEventListener('change', async () => render(await api.set({ agentEnabled: agentEnabled.checked })));
+agentEnabled.addEventListener('change', () => void setPreference({ agentEnabled: agentEnabled.checked }));
 document.getElementById('copyClaudeCommand')!.addEventListener('click', (e) => copied(e.currentTarget as HTMLButtonElement, claudeCommand()));
 document.getElementById('copyAgentJson')!.addEventListener('click', (e) => copied(e.currentTarget as HTMLButtonElement, agentJson()));
 document.getElementById('newAgentToken')!.addEventListener('click', async () => render(await api.newAgentToken()));
 
 function render(view: SettingsView) {
+  lastPreferences = view;
   adBlock.checked = view.adBlock;
   if (searchEngine.options.length !== view.searchEngines.length) {
     searchEngine.replaceChildren(...view.searchEngines.map((e) => new Option(e.name, e.id)));
@@ -387,10 +432,7 @@ function render(view: SettingsView) {
   openLinksInFlechinha.checked = view.openLinksInFlechinha;
   sidebarInPageFullscreen.checked = view.sidebarInPageFullscreen;
   renderAgent(view);
-  if (!environments.length) {
-    environments = view.environments;
-    renderEnvironments();
-  }
+  reconcileEnvironments(view.environments);
 
   const { isDefault, canSet } = view.defaultBrowser;
   makeDefault.hidden = isDefault;
@@ -436,28 +478,34 @@ importButton.addEventListener('click', async () => {
   }
 });
 document.getElementById('chooseFolder')!.addEventListener('click', async () => render(await api.chooseDownloadsFolder()));
-askWhereToSave.addEventListener('change', async () => render(await api.set({ askWhereToSave: askWhereToSave.checked })));
+askWhereToSave.addEventListener('change', () => void setPreference({ askWhereToSave: askWhereToSave.checked }));
 
-searchEngine.addEventListener('change', async () =>
-  render(await api.set({ searchEngine: searchEngine.value as SettingsView['searchEngine'] })),
+searchEngine.addEventListener('change', () =>
+  void setPreference({ searchEngine: searchEngine.value as SettingsView['searchEngine'] }),
 );
-adBlock.addEventListener('change', async () => render(await api.set({ adBlock: adBlock.checked })));
+adBlock.addEventListener('change', () => void setPreference({ adBlock: adBlock.checked }));
 
 const loadError = document.getElementById('settings-load-error')!;
+const loadStatus = document.getElementById('settings-load-status')!;
 const preferencePanes = document.querySelectorAll<HTMLElement>('[data-preferences]');
-let prefsLoaded = false;
+let lastPreferences: SettingsView | undefined;
+function showLoadError() {
+  if (lastPreferences) render(lastPreferences);
+  for (const pane of preferencePanes) pane.inert = true;
+  loadError.hidden = false;
+  loadStatus.textContent = 'Preferences are unavailable. Retry or reload Settings.';
+}
+function setPreference(patch: Parameters<SettingsApi['set']>[0], show = render) {
+  return api.set(patch).then(show, showLoadError);
+}
 let refreshing: Promise<void> | undefined;
 function refresh() {
   refreshing ??= api.get().then((view) => {
     render(view);
-    prefsLoaded = true;
     for (const pane of preferencePanes) pane.inert = false;
     loadError.hidden = true;
-  }, () => {
-    if (prefsLoaded) return;
-    loadError.hidden = false;
-    loadError.querySelector('[role="status"]')!.textContent = 'Couldn’t load your preferences. Retry or reload Settings.';
-  }).finally(() => { refreshing = undefined; });
+    loadStatus.textContent = '';
+  }, showLoadError).finally(() => { refreshing = undefined; });
 }
 
 loadError.querySelector('button')!.addEventListener('click', refresh);

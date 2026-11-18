@@ -121,6 +121,14 @@ export function repairState(raw: Record<string, unknown>): BrowserState | undefi
     .filter((w) => Object.keys(w.spaces).length);
   const settings = pick(raw, Object.keys(SETTINGS));
   dropInvalid(settings, SETTINGS);
+  if (Array.isArray(settings.environments)) {
+    settings.environments = settings.environments.map((env) => ({
+      id: env.id,
+      name: env.name,
+      targets: env.targets.map(({ label, origin, autoLabel }: Record<string, unknown>) =>
+        ({ label, origin, ...(typeof autoLabel === 'boolean' ? { autoLabel } : {}) })),
+    }));
+  }
   return {
     ...settings,
     spaces,

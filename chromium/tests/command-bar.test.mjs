@@ -7,6 +7,9 @@ import { loadModule } from './load-module.mjs';
 const { displayUrl, historyQuery, inlineCompletion, matchQuality, rank, score } = await loadModule('chromium/shell/lib/commandBar.ts');
 const { SEARCH_ENGINES, resolveInput, webAddress } = await loadModule('chromium/shell/lib/url.ts');
 const { describe, formatTargets, parseTargets } = await loadModule('chromium/shell/lib/environments.ts');
+const { decodeState } = await loadModule('chromium/shared/savedState.ts');
+const { Store } = await loadModule('chromium/shared/store.ts');
+const { suggestable } = await loadModule('chromium/shell/lib/suggest.ts');
 const { devSuggestions } = await loadModule('chromium/shell/ui/devCommands.ts');
 
 test('typed development addresses open directly and environment badges follow explicit labels', () => {
@@ -19,6 +22,10 @@ test('typed development addresses open directly and environment badges follow ex
   assert.equal(resolveInput('[0:0:0:0:0:0:0:1]:8080'), 'http://[0:0:0:0:0:0:0:1]:8080');
   assert.equal(resolveInput('203.0.113.9:3000'), 'https://203.0.113.9:3000');
   assert.equal(resolveInput('[fd00::1]:8443'), 'https://[fd00::1]:8443');
+  for (const address of ['例子.中国', 'xn--fsqu00a.xn--fiqs8s']) assert.equal(resolveInput(address), `https://${address}`);
+  const credentialed = 'test-user:fixture-password@example.com/private';
+  assert.equal(resolveInput(credentialed), 'about:blank');
+  assert.equal(suggestable(credentialed), false);
   for (const broken of ['300.10.0.1', '192.168.1.010:3000', 'localhost: 3000', 'localhost:65536', 'localhost:3000@example.com']) {
     assert.equal(webAddress(broken), undefined, broken);
   }
@@ -48,6 +55,23 @@ test('typed development addresses open directly and environment badges follow ex
   assert.equal(formatTargets(projects), text);
   assert.deepEqual(projects.map(({ origin }) => describe(origin, [{ id: 'projects', name: 'Projects', targets: projects }]).tone),
     ['local', 'staging', 'production', 'staging']);
+  const labels = parseTargets('QA_US https://example.com\nPROD_US https://staging.example.com');
+  assert.deepEqual(labels.map(({ origin }) => describe(origin, [{ id: 'labels', name: 'Labels', targets: labels }]).tone), ['staging', 'production']);
+});
+
+test('saved environment targets preserve explicit and legacy labels', () => {
+  const store = new Store({ load: () => undefined, save: () => {} });
+  const state = JSON.parse(store.serialize());
+  state.environments = [{ id: 'project', name: 'Project', targets: [
+    ...parseTargets('qa.example.com https://qa.example.com'),
+    { label: 'QA.EXAMPLE.COM', origin: 'https://qa.example.com' },
+    { label: 'example.com', origin: 'https://example.com' },
+    { label: 'prod', origin: 'https://staging.example.com', autoLabel: 'false' },
+  ] }];
+  const [project] = decodeState(JSON.stringify(state)).environments;
+  assert.equal(project.targets[3].autoLabel, undefined);
+  assert.equal(formatTargets(project.targets), 'qa.example.com https://qa.example.com\nQA.EXAMPLE.COM https://qa.example.com\nhttps://example.com\nprod https://staging.example.com');
+  assert.equal(describe('https://staging.example.com', [project]).tone, 'production');
 });
 
 test('developer command lookup ignores inherited properties and decodes UTF-8 JWTs', () => {

@@ -4,10 +4,11 @@ import { setImmediate as nextTurn } from 'node:timers/promises';
 import { loadModule } from './load-module.mjs';
 
 function event() {
-  const listeners = [];
+  const listeners = new Set();
   return {
-    addListener: (listener) => listeners.push(listener),
-    emit: (...args) => listeners.forEach((listener) => listener(...args)),
+    addListener: (listener) => listeners.add(listener),
+    removeListener: (listener) => listeners.delete(listener),
+    emit: (...args) => [...listeners].forEach((listener) => listener(...args)),
   };
 }
 
@@ -69,7 +70,7 @@ test('worker restart resumes shell messages and a bad payload leaves other repli
 
   const disconnect = t.mock.method(ports[1], 'disconnect');
   transportError = 'Attempting to use a disconnected port object';
-  await assert.rejects(invoke('broken'), /background restarted/);
+  await assert.rejects(invoke('broken'), (error) => error.sent === false);
   assert.equal(disconnect.mock.callCount(), 1);
   t.mock.timers.tick(400);
   assert.equal(ports.length, 3);
@@ -81,12 +82,43 @@ test('worker restart resumes shell messages and a bad payload leaves other repli
   assert.equal(attempts, attemptsBeforeInvalidation);
 });
 
+test('a broken reply port does not drop broadcasts to connected pages', async (t) => {
+  globalThis.chrome = { runtime: { onConnect: event() } };
+  t.after(() => delete globalThis.chrome);
+  const { broadcast, handle, listen } = await loadModule('chromium/shell/hub.ts');
+  handle({ probe: () => 'result' });
+  listen(Promise.resolve());
+  const page = (postMessage) => ({ name: 'flecha', onMessage: event(), onDisconnect: event(), postMessage, disconnect() {} });
+  let attempts = 0;
+  const broken = page(() => { attempts++; throw new Error('Disconnected'); });
+  const events = [];
+  const healthy = page((message) => events.push(message));
+  chrome.runtime.onConnect.emit(broken);
+  chrome.runtime.onConnect.emit(healthy);
+  await nextTurn();
+  broken.onMessage.emit({ type: 'invoke', name: 'probe', id: 1, args: [] });
+  await nextTurn();
+  broadcast('ready', true);
+  assert.equal(attempts, 1);
+  assert.deepEqual(events, [{ type: 'event', name: 'ready', args: [true] }]);
+});
+
+test('agent wait validation leaves room for the transport watchdog', async () => {
+  const { AGENT_TOOLS } = await loadModule('chromium/shared/agentTools.ts');
+  const { MAX_TOOL_WAIT, toolTimeout, toolWatchdog } = await loadModule('chromium/native-host/protocol.ts');
+  const value = AGENT_TOOLS.wait_for.inputSchema.timeoutMs;
+  for (const invalid of [-1, 1.5, 2_147_483_647]) assert.equal(value.safeParse(invalid).success, false);
+  assert.equal(value.safeParse(MAX_TOOL_WAIT).success, true);
+  assert.equal(toolWatchdog(2_147_483_647), 2_147_483_647);
+  assert.ok(toolWatchdog(MAX_TOOL_WAIT) > toolTimeout(MAX_TOOL_WAIT));
+});
+
 test('Boosts serializes saves and keeps the editor address aligned with a retained draft', async (t) => {
   const messages = [];
   const port = { onDisconnect: event(), onMessage: event(), postMessage: (message) => messages.push(message) };
   const nodes = new Map();
   const element = () => ({
-    value: '', classList: { toggle() {} }, addEventListener() {}, append() {}, replaceChildren() {}, focus() {},
+    value: '', classList: { add() {}, toggle() {} }, addEventListener() {}, append() {}, replaceChildren() {}, focus() {},
   });
   const node = (id) => {
     if (!nodes.has(id)) nodes.set(id, element());
@@ -176,12 +208,14 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
   assert.equal(code.value, 'newest revision');
 
   node('delete').onclick();
+  assert.equal(code.readOnly, true);
   location.hash = '#second.css';
   handlers.get('hashchange')();
   await nextTurn();
   reply(messages.find(({ name }) => name === 'boosts:delete'), undefined);
   await nextTurn();
   assert.equal(location.hash, '#second.css');
+  assert.equal(code.readOnly, false);
   port.onDisconnect.emit();
   await nextTurn();
   assert.equal(location.hash, '#second.css');
@@ -190,6 +224,14 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
   assert.equal(messages.filter(({ name }) => name === 'boosts:get').at(-1).args[0], 'second.css');
   reply(messages.filter(({ name }) => name === 'boosts:get').at(-1), second);
   await nextTurn();
+  assert.equal(code.value, 'second file');
+  node('delete').onclick();
+  assert.equal(code.readOnly, true);
+  await nextTurn();
+  const deletion = messages.filter(({ name }) => name === 'boosts:delete').at(-1);
+  port.onMessage.emit({ type: 'result', id: deletion.id, error: 'Fixture delete failure' });
+  await nextTurn();
+  assert.equal(code.readOnly, false);
   assert.equal(code.value, 'second file');
 });
 
@@ -204,6 +246,7 @@ test('the agent restores focus and can replay console logs after idle on a share
   let disableRuntime = Promise.withResolvers();
   let failSetup = false;
   let readPending;
+  let keyDown;
   const idleMessage = { type: 'error', args: [{ value: 'Logged while idle' }] };
   globalThis.chrome = {
     runtime: { connectNative: () => port },
@@ -237,6 +280,10 @@ test('the agent restores focus and can replay console logs after idle on a share
         if (method === 'Runtime.evaluate') {
           await readPending?.promise;
           return { result: { value: 'fixture body' } };
+        }
+        if (method === 'Input.dispatchKeyEvent') {
+          calls.push([params.type]);
+          if (params.type === 'rawKeyDown') await keyDown?.promise;
         }
       },
     },
@@ -302,6 +349,12 @@ test('the agent restores focus and can replay console logs after idle on a share
   t.mock.timers.tick(60_000);
   await nextTurn();
   assert.match(results.find(({ id }) => id === 27).result.content[0].text, /didn’t answer read_page within 60s/);
+  port.onMessage.emit({ type: 'tool', id: 30, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  assert.equal(results.some(({ id }) => id === 30), false, 'a retry waits for the old native command');
+  readPending.resolve();
+  await nextTurn();
+  assert.ok(results.some(({ id }) => id === 30));
   t.mock.timers.tick(120_000);
   await nextTurn();
   assert.equal(host.agentTabsInUse().has(tab.id), false);
@@ -317,13 +370,34 @@ test('the agent restores focus and can replay console logs after idle on a share
   await nextTurn();
   t.mock.timers.tick(60_000);
   await nextTurn();
+  port.onMessage.emit({ type: 'tool', id: 33, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  t.mock.timers.tick(60_000);
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 33).result.content[0].text, /didn’t answer console_logs within 60s/);
+  assert.equal(emulatedFocus, false, 'a canceled waiter cannot enable focus while cleanup is pending');
   port.onMessage.emit({ type: 'tool', id: 29, name: 'console_logs', args: { tabId: phone } });
   await nextTurn();
   t.mock.timers.tick(100);
   await nextTurn();
-  assert.equal(results.find(({ id }) => id === 29)?.result.isError, undefined);
-  assert.ok(results.some(({ id }) => id === 29), 'a stalled reset does not block the next request');
+  assert.equal(results.some(({ id }) => id === 29), false, 'a retry cannot enable domains before the old reset ends');
   disableRuntime.resolve();
+  await nextTurn();
+  t.mock.timers.tick(100);
+  await nextTurn();
+  assert.equal(results.find(({ id }) => id === 29)?.result.isError, undefined);
+  assert.ok(results.some(({ id }) => id === 29));
+  assert.equal(runtimeEnabled, true);
+  keyDown = Promise.withResolvers();
+  port.onMessage.emit({ type: 'tool', id: 31, name: 'press_key', args: { tabId: phone, key: 'Escape' } });
+  await nextTurn();
+  assert.deepEqual(calls.at(-1), ['rawKeyDown']);
+  t.mock.timers.tick(60_000);
+  await nextTurn();
+  assert.deepEqual(calls.at(-1), ['keyUp']);
+  assert.match(results.find(({ id }) => id === 31).result.content[0].text, /didn’t answer press_key/);
+  keyDown.resolve();
+  await nextTurn();
   await release(tab.id, 'responsive');
 });
 

@@ -45,18 +45,19 @@ export function describe(url: string, environments: Environment[] = []): ActiveE
   };
 }
 
-/** Production is red so it is never mistaken for a safe place to click around. */
 function autoLabel(target: EnvironmentTarget) {
-  return target.autoLabel ?? target.label.toLowerCase() === target.origin.replace(/^[a-z]+:\/\//i, '').toLowerCase();
+  return typeof target.autoLabel === 'boolean' ? target.autoLabel :
+    target.label === target.origin.replace(/^[a-z]+:\/\//i, '');
 }
 
 export function formatTargets(targets: EnvironmentTarget[]): string {
   return targets.map((target) => autoLabel(target) ? target.origin : `${target.label} ${target.origin}`).join('\n');
 }
 
+/** Production is red so it is never mistaken for a safe place to click around. */
 function tone(target: EnvironmentTarget): ActiveEnvironment['tone'] {
   const address = target.origin.replace(/^[a-z]+:\/\//i, '').toLowerCase();
-  const label = autoLabel(target) ? '' : target.label.toLowerCase();
+  const label = autoLabel(target) ? '' : target.label.toLowerCase().replaceAll('_', ' ');
   const staging = /\b(stag(e|ing)|preview|qa|test(ing)?|dev(elop(ment)?)?|sandbox|uat)\d*\b/;
   if (/\bprod(uction)?\b/.test(label)) return 'production';
   if (/\blocal\b/.test(label)) return 'local';

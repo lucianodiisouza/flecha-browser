@@ -6,7 +6,8 @@
  */
 const PROTOCOL = '1.3';
 
-const holders = new Map<number, Map<string, symbol>>();
+type Holder = string | symbol;
+const holders = new Map<number, Map<Holder, symbol>>();
 const attaching = new Map<number, Promise<void>>();
 const detaching = new Map<number, Promise<void>>();
 const detachListeners: Array<(tabId: number, reason: string) => void> = [];
@@ -23,10 +24,10 @@ export function onDebuggerDetach(fn: (tabId: number, reason: string) => void) {
 }
 
 /** Shares the attachment and preserves Chromium's error for callers that explain refusals. */
-export async function acquire(tabId: number, holder: string): Promise<void> {
+export async function acquire(tabId: number, holder: Holder): Promise<void> {
   let owners = holders.get(tabId);
   if (!owners) {
-    const queued = new Map<string, symbol>();
+    const queued = new Map<Holder, symbol>();
     holders.set(tabId, queued);
     owners = queued;
     const attach = (detaching.get(tabId) ?? Promise.resolve())
@@ -50,18 +51,22 @@ export async function acquire(tabId: number, holder: string): Promise<void> {
       });
     attaching.set(tabId, attach);
   }
-  const claim = owners.get(holder) ?? Symbol(holder);
+  const claim = owners.get(holder) ?? Symbol();
   owners.set(holder, claim);
   await attaching.get(tabId);
   if (holders.get(tabId) !== owners || owners.get(holder) !== claim) throw new Error('Debugger attachment was released');
 }
 
 /** Resolves false when Chromium refuses to attach. */
-export const hold = (tabId: number, holder: string): Promise<boolean> => acquire(tabId, holder).then(() => true, () => false);
+export const hold = (tabId: number, holder: Holder): Promise<boolean> => acquire(tabId, holder).then(() => true, () => false);
 
 /** Lets go for `holder`; detaches once no feature holds the tab. */
-export async function release(tabId: number, holder: string) {
+export async function release(tabId: number, holder: Holder, resetShared?: () => Promise<unknown>) {
   const set = holders.get(tabId);
+  if (resetShared && set?.has(holder) && set.size > 1) {
+    try { await resetShared(); } finally { await release(tabId, holder); }
+    return;
+  }
   if (!set?.delete(holder) || set.size) return;
   const attach = attaching.get(tabId);
   if (attach) await attach.catch(() => undefined);
@@ -74,8 +79,6 @@ export async function release(tabId: number, holder: string) {
 }
 
 export const isHeld = (tabId: number, holder: string) => !!holders.get(tabId)?.has(holder);
-
-export const isShared = (tabId: number) => (holders.get(tabId)?.size ?? 0) > 1;
 
 export function send<T = unknown>(tabId: number, method: string, params: object = {}): Promise<T | undefined> {
   return chrome.debugger.sendCommand({ tabId }, method, params as Record<string, unknown>).then(

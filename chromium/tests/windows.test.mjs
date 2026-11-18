@@ -302,7 +302,7 @@ test('closing a responsive source selects the next Today tab, and reopening a wi
   assert.equal(store.activeTabIn(second)?.id, alternate.id);
 });
 
-test('loading older state preserves saved links and skips a closed window containing only a mirror', () => {
+test('loading older state preserves saved links and an unpaired tab in a closed window', () => {
   const { store, first, second, personal } = twoWindows();
   const olderWindowTab = store.addTab('https://example.com/restorable', { windowId: second });
   store.closeWindow(second);
@@ -318,7 +318,9 @@ test('loading older state preserves saved links and skips a closed window contai
   legacy.closedWindows.unshift({ id: 'only-phone', activeSpaceId: personal, closedAt: realWindowClosedAt + 1,
     spaces: { [personal]: { today: ['phone'], activeTabId: 'phone' } } });
   const restored = new Store({ load: () => legacy, save: () => {} });
-  assert.equal(restored.state.tabs.phone, undefined);
+  assert.equal(restored.state.tabs.phone.device, undefined);
+  assert.equal(restored.reopenWindow().id, 'only-phone');
+  assert.equal(restored.activeTab?.id, 'phone');
   assert.equal(restored.lastClosedWindowAt(), realWindowClosedAt);
   assert.equal(restored.reopenWindow().id, second);
   assert.equal(restored.activeTabIn(second)?.id, olderWindowTab.id);
@@ -389,6 +391,37 @@ test('loading responsive metadata checks the panes against the window’s Space'
   assert.equal(unrelated.activeTabIn(first), undefined);
   assert.equal(unrelated.state.tabs[right.id], undefined);
   assert.equal(unrelated.state.tabs[elsewhere.id].url, elsewhere.url);
+  ws.activeTabId = elsewhere.id;
+  assert.equal(load().activeTabIn(first), undefined);
+});
+
+test('loading a moved legacy phone tab preserves its history and its destination', () => {
+  const { store, first, personal, work } = twoWindows();
+  const desktop = store.addTab('https://example.com/desktop', { windowId: first });
+  const phone = store.openResponsive(first);
+  const snapshot = JSON.parse(store.serialize());
+  const win = snapshot.windows.find((window) => window.id === first);
+  win.spaces[personal] = { today: [desktop.id], activeTabId: desktop.id };
+  win.spaces[work] = { today: [phone], activeTabId: phone };
+  win.activeSpaceId = work;
+  const history = { index: 0, entries: [{ url: 'https://example.com/visited', title: 'Visited' }] };
+  snapshot.tabs[phone].history = history;
+  const loaded = new Store({ load: () => decodeState(JSON.stringify(snapshot)), save: () => {} });
+  assert.equal(loaded.activeTabIn(first)?.id, phone);
+  assert.equal(loaded.state.tabs[phone].device, undefined);
+  assert.deepEqual(loaded.state.tabs[phone].history, history);
+});
+
+test('auto-archive keeps both visible panes when the phone is selected', () => {
+  const { store, first } = twoWindows();
+  const desktop = store.addTab('https://example.com/desktop', { windowId: first });
+  const other = store.addTab('https://example.com/old', { windowId: first, activate: false });
+  const phone = store.openResponsive(first);
+  store.activate(phone, { windowId: first });
+  desktop.lastActive = other.lastActive = 1;
+  assert.deepEqual(store.archiveStale(), [other.id]);
+  assert.deepEqual(store.activeSpaceIn(first).split, [desktop.id, phone]);
+  assert.equal(store.activeTabIn(first)?.id, phone);
 });
 
 test('each window hides or shows its own sidebar; new windows start as the last choice', () => {

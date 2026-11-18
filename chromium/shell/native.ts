@@ -7,7 +7,7 @@
  */
 import type { Store } from '../shared/store';
 import { SHORTCUTS, fixedShortcuts, keysFor } from './lib/shortcuts';
-import { broadcast, broadcastTo, callerWindow, handle } from './hub';
+import { broadcast, broadcastTo, callerPort, callerWindow, handle } from './hub';
 import { incognito, sessionKey } from './incognito';
 import { phoneSplitRatio } from './lib/responsiveViewport';
 
@@ -46,15 +46,16 @@ const has = <K extends keyof typeof chrome.flechaPrivate>(name: K) => typeof api
  * The last Peek in each window, from onPeekChanged. The browser can't be asked (patch 0026).
  */
 const PEEKS_KEY = sessionKey('peeks');
-const peeks = new Map<number, chrome.flechaPrivate.PeekState | undefined>();
+const peeks = new Map<number, chrome.flechaPrivate.PeekState>();
 const peeksLoaded = has('openPeek')
-  ? chrome.storage.session.get(PEEKS_KEY).then((saved) => {
+  ? chrome.storage.session.get(PEEKS_KEY).then(async (saved) => {
     const entries = saved[PEEKS_KEY];
     if (!Array.isArray(entries)) return;
     for (const entry of entries) {
-      if (typeof entry === 'number') peeks.set(entry, undefined);
-      else if (Array.isArray(entry) && typeof entry[0] === 'number') peeks.set(entry[0], entry[1] ?? undefined);
+      if (typeof entry === 'number') await chrome.flechaPrivate.closePeek(entry).catch(() => undefined);
+      else if (Array.isArray(entry) && typeof entry[0] === 'number' && entry[1]) peeks.set(entry[0], entry[1]);
     }
+    if (entries.some((entry) => typeof entry === 'number')) await chrome.storage.session.set({ [PEEKS_KEY]: [...peeks] });
   })
   : Promise.resolve();
 
@@ -130,9 +131,8 @@ export function runInPeek(command: string, windowId: number | undefined) {
   return true;
 }
 
-export async function currentPeek(windowId: number) {
-  await ready;
-  return peeks.has(windowId) ? peeks.get(windowId) : null;
+export function currentPeek(windowId: number, send: (peek: chrome.flechaPrivate.PeekState | null) => void) {
+  void ready.then(() => send(peeks.get(windowId) ?? null));
 }
 
 // The frame pages draw Peek's backdrop and toolbar from the 'peek' event, as in Electron's
@@ -417,11 +417,11 @@ function registerShortcuts(ctx: NativeContext) {
   if (!has('setShortcuts')) return;
   let sent = '';
   // While Settings records a shortcut the keys go to its page, not to Flecha's commands.
-  let recording = false;
+  let recorder: chrome.runtime.Port | undefined;
   const apply = () => {
     // The browser keeps one map for every window; the regular shell sets it.
     if (incognito) return;
-    const map = recording ? {} : shortcutMap(ctx.store.state);
+    const map = recorder ? {} : shortcutMap(ctx.store.state);
     const json = JSON.stringify(map);
     if (json === sent) return;
     sent = json;
@@ -429,11 +429,21 @@ function registerShortcuts(ctx: NativeContext) {
       if (rejected.length) console.warn('Flecha shell: the browser could not read these shortcuts', rejected);
     });
   };
+  const stopRecording = () => {
+    recorder?.onDisconnect.removeListener(stopRecording);
+    recorder = undefined;
+    apply();
+  };
   apply();
   ctx.store.onChange(apply);
   handle({
     'settings:recording': (on: boolean) => {
-      recording = !!on;
+      const port = callerPort();
+      if (!port || (on ? recorder === port : recorder !== port)) return;
+      if (!on) return stopRecording();
+      recorder?.onDisconnect.removeListener(stopRecording);
+      recorder = port;
+      port.onDisconnect.addListener(stopRecording);
       apply();
     },
   });

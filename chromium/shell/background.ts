@@ -17,7 +17,7 @@ import { canDropToSplit, pageSplitTarget } from './lib/splitDrop';
 import { shortcutHints, type ShortcutId } from './lib/shortcuts';
 import { describe as describeEnvironment } from './lib/environments';
 import type { BrowserState, DropTarget, FlechaApi, SearchEngineId, UiState } from '../shared/types';
-import { asWindow, broadcast, broadcastTo, call, callerWindow, handle, listen, onConnect, pageWindows } from './hub';
+import { asWindow, broadcast, broadcastTo, call, callerWindow, handle, listen, onConnect, pageWindows, sendTo } from './hub';
 import type { MenuRun } from './protocol';
 import type { MenuEntry } from './settingsUi';
 import { openSettings, registerSettings } from './settingsHandlers';
@@ -245,11 +245,11 @@ async function start() {
   // ---- the window frame, as the Electron spike's Browser.layout() --------------
   // The frame page applies it (chrome.flechaPrivate.setFrame), since only a page knows
   // whether the system is in dark mode for the background colour. Each window has its own.
-  type Frame = { paletteOpen: boolean; sidebarPeek: boolean; tabDragging: boolean; overlays: Set<string> };
+  type Frame = { paletteMode?: string; sidebarPeek: boolean; tabDragging: boolean; overlays: Set<string> };
   const frames = new Map<number | undefined, Frame>();
   function frameOf(chromeWindowId: number | undefined): Frame {
     let frame = frames.get(chromeWindowId);
-    if (!frame) frames.set(chromeWindowId, (frame = { paletteOpen: false, sidebarPeek: false, tabDragging: false, overlays: new Set() }));
+    if (!frame) frames.set(chromeWindowId, (frame = { sidebarPeek: false, tabDragging: false, overlays: new Set() }));
     return frame;
   }
   function sendFrame(chromeWindowId: number | undefined) {
@@ -257,7 +257,7 @@ async function start() {
     const docked = store.sidebarVisibleIn(windowOf(chromeWindowId) ?? store.focusedWindowId);
     const sidebar: chrome.flechaPrivate.SidebarMode = docked ? 'docked' : frame.sidebarPeek ? 'floating' : 'hidden';
     // The frame covers the whole window while it draws over the page.
-    const overlay = frame.paletteOpen || frame.tabDragging || frame.overlays.size > 0 || !store.state.onboarded;
+    const overlay = !!frame.paletteMode || frame.tabDragging || frame.overlays.size > 0 || !store.state.onboarded;
     broadcastTo(chromeWindowId, 'frame', { sidebar, overlay, sidebarInPageFullscreen: !!store.state.sidebarInPageFullscreen });
   }
   const hasFrame = () => typeof chrome.flechaPrivate?.setFrame === 'function';
@@ -274,7 +274,7 @@ async function start() {
     // The tour asks you to try the real shortcuts and shows what they do.
     if (tourKey(({ 'new-tab': 'newTab', navigate: 'openLocation', split: 'splitNew' } as Record<string, string>)[mode])) return;
     const chromeWindowId = hereChrome();
-    frameOf(chromeWindowId).paletteOpen = true;
+    frameOf(chromeWindowId).paletteMode = mode;
     sendFrame(chromeWindowId);
     broadcastTo(chromeWindowId, 'palette', mode);
     if (hasFrame()) void chrome.flechaPrivate.focus('frame', chromeWindowId);
@@ -283,8 +283,8 @@ async function start() {
   /** Closes a window's command bar, in its frame page too: a bar left there covers the sidebar. */
   function closePaletteIn(chromeWindowId: number | undefined) {
     const frame = frames.get(chromeWindowId);
-    if (!frame?.paletteOpen) return;
-    frame.paletteOpen = false;
+    if (!frame?.paletteMode) return;
+    delete frame.paletteMode;
     sendFrame(chromeWindowId);
     broadcastTo(chromeWindowId, 'close-palette');
   }
@@ -489,6 +489,9 @@ async function start() {
         hidden.push(id);
         continue;
       }
+      for (const space of store.windowView(windowId).spaces) {
+        if (space.split?.includes(id)) nativePairs.delete(space.split);
+      }
       live.delete(id);
       await openChromeTab(id, id === store.activeTabIn(windowId)?.id, windowId);
       old.push(chromeId);
@@ -656,9 +659,16 @@ async function start() {
   // Chromium shows both tabs of a split whenever either is active, which is how a Space's
   // split behaves in the Store too. Chromium places the halves by tab order.
 
-  /** Pairs confirmed in Chromium, so an old pane's removal can't clear a pending replacement. */
-  const nativePairs = new WeakSet<[string, string]>();
+  type NativeSplit = { id: number; left: number; right: number };
+  /** The native group last confirmed for each Store pair. Teardown invalidates the confirmation. */
+  const nativePairs = new WeakMap<[string, string], NativeSplit>();
   const creatingSplits = new Map<number, [number, number]>();
+
+  function confirmSplit(pair: [string, string], id: number, left: number, right: number) {
+    const previous = nativePairs.get(pair);
+    if (previous?.id === id && previous.left === left && previous.right === right) return;
+    nativePairs.set(pair, { id, left, right });
+  }
 
   async function syncSplits(windowId: string, chromeWindowId: number) {
     const tabs = await chrome.tabs.query({ windowId: chromeWindowId });
@@ -682,8 +692,11 @@ async function start() {
       const pair = wanted.get(key);
       if (pair) {
         have.add(key);
-        nativePairs.add(pair.store);
+        confirmSplit(pair.store, splitId, ...pair.native);
       } else {
+        for (const { native, store: pair } of wanted.values()) {
+          if (native.some((id) => members.some((tab) => tab.id === id))) nativePairs.delete(pair);
+        }
         await chrome.tabs.unsplit(splitId).catch(() => undefined);
       }
     }
@@ -702,7 +715,7 @@ async function start() {
           await chrome.tabs.unsplit(splitId).catch(() => undefined);
           continue;
         }
-        nativePairs.add(pair);
+        confirmSplit(pair, splitId, left, right);
         if (store.activeSpaceIn(windowId).splitMode === 'responsive') broadcastTo(chromeWindowId, 'split-layout');
       } catch (err) {
         console.warn('Flecha shell: split failed', err);
@@ -719,12 +732,15 @@ async function start() {
     if (!id || !windowId) return;
     const pair = store.activeSpaceIn(windowId).split;
     const creating = creatingSplits.get(chromeWindowId);
+    const confirmed = pair && nativePairs.get(pair);
     // An old pane can report removal before its replacement exists in Chromium.
-    if (splitViewId < 0 && (!pair?.includes(id) || !nativePairs.has(pair))) return;
+    if (splitViewId < 0 && (!confirmed || (chromeId !== confirmed.left && chromeId !== confirmed.right))) return;
     const tabs = await chrome.tabs.query({ windowId: chromeWindowId }).catch(() => undefined);
     if (!tabs || !store.hasWindow(windowId) || store.activeSpaceIn(windowId).split !== pair) return;
-    if (splitViewId < 0 && pair) {
-      const [left, right] = pair.map((id) => tabs.find((tab) => tab.id === live.get(id)));
+    if (splitViewId < 0 && pair && confirmed) {
+      if (nativePairs.get(pair) !== confirmed) return;
+      const left = tabs.find((tab) => tab.id === confirmed.left);
+      const right = tabs.find((tab) => tab.id === confirmed.right);
       if (left?.splitViewId !== undefined && left.splitViewId >= 0 && left.splitViewId === right?.splitViewId) return;
       exitSplit(windowId);
       return;
@@ -736,7 +752,9 @@ async function start() {
     const active = store.activeSpaceIn(windowId).activeTabId;
     if (members.length !== 2 || !members.every(Boolean) || !active || !members.includes(active)) return;
     if (pair && members.every((m) => pair.includes(m!))) {
-      nativePairs.add(pair);
+      if (!nativePairs.has(pair) && members[0] === pair[0] && members[1] === pair[1]) {
+        confirmSplit(pair, splitViewId, nativeMembers[0].id!, nativeMembers[1].id!);
+      }
       return;
     }
     if (creating && nativeMembers.every((tab) => creating.includes(tab.id!))) return;
@@ -744,7 +762,9 @@ async function start() {
     const other = members.find((m) => m !== active)!;
     store.splitWith(other, members[0] === other ? 'left' : 'right', windowId, active);
     const adopted = store.activeSpaceIn(windowId).split;
-    if (adopted && members.every((member) => adopted.includes(member!))) nativePairs.add(adopted);
+    if (adopted && adopted[0] === members[0] && adopted[1] === members[1]) {
+      confirmSplit(adopted, splitViewId, nativeMembers[0].id!, nativeMembers[1].id!);
+    }
   }
 
   function exitSplit(windowId = here()) {
@@ -1150,7 +1170,6 @@ async function start() {
       if (chromeWindowId === undefined || !windowOf(chromeWindowId) || !Array.isArray(overlays)) return;
       const frame = frameOf(chromeWindowId);
       frame.overlays = new Set(overlays.filter((name): name is string => typeof name === 'string'));
-      frame.paletteOpen = false;
       sendFrame(chromeWindowId);
     },
     togglePin: spacesOnly((id: string) => store.togglePin(id, here())),
@@ -1232,6 +1251,7 @@ async function start() {
     },
     setSidebarWidth: (width: number) => {
       if (Number.isFinite(width)) store.setSidebarWidth(width);
+      return store.state.sidebarWidth;
     },
     'frame:resized': () => {
       const windowId = windowOf(callerWindow());
@@ -1492,12 +1512,12 @@ async function start() {
     agentTabsChanged: async () => void (await tabSleep?.shownChanged()),
   });
 
-  onConnect((_port, chromeWindowId) => {
+  onConnect((port, chromeWindowId) => {
     sendState();
+    const palette = frameOf(chromeWindowId).paletteMode;
+    if (palette) sendTo(port, 'palette', palette);
     if (chromeWindowId !== undefined) {
-      void currentPeek(chromeWindowId).then((peek) => {
-        if (peek !== undefined) broadcastTo(chromeWindowId, 'peek', peek, chromeWindowId);
-      });
+      currentPeek(chromeWindowId, (peek) => sendTo(port, 'peek', peek, chromeWindowId));
     }
     void siteIcons.all().then((icons) => broadcastTo(chromeWindowId, 'site-icons', icons));
   });

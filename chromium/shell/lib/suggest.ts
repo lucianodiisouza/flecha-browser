@@ -3,7 +3,7 @@
  * (components/omnibox/browser/search_provider.cc and search_suggestion_parser.cc).
  */
 import type { SearchEngineId } from '../../shared/types';
-import { searchEngine, webAddress } from './url';
+import { hasAddressCredentials, searchEngine, webAddress } from './url';
 
 /** Chromium's kDefaultMinimumTimeBetweenSuggestQueriesMs (omnibox_field_trial.cc), measured from the last request sent. */
 export const SUGGEST_INTERVAL_MS = 100;
@@ -130,7 +130,7 @@ function spellings(word: string): string[] {
  */
 export function suggestable(query: string): boolean {
   const q = query.trim();
-  if (!q || webAddress(q)) return false;
+  if (!q || webAddress(q) || hasAddressCredentials(q)) return false;
   const words = q.normalize('NFKC').split(/\s+/);
   // Text with no spaces is more than one word where something that can't be in an address splits it.
   const alone = words.flatMap((word) => word.split(NOT_IN_ADDRESS)).filter(Boolean).length === 1;

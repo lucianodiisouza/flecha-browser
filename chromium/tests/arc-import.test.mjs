@@ -6,6 +6,7 @@ import { arcArchive, arcSidebar } from './arc-fixture.mjs';
 
 const { parseArcSidebar, parseArcArchive } = await loadModule('chromium/native-host/arcImport.ts');
 const { previewBrowserImport, applyBrowserImport } = await loadModule('chromium/shared/importApply.ts');
+const { resultLine } = await loadModule('chromium/shared/importText.ts');
 const { Store } = await loadModule('chromium/shared/store.ts');
 
 const names = { 'Profile 1': 'Work profile' };
@@ -96,6 +97,41 @@ test('a history adapter failure preserves the imported bookmarks in the result',
   assert.equal(result.history, 0);
   assert.match(result.warnings[0], /importing browser history/);
   assert.ok(Object.values(store.state.tabs).some(tab => tab.url === url));
+});
+
+test('partial history import reports the page it added and a warning', async () => {
+  const store = new Store({ load: () => undefined, save: () => {} });
+  const data = { name: 'Chrome', bookmarkCount: 0, history: [{ url: 'https://one.example/' }, { url: 'https://two.example/' }], warnings: [] };
+  const result = await applyBrowserImport(data, { mode: 'merge', isolate: [] }, store, { merge: () => ({ added: 1, failed: 1 }) });
+  assert.equal(result.changed, true);
+  assert.equal(result.history, 1);
+  assert.equal(resultLine(result), '1 page');
+  assert.deepEqual(result.warnings, ['Couldn’t import 1 page from history.']);
+});
+
+test('an empty folder merge reports a change even without a new tab', async () => {
+  const store = new Store({ load: () => undefined, save: () => {} });
+  store.updateSpace(store.state.spaces[0].id, { name: 'Work' });
+  const data = { name: 'Work', bookmarkCount: 0, bookmarks: [{ kind: 'folder', name: 'Empty', children: [] }], history: [], warnings: [] };
+  const result = await applyBrowserImport(data, { mode: 'merge', isolate: [] }, store, noHistory);
+  assert.equal(result.changed, true);
+  assert.equal(result.bookmarks, 0);
+  assert.match(resultLine(result), /1 folder/);
+});
+
+test('a split formed from existing tabs reports a change', async () => {
+  const store = new Store({ load: () => undefined, save: () => {} });
+  store.updateSpace(store.state.spaces[0].id, { name: 'Work' });
+  const urls = ['https://one.example/', 'https://two.example/'];
+  for (const url of urls) store.addTab(url);
+  const data = { name: 'Arc', bookmarkCount: 0, history: [], warnings: [], arc: {
+    spaces: [{ name: 'Work', pinned: [], today: urls.map(url => ({ url, title: url })), splits: [urls] }],
+    favorites: [], archive: [], skipped: {},
+  } };
+  const result = await applyBrowserImport(data, { mode: 'merge', isolate: [] }, store, noHistory);
+  assert.equal(result.changed, true);
+  assert.equal(result.bookmarks, 0);
+  assert.match(resultLine(result), /1 split view/);
 });
 
 /** A one-Space sidebar whose Today holds `items` (id/object pairs) listed by `today`. */

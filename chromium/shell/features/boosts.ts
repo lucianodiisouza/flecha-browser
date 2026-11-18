@@ -148,7 +148,8 @@ async function runScript(tabId: number, documentId: string | undefined, name: st
     return console.warn(`Flecha boosts: couldn't run ${name}`, err);
   }
   if (outcome !== 'csp') return;
-  if (!(await hold(tabId, 'boosts'))) return reportError(tabId, name, 'this page doesn’t allow boost scripts');
+  const holder = Symbol('boost');
+  if (!(await hold(tabId, holder))) return reportError(tabId, name, 'this page doesn’t allow boost scripts');
   try {
     const out = await send<{ exceptionDetails?: { exception?: { description?: string }; text?: string } }>(tabId, 'Runtime.evaluate', {
       expression: code,
@@ -156,7 +157,7 @@ async function runScript(tabId: number, documentId: string | undefined, name: st
     });
     if (out?.exceptionDetails) reportError(tabId, name, out.exceptionDetails.exception?.description ?? out.exceptionDetails.text ?? 'failed');
   } finally {
-    await release(tabId, 'boosts');
+    await release(tabId, holder);
   }
 }
 

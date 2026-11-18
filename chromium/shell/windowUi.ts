@@ -11,6 +11,7 @@
 import type { DetectedBrowser, ImportOptions, ImportPreview, ImportResult, UiState } from '../shared/types';
 import { hasImport, previewLines, resultLine } from '../shared/importText';
 import { cmd, invoke, on, onReconnect } from './client';
+import { ConnectionError } from './protocol';
 import type { MenuRun } from './protocol';
 import { askDialog, popupMenu, toast, type MenuEntry, type MenuOptions } from './settingsUi';
 import { DELETE_SPACE_DETAIL } from './lib/undo';
@@ -192,7 +193,11 @@ export async function importFromBrowser() {
         if (separate === 2) return;
         if (separate !== 0) isolate = [];
       }
-      const r = await picked.run({ mode, isolate, spacesKey: preview.spacesKey });
+      const r = await picked.run({ mode, isolate, spacesKey: preview.spacesKey }).catch((error: unknown) => {
+        if (error instanceof ConnectionError && error.sent) return undefined;
+        throw error;
+      });
+      if (!r) return note('Import result unavailable', 'Check which Spaces and bookmarks were imported before trying again.');
       const result = resultLine(r);
       return note(r.changed ? `Imported from ${picked.name}` : `Nothing imported from ${picked.name}`, [result, ...r.warnings, ...r.details].filter(Boolean).join('\n') || 'Nothing to import');
     } catch {

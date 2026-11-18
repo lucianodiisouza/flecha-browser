@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_TOOL_WAIT } from '../native-host/protocol';
 
 /**
  * The agent bridge's tools: names, descriptions and inputs, as the Electron version had
@@ -79,7 +80,7 @@ export const AGENT_TOOLS = {
   },
   wait_for: {
     description: 'Wait until an element matching a selector exists (or the page finishes loading when no selector is given).',
-    inputSchema: { tabId, selector: z.string().optional(), timeoutMs: z.number().optional() },
+    inputSchema: { tabId, selector: z.string().optional(), timeoutMs: z.number().int().min(0).max(MAX_TOOL_WAIT).optional() },
   },
 } as const;
 

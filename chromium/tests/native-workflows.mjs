@@ -159,13 +159,18 @@ async function evaluate(session, expression) {
 async function attach(targetId) {
   return (await send('Target.attachToTarget', { targetId, flatten: true })).sessionId;
 }
-async function findTarget(predicate) {
-  return new Promise((resolve, reject) => {
-    const accept = (target) => { if (predicate(target)) { listeners.delete(listener); resolve(target); } };
-    const listener = (message) => { if (message.method === 'Target.targetCreated' || message.method === 'Target.targetInfoChanged') accept(message.params.targetInfo); };
-    listeners.add(listener);
-    void send('Target.getTargets').then(({ targetInfos }) => targetInfos.forEach(accept), reject);
-  });
+async function findTarget(predicate, expected = `a browser target matching ${predicate}`) {
+  let listener;
+  try {
+    return await withinStep(new Promise((resolve, reject) => {
+      const accept = (target) => { if (predicate(target)) resolve(target); };
+      listener = (message) => { if (message.method === 'Target.targetCreated' || message.method === 'Target.targetInfoChanged') accept(message.params.targetInfo); };
+      listeners.add(listener);
+      void send('Target.getTargets').then(({ targetInfos }) => targetInfos.forEach(accept), reject);
+    }), expected);
+  } finally {
+    listeners.delete(listener);
+  }
 }
 async function loaded(session, urlPrefix) {
   await send('Page.enable', {}, session);
@@ -239,7 +244,7 @@ try {
   `);
   await instrument(session);
   const rpc = (name, ...args) => evaluate(session, `testInvoke(${JSON.stringify(name)}, ...${JSON.stringify(args)})`);
-  const stateWhere = (predicate) => evaluate(session, `testWait(${predicate})`);
+  const stateWhere = (predicate, expected = `shell state matching ${predicate}`) => withinStep(evaluate(session, `testWait(${predicate})`), expected);
   const until = async (ready, expected) => {
     let stop = false;
     const poll = async () => {
@@ -257,8 +262,8 @@ try {
       stop = true;
     }
   };
-  const domWhere = (predicate) => evaluate(session, `new Promise(resolve => { const check = () => { if ((${predicate})()) { observer.disconnect(); document.removeEventListener('focusin',check); resolve(true); } }; const observer = new MutationObserver(check); observer.observe(document.body, {subtree:true,childList:true,attributes:true}); document.addEventListener('focusin',check); check(); })`);
-  const textWhere = (predicate) => evaluate(session, `new Promise(resolve => { const check = () => { if ((${predicate})(document.body.innerText)) { observer.disconnect(); resolve(document.body.innerText); } }; const observer = new MutationObserver(check); observer.observe(document.body, {subtree:true,childList:true,characterData:true}); check(); })`);
+  const domWhere = (predicate, expected = `the frame DOM to match ${predicate}`) => withinStep(evaluate(session, `new Promise(resolve => { const check = () => { if ((${predicate})()) { observer.disconnect(); document.removeEventListener('focusin',check); resolve(true); } }; const observer = new MutationObserver(check); observer.observe(document.body, {subtree:true,childList:true,attributes:true}); document.addEventListener('focusin',check); check(); })`), expected);
+  const textWhere = (predicate) => withinStep(evaluate(session, `new Promise(resolve => { const check = () => { if ((${predicate})(document.body.innerText)) { observer.disconnect(); resolve(document.body.innerText); } }; const observer = new MutationObserver(check); observer.observe(document.body, {subtree:true,childList:true,characterData:true}); check(); })`), `the frame text to match ${predicate}`);
   await stateWhere('s => s.spaces.length > 0');
   await evaluate(session, "document.querySelector('.tour-primary').click(); document.querySelector('.tour-primary').click()");
   await textWhere("text => text.includes('could not connect to its import helper')");
@@ -825,7 +830,7 @@ try {
     return { phoneCanSplit, desktopCanSplit };
   })()`);
   assert.deepEqual(overlay, { phoneCanSplit: false, desktopCanSplit: true });
-  const replaced = await stateWhere(`s => !s.tabs[${JSON.stringify(mirror)}] && !!s.spaces.find(sp => sp.id === s.activeSpaceId).split`);
+  const replaced = await stateWhere(`s => !s.tabs[${JSON.stringify(mirror)}] && !!s.spaces.find(sp => sp.id === s.activeSpaceId).split`, 'the page drop to replace the phone mirror');
   assert.deepEqual(replaced.spaces.find(sp => sp.id === replaced.activeSpaceId).split, [a, unrelated]);
   await waitForNativeSplit(responsive.tabs[a].url, unrelatedUrl, panes.phoneId, 'the replacement native split to appear without the old phone tab');
   await rpc('exitSplit');
@@ -864,7 +869,7 @@ try {
     row.dispatchEvent(new DragEvent('dragend', event));
     return offered;
   })()`), true, 'a tab from a hidden split can be dropped on the visible page');
-  const visiblePair = await stateWhere(`s => !s.tabs[${JSON.stringify(hiddenMirror)}] && !!s.spaces.find(sp => sp.id === s.activeSpaceId).split`);
+  const visiblePair = await stateWhere(`s => !s.tabs[${JSON.stringify(hiddenMirror)}] && !!s.spaces.find(sp => sp.id === s.activeSpaceId).split`, 'the visible tab and former desktop pane to replace the hidden phone split');
   assert.deepEqual(visiblePair.spaces.find(sp => sp.id === visiblePair.activeSpaceId).split, [unrelated, a]);
   await rpc('exitSplit');
   console.log('PASS responsive layout follows the sidebar and drops target the page on screen');
@@ -1644,7 +1649,7 @@ try {
     const other = await attach(target.targetId);
     await loaded(other, extension);
     await instrument(other);
-    return { target, session: other, state: (predicate) => evaluate(other, `testWait(${predicate})`), rpc: (name, ...args) => evaluate(other, `testInvoke(${JSON.stringify(name)}, ...${JSON.stringify(args)})`) };
+    return { target, session: other, state: (predicate) => withinStep(evaluate(other, `testWait(${predicate})`), `the other window state to match ${predicate}`), rpc: (name, ...args) => evaluate(other, `testInvoke(${JSON.stringify(name)}, ...${JSON.stringify(args)})`) };
   };
   const known = (await frameWindows()).map(t => t.targetId);
   await key('n', ['Control_L']);

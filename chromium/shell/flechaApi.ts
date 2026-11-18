@@ -28,11 +28,6 @@ const stateListeners: Array<(state: UiState) => void> = [];
 let lastState: UiState | undefined;
 function emitState(state: UiState) {
   lastState = state;
-  // A width you finished dragging to is the saved one now.
-  if (resizingCommitted && resizing === state.sidebarWidth) {
-    resizing = undefined;
-    resizingCommitted = false;
-  }
   const shown = { ...state, tint: spaceTint(state.tint, systemDark.matches), faviconUrls: siteIcons };
   for (const cb of stateListeners) cb(shown);
   applyFrame();
@@ -51,13 +46,7 @@ let frameState: { sidebar: chrome.flechaPrivate.SidebarMode; overlay: boolean; s
 /** The width the sidebar is being dragged to, until the saved state has it. */
 let resizing: number | undefined;
 const windowId = surface === 'window' && framed ? chrome.flechaPrivate.getWindowId() : undefined;
-let resizingCommitted = false;
-onReconnect(() => {
-  if (!resizingCommitted) return;
-  resizing = undefined;
-  resizingCommitted = false;
-  applyFrame();
-});
+let resizeRevision = 0;
 const measure = typeof chrome.flechaPrivate?.setSplitRatio === 'function' ? () => void invoke('frame:resized').catch(() => undefined) : undefined;
 let measuredLayout: string | undefined;
 if (windowId && measure) {
@@ -185,10 +174,18 @@ const api: FlechaApi = {
   closePalette: surface === 'window' ? cmd('closePalette') : () => undefined,
   toggleSidebar: cmd('toggleSidebar'),
   resizeSidebar: (width, done) => {
+    const revision = ++resizeRevision;
     resizing = clampSidebarWidth(width);
-    resizingCommitted = done && cmd('setSidebarWidth')(resizing);
-    if (done && !resizingCommitted) resizing = undefined;
     applyFrame();
+    if (!done) return;
+    const stateAtCommit = lastState;
+    void invoke<number>('setSidebarWidth', resizing).then((saved) => {
+      if (lastState && lastState === stateAtCommit) lastState = { ...lastState, sidebarWidth: saved };
+    }, () => undefined).finally(() => {
+      if (revision !== resizeRevision) return;
+      resizing = undefined;
+      applyFrame();
+    });
   },
   setSidebarPeek: cmd('setSidebarPeek'),
   // The page can write the clipboard itself; the background has no document to do it from.

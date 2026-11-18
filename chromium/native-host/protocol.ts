@@ -8,7 +8,12 @@
 export const HOST_NAME = 'dev.oprimo.flecha.host';
 /** How long the host waits for the shell to answer a tool. */
 export const TOOL_TIMEOUT = 60_000;
-export const toolTimeout = (timeoutMs: unknown) => TOOL_TIMEOUT + (typeof timeoutMs === 'number' ? timeoutMs : 0);
+// Node timers use a signed 32-bit delay. The host gives the shell one tool
+// allowance to receive, cancel and answer a request before the transport fails.
+export const MAX_TOOL_WAIT = 2_147_483_647 - 2 * TOOL_TIMEOUT;
+export const toolTimeout = (timeoutMs: unknown) => TOOL_TIMEOUT +
+  (typeof timeoutMs === 'number' && Number.isSafeInteger(timeoutMs) ? Math.max(0, Math.min(MAX_TOOL_WAIT, timeoutMs)) : 0);
+export const toolWatchdog = (timeoutMs: unknown) => toolTimeout(timeoutMs) + TOOL_TIMEOUT;
 
 /** Things only Node can do, which the shell asks for and the host answers with a `reply`. */
 export interface HostMethods {

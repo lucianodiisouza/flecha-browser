@@ -156,6 +156,11 @@ main header {
   padding: 20px;
 }
 
+#nothing p,
+#list-error:empty {
+  margin: 0;
+}
+
 main.empty header,
 main.empty #code,
 main:not(.empty) #nothing {

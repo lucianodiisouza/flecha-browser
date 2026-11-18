@@ -7,6 +7,13 @@ export type Message =
   /** Keeps the background awake while a page is open (it sleeps after 30s of silence). */
   | { type: 'ping' };
 
+/** Whether the disconnected page had already submitted its request to the port. */
+export class ConnectionError extends Error {
+  constructor(readonly sent: boolean, message: string) {
+    super(message);
+  }
+}
+
 /**
  * What a context menu item does once picked, for menus the background builds and a page draws
  * (settingsUi's popupMenu): a background command, or something only the page can do.

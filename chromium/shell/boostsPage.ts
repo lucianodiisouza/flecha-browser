@@ -5,6 +5,7 @@
  */
 import './noPageMenu';
 import { invoke, on, onReconnect } from './client';
+import { ConnectionError } from './protocol';
 import type { BoostFile } from './features/boosts';
 import { compileBoost } from './features/compileBoost';
 
@@ -15,12 +16,14 @@ const code = $<HTMLTextAreaElement>('code');
 const status = $('status');
 const listError = $('list-error');
 const openError = $('open-error');
+const retryOpen = $('retry-open');
 
 let current: BoostFile | undefined;
 let savedCode = '';
 let editorSession = Symbol();
 let navigation: symbol | undefined;
 let discard: { name: string; draft: string } | undefined;
+let reconnectSelection: { name: string; fallback: string } | undefined;
 const writes = new Map<string, Promise<void>>();
 const deleting = new Set<string>();
 
@@ -49,7 +52,10 @@ async function renderList() {
       const host = Object.assign(document.createElement('span'), { textContent: b.host });
       const kind = Object.assign(document.createElement('span'), { className: 'kind', textContent: b.kind === 'script' ? '.ts' : '.css' });
       button.append(host, kind);
-      button.onclick = () => (location.hash = encodeURIComponent(b.name));
+      button.onclick = () => {
+        if (selected() === b.name && current?.name !== b.name) void refresh();
+        else location.hash = encodeURIComponent(b.name);
+      };
       li.append(button);
       return li;
     }),
@@ -61,9 +67,11 @@ async function open(name: string, reload = false) {
   const request = navigation = Symbol();
   const stillSelected = () => navigation === request && selected() === name;
   const restoreHash = () => {
+    discard = undefined;
     if (current) history.replaceState(null, '', `#${encodeURIComponent(current.name)}`);
   };
   const oldCode = code.value;
+  const previousEditor = editorSession;
   if (dirty() && (discard?.name !== name || discard.draft !== oldCode)) {
     if (!confirm(`Discard your changes to ${current!.name}?`)) {
       discard = undefined;
@@ -77,18 +85,26 @@ async function open(name: string, reload = false) {
     await writes.get(name);
     if (!stillSelected()) return;
     file = name ? await invoke<BoostFile | undefined>('boosts:get', name) : undefined;
-  } catch {
+  } catch (error) {
     if (!stillSelected()) return;
-    if (current) setStatus('Couldn’t load this Boost.', true);
-    else openError.textContent = 'Couldn’t load this Boost.';
+    if (current) {
+      if (error instanceof ConnectionError) reconnectSelection = { name, fallback: current.name };
+      restoreHash();
+      setStatus('Couldn’t load this Boost.', true);
+    } else {
+      retryOpen.hidden = false;
+      openError.textContent = 'Couldn’t load this Boost.';
+    }
     return;
   }
   if (!stillSelected()) return;
-  if (code.value !== oldCode) return restoreHash();
+  if (editorSession === previousEditor && code.value !== oldCode) return restoreHash();
   discard = undefined;
   openError.textContent = '';
+  retryOpen.hidden = true;
   if (!reload || current?.name !== file?.name) editorSession = Symbol();
   current = file;
+  code.readOnly = !!current && deleting.has(current.name);
   main.classList.toggle('empty', !current);
   document.title = current ? `${current.name} · Boosts` : 'Boosts';
   if (current) {
@@ -135,15 +151,23 @@ $('delete').onclick = () => {
   const file = current;
   const session = editorSession;
   deleting.add(file.name);
+  code.readOnly = true;
   queueWrite(file.name, async () => {
     try {
       await invoke('boosts:delete', file.name);
-      if (editorSession === session) savedCode = code.value;
+      if (editorSession === session) {
+        current = undefined;
+        editorSession = Symbol();
+        savedCode = code.value = '';
+        main.classList.add('empty');
+        document.title = 'Boosts';
+      }
       if (selected() === file.name) location.hash = '';
     } catch {
       if (editorSession === session) setStatus('Couldn’t delete this Boost.', true);
     } finally {
       deleting.delete(file.name);
+      if (!current || current.name === file.name) code.readOnly = false;
     }
   });
 };
@@ -159,6 +183,7 @@ $<HTMLFormElement>('new').onsubmit = async (e) => {
 };
 
 code.addEventListener('keydown', (e) => {
+  if (code.readOnly) return;
   if (e.key === 's' && (e.metaKey || e.ctrlKey)) {
     e.preventDefault();
     void save();
@@ -176,8 +201,19 @@ async function refresh(reload = false) {
   if (!reload || !dirty() || name !== current?.name) await open(name, reload);
   await renderList();
 }
-window.addEventListener('hashchange', () => void refresh());
+retryOpen.onclick = () => void refresh();
+window.addEventListener('hashchange', () => {
+  reconnectSelection = undefined;
+  void refresh();
+});
 on('boosts:changed', () => void renderList());
-onReconnect(() => void refresh(true));
+onReconnect(() => {
+  const retry = reconnectSelection;
+  reconnectSelection = undefined;
+  if (retry && retry.fallback === selected()) {
+    history.replaceState(null, '', `#${encodeURIComponent(retry.name)}`);
+  }
+  void refresh(true);
+});
 
 void refresh();

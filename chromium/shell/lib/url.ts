@@ -25,11 +25,19 @@ export function searchUrl(terms: string, engine?: SearchEngineId): string {
   return searchEngine(engine).url.replace('%s', encodeURIComponent(terms));
 }
 
+export function hasAddressCredentials(input: string): boolean {
+  return /^[^\s/?#@]+:[^\s@]*@/.test(input.trim());
+}
+
 /** Turns whatever was typed in the command bar into a URL to load. */
 export function resolveInput(raw: string, engine?: SearchEngineId): string {
   const input = raw.trim();
   if (!input) return 'about:blank';
-  return webAddress(input) ?? searchUrl(input, engine);
+  const address = webAddress(input);
+  if (address) return address;
+  // Never send apparent URL credentials to the search engine.
+  if (hasAddressCredentials(input)) return 'about:blank';
+  return searchUrl(input, engine);
 }
 
 /** What was typed as a URL, completed (`github.com` → `https://github.com`); undefined when it reads as a search. */
@@ -50,7 +58,8 @@ export function webAddress(raw: string, { allowBareHost = false } = {}): string 
     // WHATWG URL also accepts numeric shorthand and octal IPv4. Keep the typed endpoint unambiguous.
     if (ipv4 && hostname !== host.replace(/\.$/, '')) return undefined;
     const localHost = hostname === '[::1]' || /^(?:[a-z0-9.-]+\.)?localhost$/i.test(hostname);
-    const domain = /\.[a-z]{2,}$/i.test(hostname);
+    const idn = /\.xn--[a-z0-9-]+$/i.test(hostname) && /[.。．｡][\p{L}\p{M}\p{N}-]+[.。．｡]?$/u.test(host);
+    const domain = /\.[a-z]{2,}$/i.test(hostname) || idn;
     if (!localHost && !ipv4 && (/\s/.test(input) || (!domain && !ipv6 && !allowBareHost))) return undefined;
     const [first, second] = ipv4 ? hostname.split('.').map(Number) : [];
     // Implicit HTTP is for loopback, the wildcard bind address and RFC 1918 networks.

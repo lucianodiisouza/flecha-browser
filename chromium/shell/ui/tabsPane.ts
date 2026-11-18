@@ -4,6 +4,7 @@ import { SPACE_COLORS, SPACE_EMOJIS } from './spaceChoices.js';
 import { isMac, primaryModifier } from '../lib/platform';
 import { isEnter } from '../lib/keys';
 import { isUndoKey } from '../lib/undo';
+import { ConnectionError } from '../protocol';
 
 /**
  * Settings → Tabs & Spaces: favorites and every Space's pinned tree and Today tabs in one
@@ -81,7 +82,7 @@ export function paneShortcut(e: { key: string; metaKey: boolean; ctrlKey: boolea
   return e.key === 'f' ? 'find' : e.key === 'a' ? 'selectAll' : undefined;
 }
 
-export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
+export function setupTabsPane(icon: (name: IconName) => SVGSVGElement, toast: (message: string) => void) {
   const api = window.settings;
   const pane = document.querySelector<HTMLElement>('.pane[data-pane="tabs-spaces"]')!;
   const tree = document.getElementById('tm-tree')!;
@@ -403,7 +404,13 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
     const title = el('input', { class: 'tm-input', placeholder: 'Title (optional)', spellcheck: 'false' });
     wireEditor([url, title], async () => {
       if (!url.value.trim()) return;
-      const result = await api.editTabs({ op: 'add', url: url.value, title: title.value, to });
+      const result = await api.editTabs({ op: 'add', url: url.value, title: title.value, to }).catch((error: unknown) => {
+        if (!(error instanceof ConnectionError) || !error.sent) throw error;
+        toast('Couldn’t confirm the new tab. Check the list before adding it again.');
+        void api.tabs().then(show, () => undefined);
+        return undefined;
+      });
+      if (!result) return;
       if (result.error) return result.error;
       if (result.created) {
         selected = new Set([`t:${result.created}`]);
