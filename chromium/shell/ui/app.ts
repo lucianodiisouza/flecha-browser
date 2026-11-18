@@ -73,6 +73,7 @@ function hueFor(text: string) {
 }
 
 function favicon(tab: TabInfo) {
+  if (tab.emoji) return h('span', { class: 'favicon tab-emoji' }, tab.emoji);
   const site = host(tab.url);
   const letter = () =>
     h('span', { class: 'favicon letter', style: `--hue: ${hueFor(site)}` }, (site.replace(/^[^a-z0-9]+/i, '')[0] ?? '•').toUpperCase());
@@ -521,6 +522,16 @@ function renameTab(tabId: string) {
     slot.classList.add('folder-emoji');
     showFlash('Type an emoji, or press ⌃⌘Space to pick one');
     return editInline(slot, '', (emoji) => api.setFolderEmoji(folderId, emoji));
+  }
+  // "Change Icon…" on a pinned tab: the same, in place of the site's icon.
+  if (tabId.startsWith('tabicon:')) {
+    const id = tabId.slice(8);
+    const current = document.querySelector<HTMLElement>(`.row[data-tab-id="${CSS.escape(id)}"] .favicon`);
+    if (!current) return;
+    const slot = h('span', { class: 'favicon tab-emoji' }) as HTMLElement;
+    current.replaceWith(slot);
+    showFlash('Type an emoji, or press ⌃⌘Space to pick one');
+    return editInline(slot, '', (emoji) => api.setTabEmoji(id, emoji));
   }
   const folderName = document.querySelector<HTMLElement>(`.row[data-folder-id="${CSS.escape(tabId)}"] .folder-name`);
   if (folderName) return editInline(folderName, folderName.textContent ?? '', (name) => api.renameFolder(tabId, name));
@@ -1123,6 +1134,7 @@ const ACTIONS: Array<{ label: string; keywords: string; icon: IconName; shortcut
   { label: 'New Flechinha Window', keywords: 'flechinha little mini small window quick lookup', icon: 'miniWindow', shortcut: 'newFlechinha', run: () => api.newFlechinha() },
   { label: 'Settings', keywords: 'preferences settings config options', icon: 'settings', shortcut: 'settings', run: () => api.openSettings() },
   { label: 'Responsive View', keywords: 'mobile phone responsive device split', icon: 'phone', shortcut: 'responsive', run: () => api.toggleResponsive() },
+  { label: 'Swap Split Sides', keywords: 'split swap sides flip switch left right', icon: 'columns', run: () => api.swapSplit() },
   { label: 'Toggle Sidebar', keywords: 'sidebar hide show', icon: 'sidebar', shortcut: 'toggleSidebar', run: () => api.toggleSidebar() },
   { label: 'Clear Today Tabs', keywords: 'clear archive today close', icon: 'archive', shortcut: 'clearToday', run: () => api.clearToday() },
   { label: 'Show Downloads', keywords: 'downloads files', icon: 'download', run: () => (downloadsPanel.hidden = false) },
@@ -1428,10 +1440,16 @@ document.addEventListener('mousedown', (e) => {
 
 const splitDrop = $('split-drop');
 
-/** Drop zones over the page while a tab is dragged, unless it's the tab already on screen. */
+/**
+ * Drop zones over the page while a tab is dragged, unless it's the tab already on screen. A half
+ * of the split on screen gets them too: dropped on the other side, the halves trade places.
+ */
 function showSplitDrop(tabId: string) {
   const space = state?.spaces.find((s) => s.id === state!.activeSpaceId);
-  if (!space?.activeTabId || space.activeTabId === tabId || (space.split?.includes(tabId) && space.split.includes(space.activeTabId))) return;
+  if (!space?.activeTabId) return;
+  const splitOnScreen = !!space.split?.includes(space.activeTabId);
+  const half = splitOnScreen && space.split!.includes(tabId);
+  if (half ? space.splitMode === 'responsive' : space.activeTabId === tabId) return;
   // Where the page is: right of the docked sidebar, else the whole window inside the gap.
   const left = document.body.dataset.sidebar === 'docked' ? $('sidebar').offsetWidth : 8;
   Object.assign(splitDrop.style, { left: `${left}px`, top: '8px', right: '8px', bottom: '8px' });

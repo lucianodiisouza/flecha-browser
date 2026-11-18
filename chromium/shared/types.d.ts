@@ -5,6 +5,8 @@ export interface TabInfo {
   favicon?: string;
   /** A name the user gave the tab; page titles no longer replace it. */
   customTitle?: string;
+  /** An emoji shown instead of the site's icon (pinned tabs, as in Arc). */
+  emoji?: string;
   /** Playing sound right now (not persisted). */
   audible?: boolean;
   muted?: boolean;
@@ -506,6 +508,7 @@ export interface FlechaApi {
   renameFolder(folderId: string, name: string): void;
   /** An emoji in place of the folder icon; empty for the folder icon again. */
   setFolderEmoji(folderId: string, emoji: string): void;
+  setTabEmoji(tabId: string, emoji: string): void;
   moveTab(tabId: string, target: DropTarget): void;
   clearToday(): void;
   /** Brings over the Spaces and tabs of Flecha's Electron version. */
@@ -532,6 +535,8 @@ export interface FlechaApi {
   editBoost(kind: 'script' | 'styles'): void;
   openBoostsFolder(): void;
   splitWith(tabId: string, side?: 'left' | 'right', withTabId?: string): void;
+  /** The split's halves trade sides. */
+  swapSplit(): void;
   /** While a tab is dragged, the sidebar UI covers the page so it can be dropped there. */
   setTabDragging(dragging: boolean): void;
   dropToSplit(tabId: string, side: 'left' | 'right'): void;
