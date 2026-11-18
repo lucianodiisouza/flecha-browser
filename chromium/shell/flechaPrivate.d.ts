@@ -234,7 +234,7 @@ declare namespace chrome.flechaPrivate {
   }
   function setMenus(menus: Menu[]): Promise<void>;
 
-  /** Keeps a window above other apps' windows (Stay On Top), or not (patch 0045). */
+  /** Keeps a window above other apps' windows (Stay On Top), or not (patch 0045): a Flecha window, or any other of this profile by id (the Settings popup). */
   function setAlwaysOnTop(onTop: boolean, windowId?: number): Promise<void>;
 
   /**

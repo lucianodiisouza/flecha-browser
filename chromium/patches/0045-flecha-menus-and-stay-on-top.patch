@@ -1,9 +1,10 @@
 --- a/chrome/common/extensions/api/flecha_private.idl
 +++ b/chrome/common/extensions/api/flecha_private.idl
-@@ -78,6 +78,28 @@
+@@ -77,6 +77,28 @@
+     boolean canSet;
    };
    callback DefaultBrowserCallback = void(DefaultBrowserState state);
- 
++
 +  // One entry of a menu in the menu bar (setMenus).
 +  dictionary MenuItem {
 +    // No text: a separator.
@@ -25,11 +26,10 @@
 +    DOMString title;
 +    MenuItem[] items;
 +  };
-+
+ 
    dictionary DevToolsOptions {
      // Close them if they're open (the Alt+Cmd+I menu item).
-     boolean? toggle;
-@@ -202,6 +224,17 @@
+@@ -202,6 +224,18 @@
      // one, at the page area's top right.
      static void showFindBar(optional long windowId, optional DoneCallback callback);
  
@@ -39,7 +39,8 @@
 +    static void setMenus(Menu[] menus, optional DoneCallback callback);
 +
 +    // Keeps a window above every other app's windows (Stay On Top), or lets
-+    // it go back among them. Default: the main window.
++    // it go back among them: a Flecha window, or any other window of this
++    // profile by id (the Settings popup). Default: the main window.
 +    static void setAlwaysOnTop(boolean onTop,
 +                               optional long windowId,
 +                               optional DoneCallback callback);
@@ -313,7 +314,15 @@
  #include "chrome/browser/flecha/flecha_accelerator.h"
  #include "chrome/browser/flecha/flecha_frame_host.h"
  #include "chrome/browser/flecha/flecha_shell_events.h"
-@@ -534,9 +535,50 @@
+@@ -38,6 +39,7 @@
+ #include "chrome/browser/themes/theme_service.h"
+ #include "chrome/browser/themes/theme_service_factory.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "components/tabs/public/tab_interface.h"
+ #include "chrome/common/extensions/api/flecha_private.h"
+@@ -534,6 +536,60 @@
      return RespondNow(Error(kNoWindowError, "(find)"));
    }
    chrome::Find(host->GetBrowserWindowInterface());
@@ -339,9 +348,9 @@
 +    }
 +  }
 +  SetFlechaMenus(menus);
-   return RespondNow(NoArguments());
- }
- 
++  return RespondNow(NoArguments());
++}
++
 +ExtensionFunction::ResponseAction FlechaPrivateSetAlwaysOnTopFunction::Run() {
 +  auto params = flecha_private::SetAlwaysOnTop::Params::Create(args());
 +  EXTENSION_FUNCTION_VALIDATE(params);
@@ -352,18 +361,28 @@
 +                                                    ->GetOriginalProfile());
 +  BrowserWindowInterface* browser =
 +      host ? host->GetBrowserWindowInterface() : nullptr;
++  // Any other window of this profile by its id, such as the Settings popup,
++  // which floats along with a Flecha window that stays on top.
++  if (!browser && params->window_id) {
++    Profile* profile =
++        Profile::FromBrowserContext(browser_context())->GetOriginalProfile();
++    for (BrowserWindowInterface* candidate : GetAllBrowserWindowInterfaces()) {
++      if (candidate->GetSessionID().id() == *params->window_id &&
++          candidate->GetProfile()->GetOriginalProfile() == profile) {
++        browser = candidate;
++        break;
++      }
++    }
++  }
 +  if (!browser || !browser->GetWindow()) {
 +    return RespondNow(Error(kNoWindowError, "(stay on top)"));
 +  }
 +  browser->GetWindow()->SetZOrderLevel(params->on_top
 +                                           ? ui::ZOrderLevel::kFloatingWindow
 +                                           : ui::ZOrderLevel::kNormal);
-+  return RespondNow(NoArguments());
-+}
-+
- namespace {
+   return RespondNow(NoArguments());
+ }
  
- base::DictValue DefaultBrowserState(
 --- a/chrome/browser/ui/cocoa/main_menu_builder.mm
 +++ b/chrome/browser/ui/cocoa/main_menu_builder.mm
 @@ -293,26 +293,35 @@

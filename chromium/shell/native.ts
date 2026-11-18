@@ -11,6 +11,7 @@ import { broadcast, handle, run as runHub } from './hub';
 import { flechaMenus } from './lib/menus';
 import { incognito } from './incognito';
 import { PHONE } from './features/responsive';
+import { SETTINGS_PAGE } from './settingsHandlers';
 
 export interface NativeContext {
   store: Store;
@@ -72,6 +73,10 @@ export function registerNative(ctx: NativeContext) {
 /** Windows kept above other apps' windows. */
 const onTop = new Set<number>();
 let focusedWindow: number | undefined;
+/** The Settings popup's window: it floats while any Flecha window stays on top, or it'd hide behind it. */
+let settingsWindow: number | undefined;
+const isSettings = (tab: chrome.tabs.Tab) =>
+  (tab.pendingUrl ?? tab.url ?? '').startsWith(chrome.runtime.getURL(SETTINGS_PAGE));
 let refreshMenus = () => {};
 
 /** Spaces, Tabs and Archive in the menu bar (lib/menus.ts), sent again whenever they change. */
@@ -83,7 +88,7 @@ function registerMenus(ctx: NativeContext) {
   refreshMenus = () => {
     const state = ctx.store.state;
     const menus = flechaMenus(state, {
-      stayOnTop: focusedWindow !== undefined && onTop.has(focusedWindow),
+      stayOnTop: focusedWindow !== undefined && (onTop.has(focusedWindow) || (focusedWindow === settingsWindow && onTop.size > 0)),
       keys: (id) => keysFor(state, id),
       spaceModifier: SPACE_MODIFIER,
     });
@@ -98,7 +103,16 @@ function registerMenus(ctx: NativeContext) {
     focusedWindow = id;
     refreshMenus();
   });
-  chrome.windows.onRemoved.addListener((id) => void onTop.delete(id));
+  chrome.windows.onRemoved.addListener((id) => {
+    const wasOnTop = onTop.delete(id);
+    if (id === settingsWindow) settingsWindow = undefined;
+    else if (wasOnTop && !onTop.size) void floatSettings();
+  });
+  chrome.tabs.onCreated.addListener((tab) => {
+    if (!isSettings(tab)) return;
+    settingsWindow = tab.windowId;
+    void floatSettings();
+  });
   void chrome.windows.getLastFocused().then((w) => {
     focusedWindow = w.id;
     refreshMenus();
@@ -113,8 +127,17 @@ async function toggleStayOnTop(windowId?: number) {
   await chrome.flechaPrivate.setAlwaysOnTop(next, id);
   if (next) onTop.add(id);
   else onTop.delete(id);
+  await floatSettings();
   broadcast('flash', next ? 'Stays on top of other apps' : 'Back among other windows');
   refreshMenus();
+}
+
+/** Settings floats while any Flecha window stays on top, and goes back among the others after. */
+async function floatSettings() {
+  if (!has('setAlwaysOnTop')) return;
+  if (settingsWindow === undefined) settingsWindow = (await chrome.tabs.query({})).find(isSettings)?.windowId;
+  if (settingsWindow === undefined) return;
+  await chrome.flechaPrivate.setAlwaysOnTop(onTop.size > 0, settingsWindow).catch(() => undefined);
 }
 
 /** A `menu:` command from lib/menus.ts, chosen in window `windowId`. */
