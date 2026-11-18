@@ -29,6 +29,18 @@ export function hasAddressCredentials(input: string): boolean {
   return /^[^:\s/?#@]+(?::[^@]*)?@(?=\S|$)/.test(input.trim());
 }
 
+function looksLikeRejectedAddress(input: string): boolean {
+  const [typed] = input.split(/[/?#\\]/, 1);
+  const hasTail = typed.length < input.length;
+  let authority = typed.replace(/%2e|[。．｡]/gi, '.');
+  try { authority = decodeURIComponent(authority); } catch { /* A bad escape can still follow a host. */ }
+  if (hasAddressCredentials(authority) || /^\[[^\s\[\]]*:[^\s\[\]]*(?:\]|$)/.test(authority)) return true;
+  const [host, port] = authority.split(':', 2);
+  if (!hasTail && port === undefined) return false;
+  if (/^localhost$|^[^\s.@]+\.[^\s@]+$/i.test(host)) return true;
+  return hasTail && /^[a-z\d-]*[a-z][a-z\d-]*$/i.test(host) && /^\s*\d/.test(port ?? '');
+}
+
 /** Turns whatever was typed in the command bar into a URL to load. */
 export function resolveInput(raw: string, engine?: SearchEngineId): string {
   const input = raw.trim();
@@ -36,7 +48,7 @@ export function resolveInput(raw: string, engine?: SearchEngineId): string {
   const address = webAddress(input);
   if (address) return address;
   // Broken addresses can still contain credentials or tokens in the path and query.
-  if (hasAddressCredentials(input) || /^(?:\[[\da-f:.]+\]|localhost|[^:\s/?#@]+\.[^:\s/?#@]+)[:/?#]/i.test(input)) return 'about:blank';
+  if (hasAddressCredentials(input) || looksLikeRejectedAddress(input)) return 'about:blank';
   return searchUrl(input, engine);
 }
 

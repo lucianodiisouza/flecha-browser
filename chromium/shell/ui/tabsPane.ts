@@ -480,6 +480,11 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
       pending = next;
       return;
     }
+    applyView(next);
+  }
+
+  // Rendering a buffered view does not confirm an Add Tab that lost its reply.
+  function applyView(next: TabsView) {
     view = next;
     pending = undefined;
     render();
@@ -487,11 +492,8 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
   }
 
   function flushPending() {
-    if (pending) {
-      const next = pending;
-      pending = undefined;
-      show(next);
-    } else render();
+    if (pending) applyView(pending);
+    else render();
   }
 
   // ---- selection ----------------------------------------------------------------------

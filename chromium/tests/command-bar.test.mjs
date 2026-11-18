@@ -35,8 +35,16 @@ test('typed development addresses open directly and environment badges follow ex
   for (const broken of ['300.10.0.1', '192.168.1.010:3000', 'localhost: 3000', 'localhost:65536', 'localhost:3000@example.com']) {
     assert.equal(webAddress(broken), undefined, broken);
   }
-  assert.equal(resolveInput('localhost:65536/api?token=fixture'), 'about:blank');
-  assert.equal(suggestable('localhost:65536/api?token=fixture'), false);
+  for (const malformed of [
+    'localhost:65536/api?token=fixture',
+    '%65xample%2ecom:65536/api?token=fixture',
+    '%ZZxample%2ecom:65536/api?token=fixture',
+    '[::gg]:80/api?token=fixture',
+    'staging:65536/api?token=fixture',
+  ]) {
+    assert.equal(resolveInput(malformed), 'about:blank');
+    assert.equal(suggestable(malformed), false);
+  }
   assert.equal(suggestable('re: meet @ noon'), true);
   assert.match(resolveInput('re: meet @ noon'), /[?&]q=re%3A%20meet%20%40%20noon/);
   assert.match(resolveInput('mailto: vs tel: links'), /[?&]q=mailto%3A%20vs%20tel%3A%20links/);
