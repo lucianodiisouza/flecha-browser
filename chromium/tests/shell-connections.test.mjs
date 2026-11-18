@@ -267,6 +267,43 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
   await nextTurn();
   assert.equal(code.readOnly, false);
   assert.equal(code.value, 'second file');
+
+  handlers.get('hashchange')();
+  await nextTurn();
+  const staleRead = messages.filter(({ name }) => name === 'boosts:get').at(-1);
+  button.onclick();
+  await nextTurn();
+  reply(staleRead, { ...second, code: 'a newer disk revision' });
+  await nextTurn();
+  assert.equal(code.value, 'second file', 'a read started before Save cannot overwrite the committed draft');
+  reply(sentSaves().at(-1), second);
+  await nextTurn();
+  reply(messages.filter(({ name }) => name === 'boosts:get').at(-1), second);
+  await nextTurn();
+
+  location.hash = '#%';
+  handlers.get('hashchange')();
+  await nextTurn();
+  location.hash = '#second.css';
+  handlers.get('hashchange')();
+  await nextTurn();
+  reply(messages.filter(({ name }) => name === 'boosts:get').at(-1), second);
+  await nextTurn();
+  code.value = 'unsaved draft';
+  node('delete').onclick();
+  await nextTurn();
+  const deleteCount = messages.filter(({ name }) => name === 'boosts:delete').length;
+  port.onDisconnect.emit();
+  await nextTurn();
+  assert.match(node('status').textContent, /Couldn’t confirm deletion/);
+  t.mock.timers.tick(5_000);
+  await nextTurn();
+  reply(messages.filter(({ name }) => name === 'boosts:get').at(-1), undefined);
+  await nextTurn();
+  assert.match(node('status').textContent, /deleted.*copy your draft/);
+  assert.equal(code.value, 'unsaved draft');
+  assert.equal(button.disabled, true);
+  assert.equal(messages.filter(({ name }) => name === 'boosts:delete').length, deleteCount);
 });
 
 test('the agent restores focus, replays idle logs, and recovers a stalled debugger', async (t) => {
@@ -332,8 +369,13 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   const store = new Store({ load: () => undefined, save: () => {} });
   store.state.agent = { enabled: true };
   const phone = store.addTab(tab.url).id;
+  let liveId = tab.id;
   assert.equal(await hold(tab.id, 'responsive'), true);
-  const host = registerNativeHost({ store, broadcastState() {}, agentTabsChanged() {}, tabs: { chromeTab: async () => tab.id } });
+  const host = registerNativeHost({ store, broadcastState() {}, agentTabsChanged() {}, tabs: {
+    chromeTab: async () => tab.id,
+    liveId: () => liveId,
+    close(id) { store.closeTab(id); liveId = undefined; },
+  } });
   readPending = Promise.withResolvers();
   port.onMessage.emit({ type: 'tool', id: 23, name: 'read_page', args: { tabId: phone } });
   await nextTurn();
@@ -516,6 +558,19 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   t.mock.timers.tick(100);
   await nextTurn();
   assert.ok(results.some(({ id, result }) => id === 42 && !result.isError), 'the next tool recovers without resolving debugger setup');
+
+  store.togglePin(phone);
+  readPending = Promise.withResolvers();
+  port.onMessage.emit({ type: 'tool', id: 43, name: 'read_page', args: { tabId: phone } });
+  await nextTurn();
+  port.onMessage.emit({ type: 'tool', id: 44, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  port.onMessage.emit({ type: 'tool', id: 45, name: 'close_tab', args: { tabId: phone } });
+  await nextTurn();
+  assert.ok(store.state.tabs[phone], 'unloading a pinned tab preserves its saved link');
+  readPending.resolve();
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 44).result.content[0].text, /closed before the tool could run/);
 });
 
 test('releasing a debugger holder queued behind a detach cancels its attachment', async (t) => {
@@ -546,6 +601,39 @@ test('releasing a debugger holder queued behind a detach cancels its attachment'
   assert.equal(await newClaim, false);
   await Promise.all([closingAgain, cancelingAgain]);
   assert.equal(attach.mock.callCount(), 2);
+});
+
+test('debugger cleanup keeps a replacement holder and waits for an incomplete attach before resetting', async (t) => {
+  const setup = Promise.withResolvers();
+  const detached = [];
+  globalThis.chrome = { debugger: {
+    onDetach: event(),
+    attach: async ({ tabId }) => { if (tabId === 13) await setup.promise; },
+    detach: async ({ tabId }) => { detached.push(tabId); },
+  } };
+  t.after(() => delete globalThis.chrome);
+  const { hold, release, resetDebugger } = await loadModule('chromium/shell/features/debuggee.ts');
+  assert.equal(await hold(12, 'agent'), true);
+  assert.equal(await hold(12, 'responsive'), true);
+  const cleanup = Promise.withResolvers();
+  const releasing = release(12, 'agent', () => cleanup.promise);
+  await release(12, 'agent');
+  assert.equal(await hold(12, 'agent'), true);
+  cleanup.resolve();
+  await releasing;
+  await release(12, 'responsive');
+  assert.deepEqual(detached, [], 'shared cleanup leaves a replacement lease attached');
+  await release(12, 'agent');
+  assert.deepEqual(detached, [12]);
+
+  const attaching = hold(13, 'agent');
+  await nextTurn();
+  const reset = resetDebugger(13, 'agent');
+  await nextTurn();
+  assert.deepEqual(detached, [12]);
+  setup.resolve();
+  await Promise.all([attaching, reset]);
+  assert.deepEqual(detached, [12, 13], 'the reset closes the session created by the pending attach');
 });
 
 test('the responsive split keeps the phone viewport width when the window grows', async () => {

@@ -419,6 +419,12 @@ code {
   box-shadow: 0 0 0 3px var(--focus);
 }
 
+.env-error:not(:empty) {
+  padding-top: 6px;
+  color: var(--red);
+  font-size: var(--text-sm);
+}
+
 .nav-icon.pink {
   background: linear-gradient(#f27aa8, #d94a83);
 }

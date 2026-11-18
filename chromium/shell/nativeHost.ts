@@ -9,7 +9,7 @@
  *
  * Install the host with chromium/scripts/install-native-host.sh.
  */
-import type { DetectedBrowser, HistoryEntry, ImportOptions, ImportPreview, ImportResult, UiState } from '../shared/types';
+import type { DetectedBrowser, HistoryEntry, ImportOptions, ImportPreview, ImportResult, TabInfo, UiState } from '../shared/types';
 import { pinnedTabIds, type Store } from '../shared/store';
 import type { AgentResult, AgentTab, AgentToolName } from '../shared/agentTools';
 import { applyBrowserImport, importOptions, previewBrowserImport, type BrowserImportData } from '../shared/importApply';
@@ -28,6 +28,7 @@ export interface NativeHostContext {
     open(url: string): string;
     /** The Chromium tab showing a Flecha tab, opened (in the background) if it has none yet. */
     chromeTab(tabId: string): Promise<number | undefined>;
+    liveId?(tabId: string): number | undefined;
     activate(tabId: string): void;
     close(tabId: string): void;
   };
@@ -291,6 +292,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     command(method: string, params?: object, signal?: AbortSignal): Promise<unknown>;
   };
   const tabOperations = new Map<number, Promise<void>>();
+  const tabClosures = new WeakMap<TabInfo, symbol>();
 
   async function runTool(name: AgentToolName, args: Record<string, any>): Promise<AgentResult> {
     const commands = new Set<Promise<unknown>>();
@@ -345,16 +347,22 @@ export function registerNativeHost(ctx: NativeHostContext) {
    * drive tabs through chrome.debugger, which needs no tab on screen and no window focus.
    */
   async function target(tabId: string, action: string, use: UseTab) {
-    if (!store.state.tabs[tabId]) throw new Error(`No tab with id ${tabId}`);
+    const tab = store.state.tabs[tabId];
+    if (!tab) throw new Error(`No tab with id ${tabId}`);
+    const closure = tabClosures.get(tab);
     showActivity(tabId, action);
     const chromeId = await ctx.tabs.chromeTab(tabId);
     if (chromeId === undefined) throw new Error(`Tab ${tabId} couldn’t be opened`);
     await use.tab(chromeId);
+    if (!store.state.tabs[tabId] || tabClosures.get(tab) !== closure || (ctx.tabs.liveId && ctx.tabs.liveId(tabId) !== chromeId)) {
+      throw new Error(`Tab ${tabId} closed before the tool could run`);
+    }
     // A tab tab sleep discarded needs nothing more: attaching the debugger brings its page back
     // (native-agent.mjs checks it).
     return { tabId, chromeId };
   }
 
+  // The native host validates arguments against AGENT_TOOLS before dispatching a tool.
   const tools: Record<AgentToolName, (args: Record<string, any>, use: UseTab) => Promise<AgentResult>> = {
     list_tabs: async () => {
       showActivity(undefined, 'listing tabs');
@@ -375,7 +383,9 @@ export function registerNativeHost(ctx: NativeHostContext) {
       return text('ok');
     },
     close_tab: async ({ tabId }) => {
-      if (!store.state.tabs[tabId]) return fail(`No tab with id ${tabId}`);
+      const tab = store.state.tabs[tabId];
+      if (!tab) return fail(`No tab with id ${tabId}`);
+      tabClosures.set(tab, Symbol());
       showActivity(tabId, 'closing a tab');
       ctx.tabs.close(tabId);
       return text('ok');

@@ -114,6 +114,11 @@ function favicon(tab: TabInfo) {
 // ---- rendering ----------------------------------------------------------------
 
 function render(s: UiState) {
+  if (state && state.activeSpaceId !== s.activeSpaceId) {
+    clearDropTarget?.();
+    incomingDrop = undefined;
+    externalPinnedDrag = false;
+  }
   state = s;
   const space = s.spaces.find((sp) => sp.id === s.activeSpaceId) ?? s.spaces[0];
   const active = space.activeTabId ? s.tabs[space.activeTabId] : undefined;
@@ -143,7 +148,6 @@ function render(s: UiState) {
   // never draws the empty state, the new tab page always does.
   renderEmptyState(s, space, surface === 'newtab' || (!active && surface !== 'panel'));
 
-  if (incomingDrop && incomingDrop.spaceId !== space.id) incomingDrop = undefined;
   const preserveRows = !!draggedTab || !!incomingDrop;
   if (!preserveRows) $('favorites').replaceChildren(
     ...s.favorites
@@ -216,6 +220,7 @@ function updatePinnedVisibility(space: Space) {
 
 /** What a blank Space offers: search, the sites you go back to most, and your dev servers. */
 let topSitesFetched = 0;
+let topSitesAttempted = 0;
 let fetchingTopSites = false;
 let topSites: HistoryEntry[] = [];
 function renderEmptyState(s: UiState, space: Space, show: boolean) {
@@ -227,11 +232,12 @@ function renderEmptyState(s: UiState, space: Space, show: boolean) {
   $('empty-title').textContent = hour < 5 ? 'Up late?' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   $('empty-space').replaceChildren(h('span', { class: 'empty-space-emoji' }, space.emoji ?? ''), h('span', {}, space.name));
   // History changes as you browse, so the tiles are fetched each time the page becomes empty.
-  if (!fetchingTopSites && (wasHidden || Date.now() - topSitesFetched > 60_000)) {
+  if (!fetchingTopSites && (wasHidden || Date.now() - Math.max(topSitesFetched, topSitesAttempted) > 60_000)) {
     fetchingTopSites = true;
-    topSitesFetched = Date.now();
+    topSitesAttempted = Date.now();
     void api.topSites().then((sites) => {
       topSites = sites;
+      topSitesFetched = Date.now();
       if (state) render(state);
     }, () => undefined).finally(() => { fetchingTopSites = false; });
   }
@@ -1852,6 +1858,10 @@ api.onPeek(renderPeek);
 api.onDownloads(renderDownloads);
 onReconnect(() => {
   if (!palette.hidden) hidePalette();
+  if (topSitesAttempted > topSitesFetched) {
+    topSitesAttempted = topSitesFetched = 0;
+    if (state) render(state);
+  }
   if (surface === 'window') api.setTabDragging(!splitDrop.hidden);
 });
 api.ready();

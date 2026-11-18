@@ -35,11 +35,18 @@ test('typed development addresses open directly and environment badges follow ex
   for (const broken of ['300.10.0.1', '192.168.1.010:3000', 'localhost: 3000', 'localhost:65536', 'localhost:3000@example.com']) {
     assert.equal(webAddress(broken), undefined, broken);
   }
+  assert.equal(resolveInput('localhost:65536/api?token=fixture'), 'about:blank');
+  assert.equal(suggestable('localhost:65536/api?token=fixture'), false);
+  assert.equal(suggestable('re: meet @ noon'), true);
+  assert.match(resolveInput('re: meet @ noon'), /[?&]q=re%3A%20meet%20%40%20noon/);
+  assert.match(resolveInput('mailto: vs tel: links'), /[?&]q=mailto%3A%20vs%20tel%3A%20links/);
+  assert.equal(resolveInput('mailto:?subject=Hello'), 'mailto:?subject=Hello');
+  assert.equal(new URL(resolveInput('%65xample.com/docs')).href, 'https://example.com/docs');
   const targets = parseTargets('prod https://staging.example.com\napp.localhost:3030\nflecha.dev\nlatest.example.com\n[::1]:8080\n0.0.0.0:8000\nstaging2.example.com\nqa01.example.com');
   const envs = [{ id: 'project', name: 'Project', targets }];
   assert.deepEqual(targets.map(({ origin }) => origin), ['https://staging.example.com', 'http://app.localhost:3030', 'https://flecha.dev', 'https://latest.example.com', 'http://[::1]:8080', 'http://0.0.0.0:8000', 'https://staging2.example.com', 'https://qa01.example.com']);
   assert.deepEqual(targets.map(({ origin }) => describe(origin, envs).tone), ['production', 'local', 'production', 'production', 'local', 'local', 'staging', 'staging']);
-  assert.deepEqual(parseTargets('203.0.113.9:3000\n192.168.1.010:3000\ntel:1234\nInternal intranet'), [
+  assert.deepEqual(parseTargets('203.0.113.9:3000\n192.168.1.010:3000\ntel:1234\nssh:22\nInternal intranet'), [
     { label: '203.0.113.9:3000', origin: 'https://203.0.113.9:3000', autoLabel: true },
     { label: 'Internal', origin: 'https://intranet', autoLabel: false },
   ]);

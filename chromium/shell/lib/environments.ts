@@ -1,4 +1,3 @@
-const randomUUID = () => crypto.randomUUID();
 import { getSubdomain } from 'tldts';
 import type { ActiveEnvironment, Environment, EnvironmentTarget } from '../../shared/types';
 import { webAddress } from './url';
@@ -89,15 +88,4 @@ export function parseTargets(text: string): EnvironmentTarget[] {
     }
   }
   return targets;
-}
-
-export function sanitize(environments: unknown): Environment[] {
-  if (!Array.isArray(environments)) return [];
-  return environments
-    .map((e) => ({
-      id: typeof e?.id === 'string' ? e.id : randomUUID(),
-      name: String(e?.name ?? '').trim() || 'Project',
-      targets: parseTargets(typeof e?.targetsText === 'string' ? e.targetsText : ''),
-    }))
-    .filter((e) => e.targets.length > 0);
 }

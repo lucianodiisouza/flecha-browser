@@ -25,7 +25,7 @@ function icon(name: IconName) {
   return el;
 }
 
-setupTabsPane(icon, toast);
+setupTabsPane(icon);
 
 for (const el of document.querySelectorAll<HTMLElement>('i[data-icon]')) el.replaceWith(icon(el.dataset.icon as IconName));
 
@@ -178,48 +178,70 @@ let savedEnvironments: EnvironmentDraft[] = [];
 const environmentDrafts = new Map<string, Partial<Record<EnvironmentField, FieldEdit>>>();
 const incompleteEnvironments = new Map<string, EnvironmentDraft>();
 const removingEnvironments = new Set<string>();
+const environmentErrors = new Map<string, string>();
+const environmentCards = new Map<string, ReturnType<typeof environmentCard>>();
 let environmentWrites = Promise.resolve();
 const environmentList = document.getElementById('environmentList')!;
 
 function reconcileEnvironments(saved: EnvironmentDraft[]) {
   savedEnvironments = saved;
   for (const env of saved) incompleteEnvironments.delete(env.id);
-  const visible = [...saved, ...incompleteEnvironments.values()]
+  environments = [...saved, ...incompleteEnvironments.values()]
     .filter((env) => !removingEnvironments.has(env.id))
     .map((env) => {
       const edits = environmentDrafts.get(env.id);
       return { id: env.id, name: edits?.name?.value ?? env.name, targetsText: edits?.targetsText?.value ?? env.targetsText };
     });
-  if (JSON.stringify(environments) === JSON.stringify(visible)) return;
-  environments = visible;
   renderEnvironments();
 }
 
 function renderEnvironments() {
-  environmentList.replaceChildren(
-    ...environments.map((env) => {
-      const card = document.createElement('div');
-      card.className = 'card env-card';
-      const name = Object.assign(document.createElement('input'), { value: env.name, placeholder: 'Project name', className: 'env-name' });
-      const targets = Object.assign(document.createElement('textarea'), {
-        value: env.targetsText,
-        placeholder: 'local http://localhost:3000\nstaging https://staging.example.com\nprod https://example.com',
-        rows: 3,
-        spellcheck: false,
-        className: 'env-targets',
-      });
-      const remove = Object.assign(document.createElement('button'), { className: 'icon-button', title: 'Remove project' });
-      remove.append(icon('close'));
-      wireEnvironmentField(env.id, 'name', name);
-      wireEnvironmentField(env.id, 'targetsText', targets);
-      remove.addEventListener('click', () => removeEnvironment(env.id));
-      const header = document.createElement('div');
-      header.className = 'env-header';
-      header.append(name, remove);
-      card.append(header, targets);
-      return card;
-    }),
-  );
+  const visible = new Set(environments.map((env) => env.id));
+  for (const [id, { card }] of environmentCards) {
+    if (visible.has(id)) continue;
+    card.remove();
+    environmentCards.delete(id);
+  }
+  let position = environmentList.firstElementChild;
+  for (const env of environments) {
+    let controls = environmentCards.get(env.id);
+    if (!controls) {
+      controls = environmentCard(env.id);
+      environmentCards.set(env.id, controls);
+    }
+    const { card, name, targets, status } = controls;
+    if (name.value !== env.name) name.value = env.name;
+    if (targets.value !== env.targetsText) targets.value = env.targetsText;
+    const error = environmentErrors.get(env.id) ?? '';
+    if (status.textContent !== error) status.textContent = error;
+    if (card !== position) {
+      if (card.isConnected) environmentList.moveBefore(card, position);
+      else environmentList.insertBefore(card, position);
+    }
+    position = card.nextElementSibling;
+  }
+}
+
+function environmentCard(id: string) {
+  const card = Object.assign(document.createElement('div'), { className: 'card env-card' });
+  const name = Object.assign(document.createElement('input'), { placeholder: 'Project name', className: 'env-name' });
+  const targets = Object.assign(document.createElement('textarea'), {
+    placeholder: 'local http://localhost:3000\nstaging https://staging.example.com\nprod https://example.com',
+    rows: 3,
+    spellcheck: false,
+    className: 'env-targets',
+  });
+  const remove = Object.assign(document.createElement('button'), { className: 'icon-button', title: 'Remove project' });
+  remove.append(icon('close'));
+  wireEnvironmentField(id, 'name', name);
+  wireEnvironmentField(id, 'targetsText', targets);
+  remove.addEventListener('click', () => removeEnvironment(id));
+  const header = Object.assign(document.createElement('div'), { className: 'env-header' });
+  header.append(name, remove);
+  const status = Object.assign(document.createElement('div'), { className: 'env-error' });
+  status.setAttribute('role', 'status');
+  card.append(header, targets, status);
+  return { card, name, targets, status };
 }
 
 function wireEnvironmentField(id: string, field: EnvironmentField, input: HTMLInputElement | HTMLTextAreaElement) {
@@ -233,26 +255,26 @@ function wireEnvironmentField(id: string, field: EnvironmentField, input: HTMLIn
   input.addEventListener('input', draftField);
   input.addEventListener('change', () => {
     const edit = draftField();
-    const local = environments.find((env) => env.id === id);
+    const local = { ...environments.find((env) => env.id === id) };
+    const edits = environmentDrafts.get(id);
     queueEnvironmentWrite(async () => {
       if (removingEnvironments.has(id)) return;
       const previous = savedEnvironments.find((env) => env.id === id);
-      const edited = { id, name: '', targetsText: '', ...(previous ?? local), [field]: edit.value };
-      const submitted = previous
-        ? savedEnvironments.map((env) => env.id === id ? edited : env)
-        : [...savedEnvironments, edited];
-      let view: SettingsView;
-      try {
-        view = await api.set({ environments: submitted });
-      } finally {
+      const creating = !previous && incompleteEnvironments.has(id);
+      const view = await api.set({ environment: creating
+        ? { op: 'create', id, name: local.name ?? '', targetsText: local.targetsText ?? '' }
+        : { op: 'edit', id, field, value: edit.value } });
+      if (view.notice) {
+        if (view.environments.some((env) => env.id === id) || incompleteEnvironments.has(id)) environmentErrors.set(id, view.notice);
+        else if (!removingEnvironments.has(id)) toast(view.notice);
+      } else {
+        environmentErrors.delete(id);
         const current = environmentDrafts.get(id);
-        if (current?.[field] === edit) {
-          delete current[field];
+        if (current) {
+          const accepted = creating ? edits : { [field]: edit };
+          for (const key of ['name', 'targetsText'] as const) if (current[key] === accepted?.[key]) delete current[key];
           if (!current.name && !current.targetsText) environmentDrafts.delete(id);
         }
-      }
-      if (!removingEnvironments.has(id) && !view.environments.some((env) => env.id === id)) {
-        incompleteEnvironments.set(id, edited);
       }
       render(view);
     });
@@ -266,12 +288,12 @@ function queueEnvironmentWrite(write: () => Promise<void>) {
 function removeEnvironment(id: string) {
   environmentDrafts.delete(id);
   incompleteEnvironments.delete(id);
+  environmentErrors.delete(id);
   removingEnvironments.add(id);
   reconcileEnvironments(savedEnvironments);
   queueEnvironmentWrite(async () => {
     try {
-      const remaining = savedEnvironments.filter((env) => env.id !== id);
-      if (remaining.length !== savedEnvironments.length) render(await api.set({ environments: remaining }));
+      if (savedEnvironments.some((env) => env.id === id)) render(await api.set({ environment: { op: 'remove', id } }));
     } finally {
       removingEnvironments.delete(id);
       reconcileEnvironments(savedEnvironments);

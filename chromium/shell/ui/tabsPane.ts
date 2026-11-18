@@ -82,12 +82,13 @@ export function paneShortcut(e: { key: string; metaKey: boolean; ctrlKey: boolea
   return e.key === 'f' ? 'find' : e.key === 'a' ? 'selectAll' : undefined;
 }
 
-export function setupTabsPane(icon: (name: IconName) => SVGSVGElement, toast: (message: string) => void) {
+export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
   const api = window.settings;
   const pane = document.querySelector<HTMLElement>('.pane[data-pane="tabs-spaces"]')!;
   const tree = document.getElementById('tm-tree')!;
   const retryLoad = el('button', { class: 'button' }, 'Retry');
-  const loadError = el('div', { class: 'tm-empty', role: 'status', hidden: true }, 'Couldn’t load Tabs & Spaces. ', retryLoad);
+  const loadMessage = el('span', {}, 'Couldn’t load Tabs & Spaces. ');
+  const loadError = el('div', { class: 'tm-empty', role: 'status', hidden: true }, loadMessage, retryLoad);
   tree.before(loadError);
   const search = document.getElementById('tm-search') as HTMLInputElement;
   const selectionBar = document.getElementById('tm-selection')!;
@@ -95,6 +96,7 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement, toast: (m
   if (!isMac) document.getElementById('tm-modifier')!.textContent = 'Ctrl';
 
   let view: TabsView | undefined;
+  let addNeedsRefresh = false;
   /** A view that arrived mid-edit or mid-drag; drawn once that's over. */
   let pending: TabsView | undefined;
   let query = '';
@@ -115,7 +117,7 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement, toast: (m
   const lists = new Map<string, TabPlacement>();
 
   const iconButton = (name: IconName, title: string, onclick: (e: MouseEvent) => void, cls = '') =>
-    el('button', { class: `tm-icon-button ${cls}`, title, 'aria-label': title, onclick }, icon(name));
+    el('button', { class: `tm-icon-button ${cls}`, title, 'aria-label': title, onclick, disabled: addNeedsRefresh && name === 'plus' }, icon(name));
 
   function favicon(tab: Tab) {
     const site = host(tab.homeUrl ?? tab.url);
@@ -403,10 +405,12 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement, toast: (m
     const url = el('input', { class: 'tm-input url', placeholder: 'example.com', spellcheck: 'false', 'data-autofocus': '' });
     const title = el('input', { class: 'tm-input', placeholder: 'Title (optional)', spellcheck: 'false' });
     wireEditor([url, title], async () => {
-      if (!url.value.trim()) return;
+      if (addNeedsRefresh || !url.value.trim()) return;
       const result = await api.editTabs({ op: 'add', url: url.value, title: title.value, to }).catch((error: unknown) => {
         if (!(error instanceof ConnectionError) || !error.sent) throw error;
-        toast('Couldn’t confirm the new tab. Check the list before adding it again.');
+        addNeedsRefresh = true;
+        loadMessage.textContent = 'Couldn’t confirm the new tab. Refresh Tabs & Spaces before adding again. ';
+        loadError.hidden = false;
         void api.tabs().then(show, () => undefined);
         return undefined;
       });
@@ -442,6 +446,7 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement, toast: (m
   }
 
   function startAdd(listKey: string) {
+    if (addNeedsRefresh) return;
     if (listKey.startsWith('p:') || listKey.startsWith('d:')) collapsed.delete(listKey.slice(2));
     startEditing({ kind: 'add', list: listKey });
   }
@@ -468,6 +473,8 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement, toast: (m
   }
 
   function show(next: TabsView) {
+    addNeedsRefresh = false;
+    loadMessage.textContent = 'Couldn’t load Tabs & Spaces. ';
     loadError.hidden = true;
     if (editing || drag) {
       pending = next;

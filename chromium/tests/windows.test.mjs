@@ -332,6 +332,22 @@ test('loading older state preserves saved links and an unpaired tab in a closed 
   assert.equal(restored.locate(favorite.id).zone, 'today');
 });
 
+test('loading a legacy closed responsive split drops its phone and keeps its desktop selected', () => {
+  const { store, second, personal } = twoWindows();
+  const desktop = store.addTab('https://example.com/desktop', { windowId: second });
+  const phone = store.openResponsive(second);
+  store.activate(phone, { windowId: second });
+  const legacy = JSON.parse(store.serialize());
+  const window = legacy.windows.splice(legacy.windows.findIndex((window) => window.id === second), 1)[0];
+  legacy.closedWindows.push({ ...window, closedAt: Date.now() });
+  const restored = new Store({ load: () => decodeState(JSON.stringify(legacy)), save: () => {} });
+  assert.equal(restored.reopenWindow().id, second);
+  assert.equal(restored.activeSpaceIn(second).id, personal);
+  assert.equal(restored.activeSpaceIn(second).split, undefined);
+  assert.equal(restored.activeTabIn(second)?.id, desktop.id);
+  assert.equal(restored.state.tabs[phone], undefined);
+});
+
 test('undo restores a phone mirror only with its responsive pair', () => {
   const { store, first } = twoWindows();
   const desktop = store.addTab('https://example.com/desktop', { windowId: first });

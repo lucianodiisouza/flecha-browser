@@ -17,6 +17,8 @@ const status = $('status');
 const listError = $('list-error');
 const openError = $('open-error');
 const retryOpen = $('retry-open');
+const saveButton = $<HTMLButtonElement>('save');
+const deleteButton = $<HTMLButtonElement>('delete');
 
 let current: BoostFile | undefined;
 let savedCode = '';
@@ -25,10 +27,21 @@ let navigation: symbol | undefined;
 let discard: { name: string; draft: string } | undefined;
 let reconnectSelection: { name: string; fallback: string } | undefined;
 const writes = new Map<string, Promise<void>>();
+const writeRevisions = new Map<string, symbol>();
 const deleting = new Set<string>();
+const unconfirmedDeletes = new Map<string, symbol>();
+let deletedDraft: symbol | undefined;
 
 const dirty = () => !!current && code.value !== savedCode;
-const selected = () => decodeURIComponent(location.hash.slice(1));
+function selected() {
+  try { return decodeURIComponent(location.hash.slice(1)); }
+  catch { return ''; }
+}
+
+function updateEditorActions() {
+  const unavailable = !!current && (deleting.has(current.name) || deletedDraft === editorSession);
+  saveButton.disabled = deleteButton.disabled = code.readOnly = unavailable;
+}
 
 function setStatus(text: string, error = false) {
   status.textContent = text;
@@ -76,14 +89,19 @@ async function open(name: string, reload = false) {
     if (!confirm(`Discard your changes to ${current!.name}?`)) {
       discard = undefined;
       restoreHash();
-      return;
+      return false;
     }
     discard = { name, draft: oldCode };
   }
   let file: BoostFile | undefined;
+  let revision: symbol | undefined;
   try {
-    await writes.get(name);
+    for (let pending = writes.get(name); pending; pending = writes.get(name)) {
+      await pending;
+      if (!stillSelected()) return;
+    }
     if (!stillSelected()) return;
+    revision = writeRevisions.get(name);
     file = name ? await invoke<BoostFile | undefined>('boosts:get', name) : undefined;
   } catch (error) {
     if (!stillSelected()) return;
@@ -99,12 +117,13 @@ async function open(name: string, reload = false) {
   }
   if (!stillSelected()) return;
   if (editorSession === previousEditor && code.value !== oldCode) return restoreHash();
+  if (writeRevisions.get(name) !== revision) return open(name, reload);
   discard = undefined;
   openError.textContent = '';
   retryOpen.hidden = true;
   if (!reload || current?.name !== file?.name) editorSession = Symbol();
   current = file;
-  code.readOnly = !!current && deleting.has(current.name);
+  updateEditorActions();
   main.classList.toggle('empty', !current);
   document.title = current ? `${current.name} · Boosts` : 'Boosts';
   if (current) {
@@ -117,7 +136,7 @@ async function open(name: string, reload = false) {
 }
 
 function save() {
-  if (!current || deleting.has(current.name)) return;
+  if (!current || saveButton.disabled) return;
   const file = current;
   const session = editorSession;
   const draft = code.value;
@@ -139,19 +158,20 @@ function save() {
 }
 
 function queueWrite(name: string, write: () => Promise<void>) {
+  writeRevisions.set(name, Symbol());
   const pending = (writes.get(name) ?? Promise.resolve()).then(write).finally(() => {
     if (writes.get(name) === pending) writes.delete(name);
   });
   writes.set(name, pending);
 }
 
-$('save').onclick = () => void save();
-$('delete').onclick = () => {
-  if (!current || deleting.has(current.name) || !confirm(`Delete ${current.name}?`)) return;
+saveButton.onclick = () => void save();
+deleteButton.onclick = () => {
+  if (!current || deleteButton.disabled || !confirm(`Delete ${current.name}?`)) return;
   const file = current;
   const session = editorSession;
   deleting.add(file.name);
-  code.readOnly = true;
+  updateEditorActions();
   queueWrite(file.name, async () => {
     try {
       await invoke('boosts:delete', file.name);
@@ -163,14 +183,32 @@ $('delete').onclick = () => {
         document.title = 'Boosts';
       }
       if (selected() === file.name) location.hash = '';
-    } catch {
-      if (editorSession === session) setStatus('Couldn’t delete this Boost.', true);
+    } catch (error) {
+      if (error instanceof ConnectionError && error.sent) {
+        unconfirmedDeletes.set(file.name, session);
+        if (editorSession === session) setStatus('Couldn’t confirm deletion. Flecha will check after reconnecting.', true);
+      } else if (editorSession === session) setStatus('Couldn’t delete this Boost.', true);
     } finally {
-      deleting.delete(file.name);
-      if (!current || current.name === file.name) code.readOnly = false;
+      if (!unconfirmedDeletes.has(file.name)) deleting.delete(file.name);
+      updateEditorActions();
     }
   });
 };
+
+async function verifyDeletes() {
+  await Promise.allSettled([...unconfirmedDeletes].map(async ([name, session]) => {
+    const file = await invoke<BoostFile | undefined>('boosts:get', name);
+    unconfirmedDeletes.delete(name);
+    deleting.delete(name);
+    if (editorSession === session) {
+      if (!file && dirty()) {
+        deletedDraft = session;
+        setStatus('This Boost was deleted. You can still copy your draft.', true);
+      } else if (file) setStatus('This Boost is still here.');
+    }
+    updateEditorActions();
+  }));
+}
 
 $<HTMLFormElement>('new').onsubmit = async (e) => {
   e.preventDefault();
@@ -198,7 +236,7 @@ window.addEventListener('beforeunload', (e) => {
 });
 async function refresh(reload = false) {
   const name = selected();
-  if (!reload || !dirty() || name !== current?.name) await open(name, reload);
+  if ((!reload || !dirty() || name !== current?.name) && await open(name, reload) === false) return;
   await renderList();
 }
 retryOpen.onclick = () => void refresh();
@@ -213,7 +251,7 @@ onReconnect(() => {
   if (retry && retry.fallback === selected()) {
     history.replaceState(null, '', `#${encodeURIComponent(retry.name)}`);
   }
-  void refresh(true);
+  void verifyDeletes().then(() => refresh(true));
 });
 
 void refresh();

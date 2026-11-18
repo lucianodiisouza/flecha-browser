@@ -132,6 +132,22 @@ test('a split formed from existing tabs reports a change', async () => {
   assert.equal(result.changed, true);
   assert.equal(result.bookmarks, 0);
   assert.match(resultLine(result), /1 split view/);
+  const repeated = await applyBrowserImport(data, { mode: 'merge', isolate: [] }, store, noHistory);
+  assert.equal(repeated.changed, false);
+  assert.ok(repeated.details.every((detail) => !detail.includes('kept as')));
+});
+
+test('an open phone mirror does not suppress a bookmark from Merge', async () => {
+  const store = new Store({ load: () => undefined, save: () => {} });
+  store.updateSpace(store.state.spaces[0].id, { name: 'Work' });
+  store.addTab('https://example.com/');
+  const mirror = store.openResponsive();
+  const mobileUrl = 'https://mobile.example.com/';
+  store.updateTab(mirror, { url: mobileUrl });
+  const data = { name: 'Work', bookmarks: [{ kind: 'tab', url: mobileUrl, title: 'Mobile' }], bookmarkCount: 1, history: [], warnings: [] };
+  const result = await applyBrowserImport(data, { mode: 'merge', isolate: [] }, store, noHistory);
+  assert.equal(result.bookmarks, 1);
+  assert.ok(Object.values(store.state.tabs).some((tab) => tab.url === mobileUrl && tab.id !== mirror));
 });
 
 /** A one-Space sidebar whose Today holds `items` (id/object pairs) listed by `today`. */

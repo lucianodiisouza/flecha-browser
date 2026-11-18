@@ -26,7 +26,7 @@ export function searchUrl(terms: string, engine?: SearchEngineId): string {
 }
 
 export function hasAddressCredentials(input: string): boolean {
-  return /^[^:\s/?#@]+(?::[^@]*)?@/.test(input.trim());
+  return /^[^:\s/?#@]+(?::[^@]*)?@(?=\S|$)/.test(input.trim());
 }
 
 /** Turns whatever was typed in the command bar into a URL to load. */
@@ -35,21 +35,22 @@ export function resolveInput(raw: string, engine?: SearchEngineId): string {
   if (!input) return 'about:blank';
   const address = webAddress(input);
   if (address) return address;
-  // Never send apparent URL credentials to the search engine.
-  if (hasAddressCredentials(input)) return 'about:blank';
+  // Broken addresses can still contain credentials or tokens in the path and query.
+  if (hasAddressCredentials(input) || /^(?:\[[\da-f:.]+\]|localhost|[^:\s/?#@]+\.[^:\s/?#@]+)[:/?#]/i.test(input)) return 'about:blank';
   return searchUrl(input, engine);
 }
 
 /** What was typed as a URL, completed (`github.com` → `https://github.com`); undefined when it reads as a search. */
 export function webAddress(raw: string, { allowBareHost = false } = {}): string | undefined {
   const input = raw.trim();
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input) || /^(about|data|file|mailto):/i.test(input)) return input;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input) || /^(about|data|file):/i.test(input)) return input;
+  if (/^mailto:/i.test(input)) return /\s/.test(input.slice(7).split('?', 1)[0]) ? undefined : input;
   const [authority] = input.split(/[/?#]/, 1);
-  const bare = /^(\[[\da-f:.]+\]|[^:\s\\@%\[\]]+)(?::(\d+))?$/i.exec(authority);
+  const bare = /^(\[[\da-f:.]+\]|[^:\s\\@\[\]]+)(?::(\d+))?$/i.exec(authority);
   if (!bare) return undefined;
   const [, host, port] = bare;
   // In Settings the input is an address. Reserve recognized URI schemes when a single label has a port.
-  if (port && /^(blob|ftp|http|https|news|sms|tel|urn)$/i.test(host)) return undefined;
+  if (port && /^(blob|ftp|http|https|news|sms|ssh|tel|urn)$/i.test(host)) return undefined;
   try {
     const url = new URL(`https://${input}`);
     const hostname = url.hostname.replace(/\.$/, '');

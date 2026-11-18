@@ -63,8 +63,12 @@ export const hold = (tabId: number, holder: Holder): Promise<boolean> => acquire
 /** Lets go for `holder`; detaches once no feature holds the tab. */
 export async function release(tabId: number, holder: Holder, resetShared?: () => Promise<unknown>) {
   const set = holders.get(tabId);
-  if (resetShared && set?.has(holder) && set.size > 1) {
-    try { await resetShared(); } finally { await release(tabId, holder); }
+  const claim = set?.get(holder);
+  if (resetShared && set && claim && set.size > 1) {
+    try { await resetShared(); }
+    finally {
+      if (holders.get(tabId) === set && set.get(holder) === claim) await release(tabId, holder);
+    }
     return;
   }
   if (!set?.delete(holder) || set.size) return;
@@ -77,7 +81,12 @@ export async function release(tabId: number, holder: Holder, resetShared?: () =>
 
 /** Ends a stalled command's session before any holder can attach again. */
 export async function resetDebugger(tabId: number, holder: Holder) {
-  if (!holders.get(tabId)?.has(holder)) return;
+  const set = holders.get(tabId);
+  const claim = set?.get(holder);
+  if (!set || !claim) return;
+  const pending = attaching.get(tabId);
+  if (pending) await pending.catch(() => undefined);
+  if (holders.get(tabId) !== set || set.get(holder) !== claim) return;
   holders.delete(tabId);
   await detach(tabId);
   for (const fn of detachListeners) fn(tabId, 'reset');

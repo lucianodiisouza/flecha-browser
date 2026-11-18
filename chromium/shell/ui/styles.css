@@ -2,6 +2,7 @@
 
 :root {
   --sidebar: 260px;
+  --floating-sidebar-inset: 10px;
   --row: 32px;
 }
 
@@ -1886,7 +1887,7 @@ body[data-sidebar='floating'] #edge {
 }
 
 body[data-sidebar='floating'] #sidebar {
-  inset: 10px auto 10px 10px;
+  inset: var(--floating-sidebar-inset) auto var(--floating-sidebar-inset) var(--floating-sidebar-inset);
   border-radius: var(--float-radius);
   /* Kept within the view's room on the right (main.ts FLOAT_SHADOW) so it never ends in a hard edge. */
   box-shadow: 0 8px 22px rgba(7, 18, 33, 0.24), 0 1px 3px rgba(7, 18, 33, 0.12), 0 0 0 0.5px rgba(11, 37, 69, 0.2);
@@ -1915,13 +1916,15 @@ body[data-sidebar='floating'] #sidebar.peek-leaving {
    sidebar is a card on the screen's edge, full height, as in Arc. */
 
 @media (display-mode: fullscreen) {
+  :root {
+    --floating-sidebar-inset: 0px;
+  }
   .traffic-lights,
   :root[data-frame]:not([data-platform='mac']) .window-controls {
     display: none;
   }
 
   body[data-sidebar='floating'] #sidebar {
-    inset: 0 auto 0 0;
     border-radius: 0 var(--float-radius) var(--float-radius) 0;
   }
 }
@@ -2219,9 +2222,12 @@ body[data-sidebar='floating'] #sidebar.peek-leaving {
   animation: fade var(--fast) var(--ease);
 }
 
-body[data-sidebar='docked'] #split-drop,
-body[data-sidebar='floating'] #split-drop {
+body[data-sidebar='docked'] #split-drop {
   left: var(--sidebar);
+}
+
+body[data-sidebar='floating'] #split-drop {
+  left: calc(var(--sidebar) + var(--floating-sidebar-inset));
 }
 
 #split-drop[hidden] {

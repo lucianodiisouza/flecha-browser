@@ -971,12 +971,14 @@ export class Store {
       const shownElsewhere = (id: string) =>
         s.windows.some((w) => w !== win && Object.values(w.spaces).some((o) => o.activeTabId === id || o.split?.includes(id)));
       const tabByUrl = (url: string, taken?: string) => {
-        const ids = this.allTabIds(space, win.id).filter((id) => id !== taken && s.tabs[id]?.url === url && !shownElsewhere(id));
+        const ids = this.allTabIds(space, win.id).filter((id) => id !== taken && s.tabs[id]?.url === url &&
+          s.tabs[id]?.device !== 'mobile' && !shownElsewhere(id));
         return ids.find((id) => !had.has(id)) ?? ids[0];
       };
       for (const urls of imported.splits ?? []) {
         const left = tabByUrl(urls[0]);
         const right = urls.length === 2 ? tabByUrl(urls[1], left) : undefined;
+        if (left && right && ws.split?.[0] === left && ws.split[1] === right) continue;
         if (urls.length === 2 && !ws.split && left && right) {
           ws.split = [left, right];
           out.splits++;
@@ -1229,6 +1231,18 @@ export class Store {
         }
       }
     }
+    for (const win of this.state.closedWindows) {
+      for (const ws of Object.values(win.spaces)) {
+        if (ws.splitMode !== 'responsive') continue;
+        const [desktop, phone] = ws.split ?? [];
+        if (phone && !shared.has(phone) && ws.today.includes(phone) && this.state.tabs[phone]?.device === 'mobile') {
+          discarded.add(phone);
+          if (ws.activeTabId === phone) ws.activeTabId = desktop && ws.today.includes(desktop) ? desktop : undefined;
+        }
+        delete ws.split;
+        delete ws.splitMode;
+      }
+    }
     for (const tab of mobile) {
       if (mirrors.has(tab.id)) continue;
       if (discarded.has(tab.id)) {
@@ -1414,7 +1428,7 @@ export class Store {
     const ids = [...pinnedTabIds(space.pinned), ...[...this.state.windows, ...this.state.closedWindows].flatMap((w) => w.spaces[space.id]?.today ?? [])];
     return ids.flatMap((id) => {
       const tab = this.state.tabs[id];
-      return tab ? [tab.url, ...(tab.homeUrl ? [tab.homeUrl] : [])] : [];
+      return tab && tab.device !== 'mobile' ? [tab.url, ...(tab.homeUrl ? [tab.homeUrl] : [])] : [];
     });
   }
 

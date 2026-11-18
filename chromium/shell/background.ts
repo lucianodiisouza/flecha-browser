@@ -63,6 +63,7 @@ const movingFrom = new Set<number>();
  * has moved on to another tab, and must not be taken as you choosing them again.
  */
 const ourActivations = new Set<number>();
+let startupUnsplits: Array<{ tabId: number; windowId: number }> | undefined = [];
 
 async function start() {
   const saved = (await chrome.storage.local.get(STATE_KEY))[STATE_KEY];
@@ -245,7 +246,7 @@ async function start() {
   // ---- the window frame, as the Electron spike's Browser.layout() --------------
   // The frame page applies it (chrome.flechaPrivate.setFrame), since only a page knows
   // whether the system is in dark mode for the background colour. Each window has its own.
-  type Frame = { paletteMode?: string; sidebarPeek: boolean; tabDragging: boolean; overlays: Set<string> };
+  type Frame = { palette?: { mode: string; id: string }; sidebarPeek: boolean; tabDragging: boolean; overlays: Set<string> };
   const frames = new Map<number | undefined, Frame>();
   function frameOf(chromeWindowId: number | undefined): Frame {
     let frame = frames.get(chromeWindowId);
@@ -257,7 +258,7 @@ async function start() {
     const docked = store.sidebarVisibleIn(windowOf(chromeWindowId) ?? store.focusedWindowId);
     const sidebar: chrome.flechaPrivate.SidebarMode = docked ? 'docked' : frame.sidebarPeek ? 'floating' : 'hidden';
     // The frame covers the whole window while it draws over the page.
-    const overlay = !!frame.paletteMode || frame.tabDragging || frame.overlays.size > 0 || !store.state.onboarded;
+    const overlay = !!frame.palette || frame.tabDragging || frame.overlays.size > 0 || !store.state.onboarded;
     broadcastTo(chromeWindowId, 'frame', { sidebar, overlay, sidebarInPageFullscreen: !!store.state.sidebarInPageFullscreen });
   }
   const hasFrame = () => typeof chrome.flechaPrivate?.setFrame === 'function';
@@ -274,17 +275,18 @@ async function start() {
     // The tour asks you to try the real shortcuts and shows what they do.
     if (tourKey(({ 'new-tab': 'newTab', navigate: 'openLocation', split: 'splitNew' } as Record<string, string>)[mode])) return;
     const chromeWindowId = hereChrome();
-    frameOf(chromeWindowId).paletteMode = mode;
+    const palette = { mode, id: crypto.randomUUID() };
+    frameOf(chromeWindowId).palette = palette;
     sendFrame(chromeWindowId);
-    broadcastTo(chromeWindowId, 'palette', mode);
+    broadcastTo(chromeWindowId, 'palette', palette.mode, palette.id);
     if (hasFrame()) void chrome.flechaPrivate.focus('frame', chromeWindowId);
   }
 
   /** Closes a window's command bar, in its frame page too: a bar left there covers the sidebar. */
   function closePaletteIn(chromeWindowId: number | undefined) {
     const frame = frames.get(chromeWindowId);
-    if (!frame?.paletteMode) return;
-    delete frame.paletteMode;
+    if (!frame?.palette) return;
+    delete frame.palette;
     sendFrame(chromeWindowId);
     broadcastTo(chromeWindowId, 'close-palette');
   }
@@ -606,6 +608,7 @@ async function start() {
   /** Shows each window's active Flecha tab, opening its Chromium tab or bringing it over if needed. */
   let syncing = Promise.resolve();
   function sync() {
+    if (startupUnsplits) return;
     syncing = syncing
       .then(async () => {
         await partitionsKnown;
@@ -726,21 +729,24 @@ async function start() {
   }
 
   /** A split made or ended in Chromium itself (its split menu, the close button) goes to the Store. */
-  async function splitChanged(chromeId: number, splitViewId: number, chromeWindowId: number) {
+  async function splitChanged(chromeId: number, splitViewId: number, chromeWindowId: number, startup = false) {
     const id = flechaIdFor(chromeId);
     const windowId = windowOf(chromeWindowId);
     if (!id || !windowId) return;
     const pair = store.activeSpaceIn(windowId).split;
     const creating = creatingSplits.get(chromeWindowId);
     const confirmed = pair && nativePairs.get(pair);
+    const restoredPair = startup && pair?.every((id) => live.has(id) && live.get(id) === restored?.[id]);
+    const leftId = confirmed?.left ?? (restoredPair && pair ? live.get(pair[0]) : undefined);
+    const rightId = confirmed?.right ?? (restoredPair && pair ? live.get(pair[1]) : undefined);
     // An old pane can report removal before its replacement exists in Chromium.
-    if (splitViewId < 0 && (!confirmed || (chromeId !== confirmed.left && chromeId !== confirmed.right))) return;
+    if (splitViewId < 0 && (chromeId !== leftId && chromeId !== rightId)) return;
     const tabs = await chrome.tabs.query({ windowId: chromeWindowId }).catch(() => undefined);
     if (!tabs || !store.hasWindow(windowId) || store.activeSpaceIn(windowId).split !== pair) return;
-    if (splitViewId < 0 && pair && confirmed) {
+    if (splitViewId < 0 && pair) {
       if (nativePairs.get(pair) !== confirmed) return;
-      const left = tabs.find((tab) => tab.id === confirmed.left);
-      const right = tabs.find((tab) => tab.id === confirmed.right);
+      const left = tabs.find((tab) => tab.id === leftId);
+      const right = tabs.find((tab) => tab.id === rightId);
       if (left?.splitViewId !== undefined && left.splitViewId >= 0 && left.splitViewId === right?.splitViewId) return;
       exitSplit(windowId);
       return;
@@ -1124,6 +1130,7 @@ async function start() {
     await chromeWindowFor(win.id);
   }
 
+  let sidebarWidthWrites = Promise.resolve();
   handle({
     ready: sendState,
     newTab: (input: string) => openTab(input),
@@ -1238,8 +1245,9 @@ async function start() {
     toggleMute: (id: string) => toggleMute(String(id)),
     flash: (message: string) => broadcastTo(hereChrome(), 'flash', String(message)),
     openPalette: (mode: string) => openPalette(mode),
-    closePalette: () => {
+    closePalette: (id?: string) => {
       const chromeWindowId = hereChrome();
+      if (id !== undefined && frameOf(chromeWindowId).palette?.id !== id) return;
       closePaletteIn(chromeWindowId);
       if (hasFrame()) void chrome.flechaPrivate.focus('page', chromeWindowId);
     },
@@ -1250,8 +1258,15 @@ async function start() {
       store.setSidebarVisible(!store.sidebarVisibleIn(windowId), windowId);
     },
     setSidebarWidth: (width: number) => {
-      if (Number.isFinite(width)) store.setSidebarWidth(width);
-      return store.state.sidebarWidth;
+      if (!Number.isFinite(width)) return store.state.sidebarWidth;
+      const write = sidebarWidthWrites.then(async () => {
+        store.setSidebarWidth(width);
+        const saved = store.state.sidebarWidth;
+        await store.saveNow();
+        return saved;
+      });
+      sidebarWidthWrites = write.then(() => undefined, () => undefined);
+      return write;
     },
     'frame:resized': () => {
       const windowId = windowOf(callerWindow());
@@ -1503,6 +1518,7 @@ async function start() {
         if (pending) return pending.promise;
         return live.get(id) ?? (store.state.tabs[id] ? openChromeTab(id, false, store.locate(id)?.windowId ?? store.focusedWindowId) : undefined);
       },
+      liveId: (id) => live.get(id),
       activate: (id) => void store.activate(id),
       close: (id) => {
         store.closeTab(id);
@@ -1514,8 +1530,8 @@ async function start() {
 
   onConnect((port, chromeWindowId) => {
     sendState();
-    const palette = frameOf(chromeWindowId).paletteMode;
-    if (palette) sendTo(port, 'palette', palette);
+    const palette = frameOf(chromeWindowId).palette;
+    if (palette) sendTo(port, 'palette', palette.mode, palette.id);
     if (chromeWindowId !== undefined) {
       currentPeek(chromeWindowId, (peek) => sendTo(port, 'peek', peek, chromeWindowId));
     }
@@ -1579,6 +1595,9 @@ async function start() {
   });
   // Windows of the last session that Chromium didn't open again come back, with their Today tabs.
   if (freshSession) for (const win of store.state.windows) if (chromeWindowOf(win.id) === undefined) await chromeWindowFor(win.id);
+  // An unsplit can wake the worker. Apply it before reconciliation recreates a saved pair.
+  for (const { tabId, windowId } of startupUnsplits ?? []) await splitChanged(tabId, -1, windowId, true);
+  startupUnsplits = undefined;
   sync();
   wantFavicons();
   // Arc's auto-archive, hourly as in Electron. An alarm, since the background sleeps.
@@ -1632,7 +1651,10 @@ export function run(id: string, n?: number): Promise<boolean> {
 }
 registerDownloads();
 chrome.tabs.onCreated.addListener((tab) => void ready.then((r) => r.onCreated(tab)));
-chrome.tabs.onUpdated.addListener((id, info, tab) => void ready.then((r) => r.onUpdated(id, info, tab)));
+chrome.tabs.onUpdated.addListener((id, info, tab) => {
+  if (info.splitViewId !== undefined && info.splitViewId < 0) startupUnsplits?.push({ tabId: id, windowId: tab.windowId });
+  void ready.then((r) => r.onUpdated(id, info, tab));
+});
 chrome.tabs.onActivated.addListener((info) => void ready.then((r) => r.onActivated(info)));
 chrome.tabs.onRemoved.addListener((id, info) => void ready.then((r) => r.onRemoved(id, info)));
 chrome.windows.onCreated.addListener((win) => void ready.then((r) => r.onWindowCreated(win)));

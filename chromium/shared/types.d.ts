@@ -386,7 +386,11 @@ export interface SettingsView {
 }
 
 /** The downloads folder is only changed through the folder picker, never set directly. */
-export type SettingsPatch = Partial<Omit<SettingsView, 'searchEngines' | 'downloadsFolder' | 'defaultBrowser' | 'agent' | 'shortcuts' | 'notice'>> & {
+export type SettingsPatch = Partial<Omit<SettingsView, 'searchEngines' | 'downloadsFolder' | 'defaultBrowser' | 'agent' | 'shortcuts' | 'notice' | 'environments'>> & {
+  environment?:
+    | { op: 'create'; id: string; name: string; targetsText: string }
+    | { op: 'edit'; id: string; field: 'name' | 'targetsText'; value: string }
+    | { op: 'remove'; id: string };
   agentEnabled?: boolean;
   /** An accelerator, null for no shortcut, or 'default' to go back to Flecha's. */
   shortcut?: { id: string; keys: string | null };

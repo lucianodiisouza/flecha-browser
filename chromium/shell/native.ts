@@ -56,7 +56,7 @@ const peeksLoaded = has('openPeek')
       else if (Array.isArray(entry) && typeof entry[0] === 'number' && entry[1]) peeks.set(entry[0], entry[1]);
     }
     if (entries.some((entry) => typeof entry === 'number')) await chrome.storage.session.set({ [PEEKS_KEY]: [...peeks] });
-  })
+  }).catch((error) => console.warn('Flecha shell: couldn’t recover saved Peek state', error))
   : Promise.resolve();
 
 // Events go on in the module's first turn, or Chromium drops the one that woke the

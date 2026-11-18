@@ -11,6 +11,7 @@
 
 .shell-toast {
   position: fixed;
+  pointer-events: none;
   left: 50%;
   bottom: 8px;
   transform: translateX(-50%);
