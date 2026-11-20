@@ -38,6 +38,19 @@ function emit() {
     searchEngineName: ui.searchEngineName,
   };
   for (const cb of stateListeners) cb(state);
+  paintWindow(state.tint);
+}
+
+/**
+ * The window behind the page (the gap around it) wears the toolbar's tint: the browser draws
+ * it, in the colour setFrame() gives it. A Flechinha's sidebar mode is ignored, and its frame
+ * never covers the window.
+ */
+let painted: string | undefined;
+function paintWindow(tint: string) {
+  if (tint === painted || typeof chrome.flechaPrivate?.setFrame !== 'function') return;
+  painted = tint;
+  void windowId.then((id) => chrome.flechaPrivate.setFrame({ sidebar: 'hidden', overlay: false, background: tint }, id));
 }
 
 async function refresh() {
