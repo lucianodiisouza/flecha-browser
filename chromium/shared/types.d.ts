@@ -168,6 +168,8 @@ export interface BrowserState {
   downloadsFolder?: string;
   askWhereToSave?: boolean;
   environments?: Environment[];
+  /** Host patterns (`*.local`) whose tabs get no console error badge in the sidebar. */
+  consoleBadgeHiddenHosts?: string[];
   /** Built-in ad and tracker blocking; on unless turned off. */
   adBlock?: boolean;
   /** The MCP bridge for coding agents: off unless turned on in Settings. */
@@ -298,6 +300,8 @@ export interface SettingsView {
   defaultBrowser: { isDefault: boolean; canSet: boolean };
   /** Edited as text: one `label origin` per line. */
   environments: Array<{ id: string; name: string; targetsText: string }>;
+  /** Edited as text: one host pattern per line. */
+  consoleBadgeHiddenHosts: string;
   agent: { enabled: boolean; endpoint?: string; token?: string };
   /** Why Flecha's native host (imports, the agent bridge) last failed; undefined while it works. */
   hostError?: string;

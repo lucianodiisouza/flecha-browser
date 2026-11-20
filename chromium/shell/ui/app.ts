@@ -5,6 +5,7 @@ import { SPACE_COLORS, SPACE_EMOJIS } from './spaceChoices.js';
 import { SpaceSwipe } from './spaceSwipe.js';
 import { webAddress } from '../lib/url';
 import { SIDEBAR_SLIDE_MS } from '../lib/sidebarSlide';
+import { isDevUrl, showsErrorBadge } from '../lib/consoleBadge';
 import type { DownloadInfo, DropTarget, ExtensionsView, FlechaApi, HistoryEntry, PaletteMode, PeekState, PinnedNode, Space, TabInfo, UiState } from '../../shared/types';
 
 declare global {
@@ -471,10 +472,10 @@ function tabRow(tab: TabInfo, space: Space, target: DropTarget) {
   return row;
 }
 
-/** Red count of console errors, only on pages you're developing (local URLs). */
+/** Red count of console errors, only on pages you're developing (local URLs, less the hosts Settings hides). */
 function errorBadge(tab: TabInfo) {
   const count = state?.consoleErrors[tab.id];
-  if (!count || !isDevUrl(tab.url)) return null;
+  if (!count || !showsErrorBadge(tab.url, state?.consoleBadgeHiddenHosts)) return null;
   return h(
     'span',
     {
@@ -493,15 +494,6 @@ function isBoosted(url: string) {
   try {
     const { hostname } = new URL(url);
     return !!state?.boostedHosts.some((h) => h !== 'all' && (hostname === h || hostname.endsWith(`.${h}`)));
-  } catch {
-    return false;
-  }
-}
-
-function isDevUrl(url: string) {
-  try {
-    const { hostname } = new URL(url);
-    return /^(localhost|127\.0\.0\.1|\[::1\])$|\.(localhost|local|test)$/.test(hostname);
   } catch {
     return false;
   }

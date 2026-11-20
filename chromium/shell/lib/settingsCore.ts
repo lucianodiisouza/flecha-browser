@@ -6,6 +6,7 @@ import type { SettingsPatch, SettingsView } from '../../shared/types';
 import type { Store } from '../../shared/store';
 import { SEARCH_ENGINES } from './url';
 import { sanitize as sanitizeEnvironments } from './environments';
+import { parseHostPatterns } from './consoleBadge';
 import { SHORTCUTS, SPACE_MODIFIER, displayKeys, isShortcutId, keysFor, sameKeys, shortcutList } from './shortcuts';
 
 /** A modifier and a key, or a function key alone: "Alt+Cmd+K", "F5". */
@@ -59,6 +60,7 @@ export function settingsView(store: Store, env: SettingsEnvironment): SettingsVi
       name: e.name,
       targetsText: e.targets.map((t) => `${t.label} ${t.origin}`).join('\n'),
     })),
+    consoleBadgeHiddenHosts: (s.consoleBadgeHiddenHosts ?? []).join('\n'),
     searchEngines: Object.entries(SEARCH_ENGINES).map(([id, e]) => ({ id: id as keyof typeof SEARCH_ENGINES, name: e.name })),
   };
 }
@@ -98,6 +100,7 @@ export async function applySettings(store: Store, patch: SettingsPatch, effects:
     store.setSearchEngine(patch.searchEngine);
   }
   if (patch.environments !== undefined) store.setEnvironments(sanitizeEnvironments(patch.environments));
+  if (typeof patch.consoleBadgeHiddenHosts === 'string') store.setConsoleBadgeHiddenHosts(parseHostPatterns(patch.consoleBadgeHiddenHosts));
   if (patch.askWhereToSave !== undefined) store.setDownloads({ askWhereToSave: patch.askWhereToSave });
   if (patch.theme || patch.peekPinnedLinks !== undefined) {
     store.setPreferences({ theme: patch.theme, peekPinnedLinks: patch.peekPinnedLinks });
