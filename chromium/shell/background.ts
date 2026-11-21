@@ -24,7 +24,8 @@ import { registerFeatures, type Features } from './features';
 // Also loaded on the first turn, for the shortcut event that may have woken the background.
 import { defaultBrowserState, isFlechinha, isFlechinhaWindow, registerNative } from './native';
 import { registerDownloads } from './downloads';
-import { nextWindowId } from './lib/windowCycle';
+// Loaded on the first turn too: it listens for the other copy of the shell.
+import { cycleWindow } from './windowCycle';
 import { registerExtensions } from './extensions';
 import { registerSiteControls } from './siteControls';
 import { Favicons } from './favicons';
@@ -1013,18 +1014,6 @@ async function start() {
     if (!ids.length) return;
     const i = space.activeTabId ? ids.indexOf(space.activeTabId) : -1;
     store.activate(ids[(i + step + ids.length) % ids.length]);
-  }
-
-  /**
-   * Next window (lib/windowCycle.ts), from the window the keys were pressed in: main windows
-   * and Flechinhas, on any desktop. Minimized windows are left alone, as macOS leaves them.
-   */
-  async function cycleWindow(step: 1 | -1, from?: number) {
-    const windows = await chrome.windows.getAll({ windowTypes: ['normal'] });
-    const current = from ?? windows.find((w) => w.focused)?.id;
-    const ids = windows.flatMap((w) => (w.id !== undefined && (w.state !== 'minimized' || w.id === current) ? [w.id] : []));
-    const next = nextWindowId(ids, current, step);
-    if (next !== undefined) await chrome.windows.update(next, { focused: true });
   }
 
   function cycleSpace(step: 1 | -1) {
