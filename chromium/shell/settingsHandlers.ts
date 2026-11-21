@@ -170,7 +170,14 @@ export function registerSettings(ctx: SettingsContext) {
     return `${a.length}:${a[0]?.closedAt}:${a[0]?.url}:${a[a.length - 1]?.closedAt}`;
   };
   let lastArchive = archiveKey();
+  // Settings wears the active Space's colour: it asks again when that changes.
+  const tintKey = () => `${store.state.activeSpaceId}:${store.activeSpace.color}`;
+  let lastTint = tintKey();
   store.onChange(() => {
+    if (tintKey() !== lastTint) {
+      lastTint = tintKey();
+      broadcast('settings:changed');
+    }
     const key = archiveKey();
     if (key === lastArchive) return;
     lastArchive = key;
