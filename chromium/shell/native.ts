@@ -267,6 +267,8 @@ function registerPeek(ctx: NativeContext) {
  * Windows that are Flechinhas aren't Flecha's: isFlechinha(windowId) tells them apart.
  */
 const flechinhas = new Set<number>();
+/** Windows the browser has said aren't Flechinhas. */
+const notFlechinhas = new Set<number>();
 /** Whether a window is a Flechinha, from what this module has seen (synchronous, may lag). */
 export const isFlechinha = (windowId: number | undefined) => windowId !== undefined && flechinhas.has(windowId);
 /**
@@ -276,7 +278,11 @@ export const isFlechinha = (windowId: number | undefined) => windowId !== undefi
 export async function isFlechinhaWindow(windowId: number | undefined) {
   if (windowId === undefined || !has('getFlechinhas')) return false;
   if (flechinhas.has(windowId)) return true;
-  return (await chrome.flechaPrivate.getFlechinhas()).includes(windowId);
+  if (notFlechinhas.has(windowId)) return false;
+  // A window is a Flechinha from the start or never, so one answer per window is enough.
+  const is = (await chrome.flechaPrivate.getFlechinhas()).includes(windowId);
+  (is ? flechinhas : notFlechinhas).add(windowId);
+  return is;
 }
 
 function registerFlechinha(ctx: NativeContext) {
@@ -295,7 +301,7 @@ function registerFlechinha(ctx: NativeContext) {
     ctx.store.onChange(applyLinks);
   }
   void chrome.flechaPrivate.getFlechinhas().then((ids) => ids.forEach((id) => flechinhas.add(id)));
-  chrome.windows.onRemoved.addListener((id) => flechinhas.delete(id));
+  chrome.windows.onRemoved.addListener((id) => (flechinhas.delete(id), notFlechinhas.delete(id)));
 
   async function open(url?: string, flechaId?: string) {
     const tabId = flechaId !== undefined ? ctx.chromeTabId?.(flechaId) : undefined;
