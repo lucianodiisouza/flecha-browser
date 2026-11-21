@@ -66,18 +66,14 @@
    if (!widget) {
 --- a/chrome/browser/ui/views/frame/flecha_frame_view.cc
 +++ b/chrome/browser/ui/views/frame/flecha_frame_view.cc
-@@ -247,6 +247,7 @@
- };
- 
- #if !BUILDFLAG(IS_MAC)
-+void KeepFlechaWindowOnActiveDesktop(views::Widget* widget) {}
- void SetFlechaTrafficLights(views::Widget* widget,
-                             const FlechaFrameState* state) {}
- #endif
-@@ -553,6 +554,10 @@
+@@ -553,6 +553,14 @@
    }
  }
  
++#if !BUILDFLAG(IS_MAC)
++void KeepFlechaWindowOnActiveDesktop(views::Widget* widget) {}
++#endif
++
 +void FlechaFrameView::StayOnActiveDesktop() {
 +  KeepFlechaWindowOnActiveDesktop(GetWidget());
 +}
