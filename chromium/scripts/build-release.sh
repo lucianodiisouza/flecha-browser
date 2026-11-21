@@ -17,8 +17,9 @@
 #      for the app's Contents/Frameworks (patch 0053);
 #   4. writes out/Release/args.gn from chromium/build/release.gn plus Flecha's version
 #      (package.json) and build number (see below), only when it changes, so a re-run doesn't
-#      regenerate. FLECHA_OFFICIAL=1 adds is_official_build = true: ThinLTO, slower still,
-#      and a full rebuild when switched;
+#      regenerate. Fetches the pinned Chromium and V8 PGO profiles before GN runs.
+#      FLECHA_PGO=0 skips these downloads and builds without PGO, keeping the official
+#      build settings;
 #   5. autoninja -C out/Release chrome, under caffeinate so the Mac doesn't sleep;
 #   6. package-release.sh: copies the app to out/Release/flecha-release/Flecha, adds the
 #      native host (with its Node) and signs it all, ad hoc unless FLECHA_SIGN_IDENTITY names
@@ -114,6 +115,21 @@ step "$(basename "$out")/args.gn"
 args="$(sed -e "s/^target_cpu = .*/target_cpu = \"$FLECHA_ARCH\"/" \
   -e "s|^flecha_sparkle_feed_url = \"https://flecha.dev/appcast.xml\"|flecha_sparkle_feed_url = \"https://flecha.dev/$release_feed\"|" \
   "$here/build/release.gn")"
+if [ "${FLECHA_PGO:-1}" = 0 ]; then
+  args="${args/chrome_pgo_phase = 2/chrome_pgo_phase = 0}"
+else
+  step "PGO profiles for $FLECHA_ARCH"
+  pgo_target=mac
+  if [ "$FLECHA_ARCH" = arm64 ]; then
+    pgo_target=mac-arm
+  fi
+  # Run only the relevant Chromium DEPS hooks so an existing .gclient needs no changes.
+  (cd "$src" &&
+    python3 tools/update_pgo_profiles.py "--target=$pgo_target" update \
+      --gs-url-base=chromium-optimization-profiles/pgo_profiles &&
+    python3 v8/tools/builtins-pgo/download_profiles.py download \
+      --depot-tools third_party/depot_tools --check-v8-revision --quiet)
+fi
 # Flecha's own version (patch 0052): package.json's "version" is the one source of it, the
 # app's CFBundleShortVersionString. Its CFBundleVersion, which Sparkle compares to decide
 # what is newer, is Chromium's BUILD.PATCH plus a build counter: the number of commits in
@@ -125,10 +141,6 @@ flecha_build_number="${FLECHA_BUILD_NUMBER:-$(git -C "$root" rev-list --count HE
 args="$args
 flecha_version = \"$flecha_version\"
 flecha_build_number = \"$flecha_build_number\""
-if [ "${FLECHA_OFFICIAL:-0}" = 1 ]; then
-  args="$args
-is_official_build = true"
-fi
 if [ -f "$out/args.gn" ] && [ "$(cat "$out/args.gn")" = "$args" ]; then
   echo "unchanged"
 else

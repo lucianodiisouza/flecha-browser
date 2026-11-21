@@ -7,6 +7,7 @@ import { spaceTint } from './lib/spaceTint';
 import { SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth } from '../shared/sidebarWidth';
 import { cmd, invoke, on, onReconnect } from './client';
 import { ConnectionError } from './protocol';
+import { applyStateUpdate, type StateUpdate } from './stateUpdates';
 import { toast } from './settingsUi';
 import { confirmDeleteSpace, copy, hasWindowOverlay, setupWindowUi, showMenu } from './windowUi';
 import { incognito } from './incognito';
@@ -17,6 +18,7 @@ const surface = document.documentElement.dataset.surface;
 const systemDark = matchMedia('(prefers-color-scheme: dark)');
 /** Flecha's own browser draws the window frame from window.html; stock Chromium has the side panel. */
 const framed = typeof chrome.flechaPrivate?.setFrame === 'function';
+const windowFrame = surface === 'window' && framed;
 if (framed) document.documentElement.dataset.frame = '';
 // An incognito window's pages: one Space of tabs, always dark (shell.css, incognito.ts).
 if (incognito) document.documentElement.dataset.incognito = '';
@@ -29,6 +31,7 @@ if (incognito) document.documentElement.dataset.incognito = '';
 const stateListeners: Array<(state: UiState) => void> = [];
 let lastState: UiState | undefined;
 function emitState(state: UiState) {
+  if (state.sidebarMode === 'docked') sidebarPeek = false;
   lastState = state;
   const shown = { ...state, tint: spaceTint(state.tint, systemDark.matches), faviconUrls: siteIcons };
   for (const cb of stateListeners) cb(shown);
@@ -39,14 +42,17 @@ on('state', (state: UiState) => {
     widthNeedsSnapshot = false;
     resizing = undefined;
   }
-  if (state.sidebarMode === 'docked') sidebarPeek = false;
   emitState(state);
+});
+on('state-update', (update: StateUpdate) => {
+  if (lastState) emitState(applyStateUpdate(lastState, update));
 });
 
 /** Icons the background fetched from the sites themselves, by host; they arrive once each. */
-const siteIcons: Record<string, string> = {};
+let siteIcons: Record<string, string> = {};
 on('site-icons', (icons: Record<string, string>) => {
-  Object.assign(siteIcons, icons);
+  if (!Object.entries(icons).some(([host, url]) => siteIcons[host] !== url)) return;
+  siteIcons = { ...siteIcons, ...icons };
   if (lastState) emitState(lastState);
 });
 
@@ -54,37 +60,58 @@ on('site-icons', (icons: Record<string, string>) => {
 let frameState: { sidebar: chrome.flechaPrivate.SidebarMode; overlay: boolean; sidebarInPageFullscreen: boolean } | undefined;
 /** The width the sidebar is being dragged to, until the saved state has it. */
 let resizing: number | undefined;
-const windowId = surface === 'window' && framed ? chrome.flechaPrivate.getWindowId() : undefined;
 let resizeRevision = 0;
 let widthNeedsSnapshot = false;
 let sidebarPeek = false;
 const measure = typeof chrome.flechaPrivate?.setSplitRatio === 'function' ? () => void invoke('frame:resized').catch(() => undefined) : undefined;
 let measuredLayout: string | undefined;
-if (windowId && measure) {
+if (windowFrame && measure) {
   // The frame's viewport changes after Chromium lays out the sidebar and panes.
   window.addEventListener('resize', measure);
   // A new native split reports membership before the panes have both resized.
   on('split-layout', () => requestAnimationFrame(measure));
 }
+let windowId: Promise<number> | undefined;
+function getWindowId() {
+  return windowId ??= chrome.flechaPrivate.getWindowId().catch(error => {
+    windowId = undefined;
+    throw error;
+  });
+}
+let appliedFrame: { background: string; sidebarWidth: number; sidebar: chrome.flechaPrivate.SidebarMode; overlay: boolean } | undefined;
+let appliedFullscreen: { value: boolean } | undefined;
 function applyFrame() {
-  if (!windowId || !frameState || !lastState) return;
+  if (!windowFrame || !frameState || !lastState) return;
   const background = spaceTint(lastState.tint, systemDark.matches);
   const sidebarWidth = resizing ?? lastState.sidebarWidth ?? SIDEBAR_DEFAULT_WIDTH;
-  document.documentElement.style.setProperty('--sidebar', `${sidebarWidth}px`);
   const { sidebarInPageFullscreen, sidebar } = frameState;
   const overlay = frameState.overlay || hasWindowOverlay() || document.getElementById('split-drop')?.hidden === false;
   const layout = `${sidebar}:${sidebarWidth}:${sidebarInPageFullscreen}`;
-  void windowId.then((id) => {
-    const apply = chrome.flechaPrivate.setFrame({ sidebar, overlay, background, sidebarWidth }, id);
-    // Patch 0072; a browser without it lays out a page's full screen as the sidebar's mode says.
-    const fullscreen = chrome.flechaPrivate.setSidebarInPageFullscreen?.(sidebarInPageFullscreen, id);
-    void Promise.allSettled(fullscreen ? [apply, fullscreen] : [apply]).then((results) => {
-      if (!measure || (!incognito && chrome.flechaPrivate.onSplitAreaResized) || measuredLayout === layout) return;
-      if (!results.some((result) => result.status === 'fulfilled')) return;
-      if (results.every((result) => result.status === 'fulfilled')) measuredLayout = layout;
-      // Older builds invalidate native layout without reporting the new pane bounds.
-      requestAnimationFrame(() => requestAnimationFrame(measure));
-    });
+  const requests: Promise<unknown>[] = [];
+  if (appliedFrame?.sidebarWidth !== sidebarWidth) document.documentElement.style.setProperty('--sidebar', `${sidebarWidth}px`);
+  if (!appliedFrame || appliedFrame.background !== background || appliedFrame.sidebarWidth !== sidebarWidth ||
+      appliedFrame.sidebar !== sidebar || appliedFrame.overlay !== overlay) {
+    const next = appliedFrame = { sidebar, overlay, background, sidebarWidth };
+    requests.push(getWindowId().then(id => chrome.flechaPrivate.setFrame(next, id)).catch((error: unknown) => {
+      if (appliedFrame === next) appliedFrame = undefined;
+      throw error;
+    }));
+  }
+  // Patch 0072; older browsers lay out fullscreen according to the sidebar's mode.
+  if (appliedFullscreen?.value !== sidebarInPageFullscreen && typeof chrome.flechaPrivate.setSidebarInPageFullscreen === 'function') {
+    const next = appliedFullscreen = { value: sidebarInPageFullscreen };
+    requests.push(getWindowId().then(id => chrome.flechaPrivate.setSidebarInPageFullscreen(next.value, id)).catch((error: unknown) => {
+      if (appliedFullscreen === next) appliedFullscreen = undefined;
+      throw error;
+    }));
+  }
+  if (!requests.length) return;
+  void Promise.allSettled(requests).then((results) => {
+    if (!measure || (!incognito && chrome.flechaPrivate.onSplitAreaResized) || measuredLayout === layout) return;
+    if (!results.some(result => result.status === 'fulfilled')) return;
+    if (results.every(result => result.status === 'fulfilled')) measuredLayout = layout;
+    // Older builds invalidate native layout without reporting the new pane bounds.
+    requestAnimationFrame(() => requestAnimationFrame(measure));
   });
 }
 on('frame', (state) => {
@@ -101,7 +128,7 @@ on('palette', (mode: PaletteMode, id: string) => {
   for (const listen of paletteListeners) listen(mode);
 });
 onReconnect(() => {
-  if (!windowId) return;
+  if (!windowFrame) return;
   if (dismissedPalette) cmd('closePalette')(dismissedPalette);
   cmd('setSidebarPeek')(sidebarPeek);
 });

@@ -1,6 +1,6 @@
 /**
  * The background side of the shell's messaging. Every Flecha page (sidebar, Settings, …)
- * connects a port named "flecha"; commands are fire-and-forget, invokes get a reply, and
+ * connects a port for its surface; commands are fire-and-forget, invokes get a reply, and
  * events go out to every connected page, or to the pages of one window. Feature modules
  * register their own handlers, so they never need to touch one shared switch.
  *
@@ -34,7 +34,19 @@ export function asWindow<T>(windowId: number | undefined, fn: () => T): T {
 }
 
 /** The windows that have Flecha pages open, and undefined when some page has none. */
-export const pageWindows = () => new Set(ports.values());
+export function statePages() {
+  const windows = new Map<number | undefined, chrome.runtime.Port[]>();
+  for (const [port, id] of ports) {
+    if (port.name !== 'flecha' && port.name !== 'flecha-sidebar' && port.name !== 'flecha-toolbar') continue;
+    const list = windows.get(id);
+    if (list) list.push(port);
+    else windows.set(id, [port]);
+  }
+  return windows;
+}
+
+export const settingsOpen = () => [...ports.keys()].some(port => port.name === 'flecha-settings' || port.name === 'flecha');
+export const connected = (port: chrome.runtime.Port) => ports.has(port);
 
 function windowOf(port: chrome.runtime.Port): number | undefined {
   if (port.sender?.tab?.windowId !== undefined) return port.sender.tab.windowId;
@@ -73,10 +85,11 @@ export function run(name: string, ...args: unknown[]) {
   return true;
 }
 
-function post(port: chrome.runtime.Port, message: Message) {
-  if (!ports.has(port)) return;
+function post(port: chrome.runtime.Port, message: Message): boolean {
+  if (!connected(port)) return false;
   try {
     port.postMessage(message);
+    return true;
   } catch (error) {
     // Chromium reports serialization failures as ordinary errors without closing the port.
     if (error instanceof Error && (error.message === 'Could not serialize message.' ||
@@ -84,20 +97,24 @@ function post(port: chrome.runtime.Port, message: Message) {
       if (message.type === 'result' && message.error === undefined) {
         post(port, { type: 'result', id: message.id, error: error.message });
       }
-      return;
+      return false;
     }
     ports.delete(port);
     try { port.disconnect(); } catch { /* The port may already be closed. */ }
+    return false;
   }
 }
 
 export function sendTo(port: chrome.runtime.Port, name: string, ...args: unknown[]) {
-  post(port, { type: 'event', name, args });
+  return post(port, { type: 'event', name, args });
 }
 
 export function broadcast(name: string, ...args: unknown[]) {
   const message: Message = { type: 'event', name, args };
-  for (const port of ports.keys()) post(port, message);
+  for (const port of ports.keys()) {
+    if (name === 'settings:tabs' && port.name !== 'flecha-settings' && port.name !== 'flecha') continue;
+    post(port, message);
+  }
 }
 
 /** Sends an event to the pages of one window (undefined: the pages that are in none). */
@@ -119,7 +136,7 @@ export function listen(ready: Promise<unknown>) {
     return false;
   });
   chrome.runtime.onConnect.addListener(async (port) => {
-    if (port.name !== 'flecha') return;
+    if (!['flecha', 'flecha-sidebar', 'flecha-toolbar', 'flecha-settings', 'flecha-page'].includes(port.name)) return;
     let connected = true;
     port.onDisconnect.addListener(() => {
       connected = false;

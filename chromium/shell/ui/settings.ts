@@ -1,8 +1,7 @@
 import type { RecordedKey, SettingsApi, SettingsView } from '../../shared/types';
 import { ICONS, type IconName } from './icons.js';
-import { setupTabsPane } from './tabsPane.js';
-import { setupVsrPane } from './vsrPane.js';
 import { setupDebugPane } from './debugPane.js';
+import { lazySettingsPane } from './lazySettingsPane';
 import { isEnter } from '../lib/keys';
 import { importFromBrowser } from '../windowUi';
 import { onReconnect } from '../client';
@@ -16,7 +15,6 @@ declare global {
 }
 
 const api = window.settings;
-setupVsrPane(api);
 setupDebugPane(api);
 
 function icon(name: IconName) {
@@ -26,20 +24,27 @@ function icon(name: IconName) {
   return el;
 }
 
-setupTabsPane(icon);
-
 for (const el of document.querySelectorAll<HTMLElement>('i[data-icon]')) el.replaceWith(icon(el.dataset.icon as IconName));
 
 // ---- navigation: one pane at a time, like System Settings ----------------------
 
 let lastShown = 'general';
+const lazyPanes = new Map([
+  ['tabs-spaces', lazySettingsPane(() => import('./tabsPane.js'), m => m.setupTabsPane(icon))],
+  ['video', lazySettingsPane(() => import('./vsrPane.js'), m => m.setupVsrPane(api))],
+]);
 
 function showPane(name: string) {
   closeSearch();
   const item = document.querySelector<HTMLElement>(`.nav-item[data-pane="${name}"]`) ?? document.querySelector<HTMLElement>('.nav-item')!;
+  const title = item.textContent!.trim();
+  const load = lazyPanes.get(item.dataset.pane!);
   for (const el of document.querySelectorAll<HTMLElement>('.nav-item')) el.classList.toggle('selected', el === item);
-  for (const pane of document.querySelectorAll<HTMLElement>('.pane')) pane.hidden = pane.dataset.pane !== item.dataset.pane;
-  document.getElementById('pane-title')!.textContent = item.textContent!.trim();
+  for (const pane of document.querySelectorAll<HTMLElement>('.pane')) {
+    pane.hidden = pane.dataset.pane !== item.dataset.pane;
+    if (!pane.hidden) void load?.(pane, title);
+  }
+  document.getElementById('pane-title')!.textContent = title;
   try {
     lastShown = item.dataset.pane!;
     localStorage.setItem('pane', item.dataset.pane!);

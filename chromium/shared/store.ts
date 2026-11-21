@@ -101,6 +101,12 @@ function used(tab: TabInfo) {
  * sound), which never changes which tabs are open or on screen; 'structure' is everything else.
  */
 export type StoreChange = 'structure' | 'tab';
+/** Only changes with known ownership can skip global layout reconciliation. */
+type ChangeDetail =
+  | { kind: 'metadata'; tabId: string; keys: (keyof TabInfo)[] }
+  | { kind: 'activation'; windowId: string; tabId: string }
+  | { kind: 'focus' };
+type ChangeListener = (change: StoreChange, detail?: ChangeDetail) => void;
 
 /**
  * Flecha's Spaces, tabs and windows. Spaces, their pinned tabs and the favorites are shared by
@@ -111,7 +117,7 @@ export type StoreChange = 'structure' | 'tab';
 export class Store {
   state: BrowserState;
   private saveTimer?: ReturnType<typeof setTimeout>;
-  private listeners: Array<(change: StoreChange) => void> = [];
+  private listeners: ChangeListener[] = [];
   /** In memory only: a restart starts without undo. */
   private undoSteps: UndoStep[] = [];
   /** While an undoable change runs: the archive entries it makes, by tab, and what it moves. */
@@ -123,7 +129,7 @@ export class Store {
     this.normalizePhoneTabs();
   }
 
-  onChange(fn: (change: StoreChange) => void) {
+  onChange(fn: ChangeListener) {
     this.listeners.push(fn);
   }
 
@@ -157,7 +163,7 @@ export class Store {
     const i = this.state.windows.findIndex((w) => w.id === windowId);
     if (i <= 0) return;
     this.state.windows.unshift(...this.state.windows.splice(i, 1));
-    this.changed();
+    this.changed('structure', true, { kind: 'focus' });
   }
 
   /**
@@ -321,7 +327,8 @@ export class Store {
     if (loc.zone !== 'today') this.claim(tabId, win);
     this.windowSpace(win.activeSpaceId, win.id).activeTabId = tabId;
     if (opts.recent !== false) used(tab);
-    this.changed();
+    // Claiming a shared tab can end splits in other windows.
+    this.changed('structure', true, loc.zone === 'today' ? { kind: 'activation', windowId: win.id, tabId } : undefined);
     return win.id;
   }
 
@@ -330,7 +337,7 @@ export class Store {
     const tab = this.state.tabs[tabId];
     if (!tab) return;
     used(tab);
-    this.changed();
+    this.changed('tab', true, { kind: 'metadata', tabId, keys: ['lastActive', 'unseen'] });
   }
 
   /**
@@ -345,11 +352,11 @@ export class Store {
   updateTab(tabId: string, patch: Partial<TabInfo>) {
     const tab = this.state.tabs[tabId];
     if (!tab) return;
-    const keys = Object.keys(patch) as Array<keyof TabInfo>;
-    if (keys.every((k) => tab[k] === patch[k])) return;
-    const persist = keys.some((k) => k !== 'loading' && k !== 'audible' && tab[k] !== patch[k]);
+    const keys = (Object.keys(patch) as Array<keyof TabInfo>).filter((k) => tab[k] !== patch[k]);
+    if (!keys.length) return;
+    const persist = keys.some((k) => k !== 'loading' && k !== 'audible');
     Object.assign(tab, patch);
-    this.changed('tab', persist);
+    this.changed('tab', persist, { kind: 'metadata', tabId, keys });
   }
 
   /**
@@ -1308,21 +1315,26 @@ export class Store {
     return { id: randomUUID(), activeSpaceId: spaceId ?? '', spaces: {} };
   }
 
-  private changed(change: StoreChange = 'structure', persist = true) {
+  private changed(change: StoreChange = 'structure', persist = true, detail?: ChangeDetail) {
     for (const win of this.state.windows) {
-      for (const space of this.state.spaces) {
-        const ws = win.spaces[space.id];
-        // A split ends as soon as either half leaves the Space.
-        if (ws?.split && !ws.split.every((id) => this.allTabIds(space, win.id).includes(id))) {
+      for (const [spaceId, ws] of Object.entries(win.spaces)) {
+        if (!ws.split) continue;
+        // Repair even on a metadata event: restored or externally changed layout
+        // may already be inconsistent. Most pairs are local Today tabs.
+        let pinned: string[] | undefined;
+        if (!ws.split.every(id => ws.today.includes(id) || this.state.favorites.includes(id) ||
+            (pinned ??= pinnedTabIds(this.savedSpace(spaceId)?.pinned ?? [])).includes(id))) {
           this.discardResponsiveMirror(ws);
           delete ws.split;
           delete ws.splitMode;
           persist = true;
+          change = 'structure';
+          detail = undefined;
         }
       }
     }
     if (persist) this.scheduleSave();
-    for (const fn of this.listeners) fn(change);
+    for (const fn of this.listeners) fn(change, detail);
   }
 
   private scheduleSave() {

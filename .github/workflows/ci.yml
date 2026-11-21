@@ -37,10 +37,17 @@ jobs:
       - run: npm run typecheck
       - run: npm run typecheck:tsrs
       - run: npm test
-      # Node 24's HTTP client can abort while downloading the adblock lists.
       - uses: actions/setup-node@v7
         with:
           node-version: 26
+      - name: Compute the adblock cache bucket
+        id: adblock-cache
+        run: node --input-type=module -e "import { adblockCacheBucket } from './chromium/shell/build-adblock.mjs'; console.log('bucket=' + adblockCacheBucket())" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: chromium/shell/.cache/adblock
+          key: adblock-ci-${{ runner.os }}-${{ steps.adblock-cache.outputs.bucket }}
+          restore-keys: adblock-ci-${{ runner.os }}-
       - run: npm run shell:build
       - run: npm run host:build
       # Patches are left out: their context lines keep Chromium's own trailing spaces.
@@ -61,13 +68,10 @@ jobs:
         with:
           node-version: 26
           cache: npm
-      - name: Select Xcode before removing unused SDKs
+      - name: Select release Xcode
         if: runner.os == 'macOS'
         run: sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
-      - name: Verify cleanup on the hosted macOS image
-        if: runner.os == 'macOS'
-        run: node chromium/scripts/ci-cleanup.mjs
-      - name: Verify selected macOS toolchain survived cleanup
+      - name: Verify selected Xcode and macOS SDK
         if: runner.os == 'macOS'
         run: |
           xcodebuild -version
@@ -77,31 +81,53 @@ jobs:
         shell: bash
         run: chromium/scripts/check-patches.sh
       - run: npm ci
-      - run: node --test chromium/tests/ci-release.test.mjs chromium/tests/ci-setup.test.mjs
+      - run: node --test chromium/tests/ci-release.test.mjs chromium/tests/ci-setup.test.mjs chromium/tests/ci-stage-zero.test.mjs chromium/tests/build-adblock.test.mjs
+      - name: Compute the adblock cache bucket
+        id: adblock-cache
+        shell: bash
+        run: node --input-type=module -e "import { adblockCacheBucket } from './chromium/shell/build-adblock.mjs'; console.log('bucket=' + adblockCacheBucket())" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v6
+        if: runner.os == 'Linux'
+        with:
+          path: chromium/shell/.cache/adblock
+          key: adblock-ci-${{ runner.os }}-${{ steps.adblock-cache.outputs.bucket }}
+          restore-keys: adblock-ci-${{ runner.os }}-
+      - uses: actions/cache@v6
+        if: runner.os != 'Linux'
+        with:
+          path: chromium/shell/.cache/adblock
+          key: adblock-ci-${{ runner.os }}-${{ steps.adblock-cache.outputs.bucket }}
+          restore-keys: adblock-ci-${{ runner.os }}-
       - run: npm run shell:build
       - run: npm run host:build
 
   scripts:
-    name: Shellcheck
+    name: Workflows, shell scripts and Chromium patches
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       # ubuntu-latest comes with shellcheck; .shellcheckrc lets it follow `. env.sh`.
-      - run: git ls-files -z '*.sh' | xargs -0 shellcheck -x -S warning
-
-  patches:
-    name: Patches apply to Chromium
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - run: chromium/scripts/check-patches.sh
+      - name: Shellcheck
+        run: git ls-files -z '*.sh' | xargs -0 shellcheck -x -S warning
+      - name: Lint GitHub Actions workflows
+        shell: bash
+        run: |
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl -fsSL https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$archive"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" .github/workflows/*.yml
+      - name: Patches apply to Chromium
+        run: chromium/scripts/check-patches.sh
 
   ci-passed:
     name: CI passed
     if: always()
-    needs: [shell-and-host, release-scripts, scripts, patches]
+    needs: [shell-and-host, release-scripts, scripts]
     runs-on: ubuntu-latest
     steps:
-      - name: Every check passed
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
-        run: exit 1
+      - name: Require every check to pass
+        if: always()
+        env:
+          ALL_PASSED: ${{ needs.shell-and-host.result == 'success' && needs.release-scripts.result == 'success' && needs.scripts.result == 'success' }}
+        run: test "$ALL_PASSED" = true

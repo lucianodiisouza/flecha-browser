@@ -82,8 +82,9 @@ export function paneShortcut(e: { key: string; metaKey: boolean; ctrlKey: boolea
   return e.key === 'f' ? 'find' : e.key === 'a' ? 'selectAll' : undefined;
 }
 
-export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
+export async function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
   const api = window.settings;
+  const initialView = await api.tabs().catch(() => undefined);
   const pane = document.querySelector<HTMLElement>('.pane[data-pane="tabs-spaces"]')!;
   const tree = document.getElementById('tm-tree')!;
   const retryLoad = el('button', { class: 'button' }, 'Retry');
@@ -108,6 +109,7 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
   let editing: Editing | undefined;
   let drag: Drag | undefined;
   let drop: { edit: TabsEdit; target: HTMLElement; cls: string } | undefined;
+  let spaceEditor: { spaceId: string; anchor: HTMLElement; node: HTMLElement } | undefined;
   /** Collapsed folders and Spaces. Folders start as they are in the sidebar. */
   const collapsed = new Set<string>();
   const seenFolders = new Set<string>();
@@ -563,6 +565,7 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
     else if (request.tabIds?.length === 1) startEditing({ kind: 'tab', id: request.tabIds[0], focus: action === 'edit' ? 'url' : 'title' });
   }
 
+
   tree.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
     if (target.closest('button, input')) return;
@@ -842,8 +845,6 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
 
   // ---- Space editor: name, icon and colour -----------------------------------------------
 
-  let spaceEditor: { spaceId: string; anchor: HTMLElement; node: HTMLElement } | undefined;
-
   function openSpaceEditor(spaceId: string, anchorEl: HTMLElement) {
     closeSpaceEditor();
     const node = el('div', { class: 'tm-popover', role: 'dialog', 'aria-label': 'Edit Space' });
@@ -944,5 +945,6 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
   const load = () => void api.tabs().then(show, failed);
   retryLoad.onclick = load;
   api.onTabs(show, failed);
-  load();
+  if (initialView) show(initialView);
+  else failed();
 }

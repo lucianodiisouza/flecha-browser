@@ -7,6 +7,14 @@ import { toast } from './settingsUi';
 
 type Reply = { resolve: (value: unknown) => void; reject: (error: Error) => void };
 type Connection = { port: chrome.runtime.Port; replies: Map<number, Reply>; openedAt: number };
+export function portForPage(path: string, surface: string | undefined): string {
+  if (path === '/flechinha.html') return 'flecha-toolbar';
+  // The window, side panel and new-tab surfaces consume the tab collection.
+  if (surface) return 'flecha-sidebar';
+  if (path === '/settings.html') return 'flecha-settings';
+  return 'flecha-page';
+}
+
 const listeners = new Map<string, Array<(...args: any[]) => void>>();
 const reconnectListeners = new Set<() => void>();
 let nextId = 1;
@@ -45,7 +53,7 @@ function connect() {
   if (typeof chrome.runtime?.connect !== 'function') return stop();
   let port: chrome.runtime.Port;
   try {
-    port = chrome.runtime.connect({ name: 'flecha' });
+    port = chrome.runtime.connect({ name: portForPage(location.pathname, document.documentElement.dataset.surface) });
   } catch (error) {
     if (error instanceof Error && contextInvalidated(error.message)) stop();
     else scheduleRetry();

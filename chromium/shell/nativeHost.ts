@@ -259,7 +259,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
       setHostError(NOT_INSTALLED);
     }
   }
-  store.onChange(syncAgent);
+  store.onChange((_change, detail) => { if (!detail) syncAgent(); });
   syncAgent();
 
   function showActivity(tabId: string | undefined, action: string) {

@@ -19,9 +19,11 @@ test('worker restart resumes shell messages and a bad payload leaves other repli
   let transportError;
   const toast = {};
   globalThis.window = { addEventListener() {}, setTimeout: (...args) => setTimeout(...args) };
-  globalThis.document = { querySelector: () => toast };
+  globalThis.location = { pathname: '/window.html' };
+  globalThis.document = { documentElement: { dataset: { surface: 'window' } }, querySelector: () => toast };
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
-  globalThis.chrome = { runtime: { connect() {
+  globalThis.chrome = { runtime: { connect({ name }) {
+    assert.equal(name, 'flecha-sidebar');
     if (++attempts === 2) throw new Error('Worker still starting');
     const port = {
       sent: [], onDisconnect: event(), onMessage: event(), disconnect: () => port.onDisconnect.emit(),
@@ -37,6 +39,7 @@ test('worker restart resumes shell messages and a bad payload leaves other repli
     delete globalThis.chrome;
     delete globalThis.window;
     delete globalThis.document;
+    delete globalThis.location;
   });
   const { cmd, invoke, on, onReconnect } = await loadModule('chromium/shell/client.ts');
   let reconnects = 0;
@@ -142,7 +145,8 @@ test('failed startup tells the page to restart and does not reconnect or run buf
   const connecting = event();
   const toast = {};
   globalThis.window = { addEventListener() {}, setTimeout: (...args) => setTimeout(...args) };
-  globalThis.document = { querySelector: () => toast };
+  globalThis.location = { pathname: '/settings.html' };
+  globalThis.document = { documentElement: { dataset: {} }, querySelector: () => toast };
   const disconnect = t.mock.fn(() => {
     client.onDisconnect.emit();
     server.onDisconnect.emit();
@@ -152,15 +156,21 @@ test('failed startup tells the page to restart and does not reconnect or run buf
     postMessage: (message) => server.onMessage.emit(message),
   };
   const server = {
-    name: 'flecha', onMessage: event(), onDisconnect: event(), disconnect,
+    name: '', onMessage: event(), onDisconnect: event(), disconnect,
     postMessage: (message) => client.onMessage.emit(message),
   };
-  const connect = t.mock.fn(() => { connecting.emit(server); return client; });
+  const connect = t.mock.fn(({ name }) => {
+    assert.equal(name, 'flecha-settings');
+    server.name = name;
+    connecting.emit(server);
+    return client;
+  });
   globalThis.chrome = { runtime: { onConnect: connecting, connect } };
   t.after(() => {
     delete globalThis.chrome;
     delete globalThis.window;
     delete globalThis.document;
+    delete globalThis.location;
   });
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   t.mock.method(console, 'error', () => {});
@@ -480,7 +490,7 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   const globals = {
     chrome: { runtime: { connect: () => port } },
-    document: { getElementById: node, querySelector: node, createElement: element, addEventListener() {} },
+    document: { documentElement: { dataset: {} }, getElementById: node, querySelector: node, createElement: element, addEventListener() {} },
     window: { addEventListener: (type, fn) => handlers.set(type, fn) },
     location,
     history: { replaceState: (_state, _title, hash) => { location.hash = hash; } },

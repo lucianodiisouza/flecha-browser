@@ -164,7 +164,8 @@ h1 {
   padding: 6px 28px 28px;
 }
 
-.pane[hidden] {
+.pane[hidden],
+.pane-load-failed > :not(.pane-load-error) {
   display: none;
 }
 
