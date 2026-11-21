@@ -1,0 +1,147 @@
+--- a/chrome/common/extensions/api/flecha_private.idl
++++ b/chrome/common/extensions/api/flecha_private.idl
+@@ -229,6 +229,13 @@
+     // Bookmarks menus are hidden.
+     static void setMenus(Menu[] menus, optional DoneCallback callback);
+ 
++    // Colours the system title bar of a window of this profile (the Settings
++    // popup) and takes the line under it away, so the title bar and a page
++    // of that colour are one surface. `color` is #rrggbb. macOS only.
++    static void setTitlebarColor(DOMString color,
++                                 long windowId,
++                                 optional DoneCallback callback);
++
+     // Keeps a window above every other app's windows (Stay On Top), or lets
+     // it go back among them: a Flecha window, or any other window of this
+     // profile by id (the Settings popup). Default: the main window.
+--- a/chrome/browser/extensions/api/flecha_private/flecha_private_api.h
++++ b/chrome/browser/extensions/api/flecha_private/flecha_private_api.h
+@@ -178,6 +178,15 @@
+   ResponseAction Run() override;
+ };
+ 
++class FlechaPrivateSetTitlebarColorFunction : public ExtensionFunction {
++ public:
++  DECLARE_EXTENSION_FUNCTION("flechaPrivate.setTitlebarColor", UNKNOWN)
++
++ protected:
++  ~FlechaPrivateSetTitlebarColorFunction() override = default;
++  ResponseAction Run() override;
++};
++
+ class FlechaPrivateIsDefaultBrowserFunction : public ExtensionFunction {
+  public:
+   DECLARE_EXTENSION_FUNCTION("flechaPrivate.isDefaultBrowser", UNKNOWN)
+--- a/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
++++ b/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
+@@ -24,6 +24,7 @@
+ #include "ui/base/base_window.h"
+ #include "ui/display/screen.h"
+ #include "chrome/browser/extensions/api/flecha_private/flecha_menus.h"
++#include "chrome/browser/extensions/api/flecha_private/flecha_titlebar.h"
+ #include "chrome/browser/flecha/flecha_accelerator.h"
+ #include "chrome/browser/flecha/flecha_frame_host.h"
+ #include "chrome/browser/flecha/flecha_shell_events.h"
+@@ -591,6 +592,27 @@
+                                            ? ui::ZOrderLevel::kFloatingWindow
+                                            : ui::ZOrderLevel::kNormal);
+   return RespondNow(NoArguments());
++}
++
++ExtensionFunction::ResponseAction
++FlechaPrivateSetTitlebarColorFunction::Run() {
++  auto params = flecha_private::SetTitlebarColor::Params::Create(args());
++  EXTENSION_FUNCTION_VALIDATE(params);
++  std::optional<SkColor> color = ParseColor(params->color);
++  if (!color) {
++    return RespondNow(Error(kBadColorError));
++  }
++  Profile* profile =
++      Profile::FromBrowserContext(browser_context())->GetOriginalProfile();
++  for (BrowserWindowInterface* browser : GetAllBrowserWindowInterfaces()) {
++    if (browser->GetSessionID().id() == params->window_id &&
++        browser->GetProfile()->GetOriginalProfile() == profile &&
++        browser->GetWindow()) {
++      SetFlechaTitlebarColor(browser->GetWindow()->GetNativeWindow(), *color);
++      return RespondNow(NoArguments());
++    }
++  }
++  return RespondNow(Error(kNoWindowError, "(title bar)"));
+ }
+ 
+ namespace {
+--- a/chrome/browser/extensions/api/flecha_private/BUILD.gn
++++ b/chrome/browser/extensions/api/flecha_private/BUILD.gn
+@@ -9,9 +9,13 @@
+     "flecha_menus.h",
+     "flecha_private_api.cc",
+     "flecha_private_api.h",
++    "flecha_titlebar.h",
+   ]
+   if (is_mac) {
+-    sources += [ "flecha_menus_mac.mm" ]
++    sources += [
++      "flecha_menus_mac.mm",
++      "flecha_titlebar_mac.mm",
++    ]
+     frameworks = [ "AppKit.framework" ]
+   }
+ 
+@@ -23,6 +27,8 @@
+     "//chrome/common/extensions/api",
+     "//content/public/browser",
+     "//extensions/browser",
++    "//skia",
+     "//ui/base",
++    "//ui/gfx",
+   ]
+ }
+--- /dev/null
++++ b/chrome/browser/extensions/api/flecha_private/flecha_titlebar.h
+@@ -0,0 +1,22 @@
++// Copyright 2026 The Flecha Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_EXTENSIONS_API_FLECHA_PRIVATE_FLECHA_TITLEBAR_H_
++#define CHROME_BROWSER_EXTENSIONS_API_FLECHA_PRIVATE_FLECHA_TITLEBAR_H_
++
++#include "build/build_config.h"
++#include "third_party/skia/include/core/SkColor.h"
++#include "ui/gfx/native_ui_types.h"
++
++// Gives a window with a system title bar (a popup, such as Settings) a title
++// bar of `color`, with no line under it, so that it reads as one surface with
++// a page of that colour (chrome.flechaPrivate.setTitlebarColor()). A no-op
++// off macOS.
++#if BUILDFLAG(IS_MAC)
++void SetFlechaTitlebarColor(gfx::NativeWindow window, SkColor color);
++#else
++inline void SetFlechaTitlebarColor(gfx::NativeWindow window, SkColor color) {}
++#endif
++
++#endif  // CHROME_BROWSER_EXTENSIONS_API_FLECHA_PRIVATE_FLECHA_TITLEBAR_H_
+--- /dev/null
++++ b/chrome/browser/extensions/api/flecha_private/flecha_titlebar_mac.mm
+@@ -0,0 +1,21 @@
++// Copyright 2026 The Flecha Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/extensions/api/flecha_private/flecha_titlebar.h"
++
++#import <AppKit/AppKit.h>
++
++#include "skia/ext/skia_utils_mac.h"
++
++void SetFlechaTitlebarColor(gfx::NativeWindow native_window, SkColor color) {
++  NSWindow* window = native_window.GetNativeNSWindow();
++  if (!window) {
++    return;
++  }
++  // A transparent title bar shows the window's own background, and macOS
++  // draws the title and the window controls over it as usual.
++  window.titlebarAppearsTransparent = YES;
++  window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
++  window.backgroundColor = skia::SkColorToSRGBNSColor(color);
++}
