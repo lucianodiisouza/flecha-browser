@@ -123,10 +123,11 @@ const paletteListeners: Array<(mode: PaletteMode) => void> = [];
 let paletteId: string | undefined;
 let dismissedPalette: string | undefined;
 on('palette', (mode: PaletteMode, id: string) => {
-  if (id === dismissedPalette && dismissedPalette !== undefined) return;
+  if (id === paletteId || id === dismissedPalette) return;
   paletteId = id;
   for (const listen of paletteListeners) listen(mode);
 });
+on('close-palette', () => { paletteId = undefined; });
 onReconnect(() => {
   if (!windowFrame) return;
   if (dismissedPalette) cmd('closePalette')(dismissedPalette);

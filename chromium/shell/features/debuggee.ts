@@ -82,7 +82,11 @@ export async function release(tabId: number, holder: Holder, resetShared?: () =>
     const tabResets = resetting.get(tabId) ?? new Map<symbol, SharedReset>();
     const pending = tabResets.get(claim);
     if (pending) return pending.done;
-    const cleanup = Promise.resolve().then(resetShared).then(() => undefined).finally(async () => {
+    const cleanup = Promise.resolve().then(async () => {
+      const attachment = attaching.get(tabId);
+      if (attachment) await attachment.catch(() => undefined);
+      if (holders.get(tabId) === set && set.get(holder) === claim) await resetShared();
+    }).finally(async () => {
       try {
         if (holders.get(tabId) === set && set.get(holder) === claim) await release(tabId, holder);
       } finally {
@@ -111,15 +115,20 @@ export async function resetDebugger(tabId: number, holder: Holder) {
   if (pending) await pending.catch(() => undefined);
   if (holders.get(tabId) !== set || set.get(holder) !== claim) return;
   retireAttachment(tabId);
-  await detach(tabId);
-  for (const fn of detachListeners) fn(tabId, 'reset');
+  await detach(tabId, () => {
+    for (const fn of detachListeners) fn(tabId, 'reset');
+  });
 }
 
-async function detach(tabId: number) {
-  const pending = chrome.debugger.detach({ tabId }).catch(() => undefined);
+async function detach(tabId: number, confirmReset?: () => void) {
+  const operation = chrome.debugger.detach({ tabId }).then(confirmReset);
+  const pending = confirmReset ? operation : operation.catch(() => undefined);
   detaching.set(tabId, pending);
-  await pending;
-  if (detaching.get(tabId) === pending) detaching.delete(tabId);
+  try {
+    await pending;
+  } finally {
+    if (detaching.get(tabId) === pending) detaching.delete(tabId);
+  }
 }
 
 export const isHeld = (tabId: number, holder: string) => !!holders.get(tabId)?.has(holder);

@@ -289,7 +289,8 @@ export function registerNativeHost(ctx: NativeHostContext) {
   type UseTab = {
     signal: AbortSignal;
     tab(chromeId: number, signal?: AbortSignal): Promise<void>;
-    command(method: string, params?: object, signal?: AbortSignal): Promise<unknown>;
+    assertOpen?: () => void;
+    command(method: string, params?: object, signal?: AbortSignal, cleanup?: boolean): Promise<unknown>;
   };
   const tabOperations = new Map<number, Promise<void>>();
   const pendingNavigations = new Map<number, Promise<void>>();
@@ -298,41 +299,50 @@ export function registerNativeHost(ctx: NativeHostContext) {
 
   async function runTool(name: AgentToolName, args: Record<string, any>): Promise<AgentResult> {
     const commands = new Set<Promise<unknown>>();
+    const pendingReplies = new Set<Promise<unknown>>();
     let work: Promise<AgentResult> | undefined;
     let runningTab: number | undefined;
     let unlock: (() => void) | undefined;
     const timeout = toolTimeout(args.timeoutMs);
     try {
-      return await withDeadline(timeout, (signal) => (work = tools[name](args, {
-        signal,
-        async tab(chromeId, deadline = signal) {
-          deadline.throwIfAborted();
-          checkDebuggerRecovery(chromeId);
-          const previous = tabOperations.get(chromeId) ?? Promise.resolve();
-          const finished = new Promise<void>((resolve) => { unlock = resolve; });
-          const tail = previous.then(() => finished);
-          tabOperations.set(chromeId, tail);
-          void tail.then(() => { if (tabOperations.get(chromeId) === tail) tabOperations.delete(chromeId); });
-          await untilAborted(previous, deadline);
-          deadline.throwIfAborted();
-          if (pendingNavigations.has(chromeId)) {
-            throw new Error('Chrome is still finishing a previous navigation on this tab. Try again after it finishes or use another tab.');
-          }
-          checkDebuggerRecovery(chromeId);
-          runningTab = chromeId;
-          working.add(chromeId);
-          if (attached.has(chromeId)) keepAttached(chromeId);
-        },
-        command(method, params, deadline = signal) {
-          deadline.throwIfAborted();
-          if (runningTab === undefined) throw new Error('The debugger command has no tab');
-          const command = recoverCommand(runningTab, chrome.debugger.sendCommand({ tabId: runningTab }, method, params), deadline);
-          commands.add(command);
-          const settled = () => commands.delete(command);
-          void command.then(settled, settled);
-          return command;
-        },
-      })));
+      return await withDeadline(timeout, (signal) => {
+        const use: UseTab = {
+          signal,
+          async tab(chromeId, deadline = signal) {
+            deadline.throwIfAborted();
+            checkDebuggerRecovery(chromeId);
+            const previous = tabOperations.get(chromeId) ?? Promise.resolve();
+            const finished = new Promise<void>((resolve) => { unlock = resolve; });
+            const tail = previous.then(() => finished);
+            tabOperations.set(chromeId, tail);
+            void tail.then(() => { if (tabOperations.get(chromeId) === tail) tabOperations.delete(chromeId); });
+            await untilAborted(previous, deadline);
+            deadline.throwIfAborted();
+            if (pendingNavigations.has(chromeId)) {
+              throw new Error('Chrome is still finishing a previous navigation on this tab. Try again after it finishes or use another tab.');
+            }
+            checkDebuggerRecovery(chromeId);
+            runningTab = chromeId;
+            working.add(chromeId);
+            if (attached.has(chromeId)) keepAttached(chromeId);
+          },
+          command(method, params, deadline = signal, cleanup = false) {
+            deadline.throwIfAborted();
+            if (runningTab === undefined) throw new Error('The debugger command has no tab');
+            if (!cleanup) use.assertOpen?.();
+            const reply = chrome.debugger.sendCommand({ tabId: runningTab }, method, params);
+            pendingReplies.add(reply);
+            const replied = () => pendingReplies.delete(reply);
+            void reply.then(replied, replied);
+            const command = recoverCommand(runningTab, reply, deadline, pendingReplies);
+            commands.add(command);
+            const settled = () => commands.delete(command);
+            void command.then(settled, settled);
+            return command;
+          },
+        };
+        return (work = tools[name](args, use));
+      });
     } catch (err) {
       if (err instanceof AgentTimeout) return fail(`Flecha didn’t answer ${name} within ${timeout / 1000}s`);
       return fail(err instanceof Error ? err.message : String(err));
@@ -361,9 +371,12 @@ export function registerNativeHost(ctx: NativeHostContext) {
     const chromeId = await untilAborted(ctx.tabs.chromeTab(tabId), use.signal);
     if (chromeId === undefined) throw new Error(`Tab ${tabId} couldn’t be opened`);
     await use.tab(chromeId, use.signal);
-    if (!store.state.tabs[tabId] || tabClosures.get(tab) !== closure || (ctx.tabs.liveId && ctx.tabs.liveId(tabId) !== chromeId)) {
-      throw new Error(`Tab ${tabId} closed before the tool could run`);
-    }
+    use.assertOpen = () => {
+      if (store.state.tabs[tabId] !== tab || tabClosures.get(tab) !== closure || (ctx.tabs.liveId && ctx.tabs.liveId(tabId) !== chromeId)) {
+        throw new Error(`Tab ${tabId} closed before the tool could run`);
+      }
+    };
+    use.assertOpen();
     // A tab tab sleep discarded needs nothing more: attaching the debugger brings its page back
     // (native-agent.mjs checks it).
     return { tabId, chromeId };
@@ -414,6 +427,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     },
     navigate: async ({ tabId, url, action }, use) => {
       const t = await target(tabId, url ? `opening ${url}` : (action ?? 'navigating'), use);
+      use.assertOpen?.();
       let navigation: Promise<unknown> | undefined;
       if (url) navigation = chrome.tabs.update(t.chromeId, { url: String(url) });
       else if (action === 'back') navigation = chrome.tabs.goBack(t.chromeId).catch(() => undefined);
@@ -612,6 +626,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
     const cleanup = releasing.get(chromeId);
     if (cleanup) await untilAborted(cleanup, use.signal);
     use.signal.throwIfAborted();
+    use.assertOpen?.();
     checkDebuggerRecovery(chromeId);
     if (attached.has(chromeId)) {
       keepAttached(chromeId);
@@ -656,17 +671,17 @@ export function registerNativeHost(ctx: NativeHostContext) {
     });
   }
 
-  async function recoverCommand<T>(chromeId: number, command: Promise<T>, signal: AbortSignal): Promise<T> {
+  async function recoverCommand<T>(chromeId: number, command: Promise<T>, signal: AbortSignal, pendingReplies: Set<Promise<unknown>>): Promise<T> {
     try {
       return await untilAborted(command, signal);
     } catch (error) {
       if (!signal.aborted || error !== signal.reason) throw error;
-      await settleOrReset(chromeId, command.catch(() => undefined));
+      await settleOrReset(chromeId, command.catch(() => undefined), pendingReplies);
       throw error;
     }
   }
 
-  async function settleOrReset(chromeId: number, command: Promise<unknown>) {
+  async function settleOrReset(chromeId: number, command: Promise<unknown>, pendingReplies?: Set<Promise<unknown>>) {
     // Evaluation can wait on a page promise forever. Chrome rejects pending CDP
     // replies on detach, so wait for the session to close before the next tool.
     try {
@@ -674,7 +689,10 @@ export function registerNativeHost(ctx: NativeHostContext) {
     } catch (error) {
       if (!(error instanceof AgentTimeout)) throw error;
       const previous = pendingDebuggerResets.get(chromeId);
-      const reset = previous ?? resetDebugger(chromeId, DEBUG_HOLDER).finally(() => {
+      const reset = previous ?? resetDebugger(chromeId, DEBUG_HOLDER).catch(async () => {
+        await (pendingReplies ? Promise.allSettled(pendingReplies) : command);
+        if (pendingDebuggerResets.get(chromeId) === reset) forget(chromeId);
+      }).then(() => {
         if (pendingDebuggerResets.get(chromeId) === reset) pendingDebuggerResets.delete(chromeId);
       });
       pendingDebuggerResets.set(chromeId, reset);
@@ -726,7 +744,10 @@ export function registerNativeHost(ctx: NativeHostContext) {
     }
     if (log.length > 500) log.splice(0, log.length - 500);
   });
-  onDebuggerDetach(forget);
+  onDebuggerDetach((chromeId) => {
+    pendingDebuggerResets.delete(chromeId);
+    forget(chromeId);
+  });
   chrome.tabs.onRemoved.addListener((chromeId) => {
     pendingNavigations.delete(chromeId);
     pendingDebuggerResets.delete(chromeId);
@@ -742,7 +763,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
       pressSucceeded = true;
     } finally {
       if (isHeld(chromeId, DEBUG_HOLDER)) {
-        const released = withDeadline(TOOL_TIMEOUT, (signal) => use.command(method, up, signal));
+        const released = withDeadline(TOOL_TIMEOUT, (signal) => use.command(method, up, signal, true));
         if (pressSucceeded) await released;
         // The tab queue still tracks the release command after returning the press failure.
         else void released.catch(() => undefined);

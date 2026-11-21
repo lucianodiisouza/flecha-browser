@@ -29,7 +29,7 @@ let editorSession = Symbol();
 let navigation: symbol | undefined;
 let listRead: symbol | undefined;
 let discard: { name: string; draft: string } | undefined;
-let reconnectSelection: { name: string; fallback: string } | undefined;
+let failedOpen: { name: string; fallback: string; reconnect: boolean } | undefined;
 const writes = new Map<string, Promise<void>>();
 const writeRevisions = new Map<string, symbol>();
 const deleting = new Set<string>();
@@ -130,22 +130,17 @@ async function open(name: string, reload = false) {
     file = name ? await invoke<BoostFile | undefined>('boosts:get', name) : undefined;
   } catch (error) {
     if (!stillSelected()) return;
-    if (current) {
-      if (error instanceof ConnectionError) reconnectSelection = { name, fallback: current.name };
-      restoreHash();
-      setStatus('Couldn’t load this Boost.', true);
-    } else {
-      retryOpen.hidden = false;
-      openError.textContent = 'Couldn’t load this Boost.';
-    }
+    restoreHash();
+    failedOpen = { name, fallback: selected(), reconnect: error instanceof ConnectionError };
+    retryOpen.hidden = false;
+    openError.textContent = 'Couldn’t load this Boost.';
     return;
   }
   if (!stillSelected()) return;
   if (editorSession === previousEditor && code.value !== oldCode) return restoreHash();
   if (writeRevisions.get(name) !== revision) return open(name, reload);
   discard = undefined;
-  openError.textContent = '';
-  retryOpen.hidden = true;
+  clearOpenFailure();
   if (!reload || current?.name !== file?.name) editorSession = Symbol();
   current = file;
   highlightListSelection();
@@ -206,7 +201,7 @@ deleteButton.onclick = () => {
     } catch (error) {
       if (error instanceof ConnectionError && error.sent) {
         unconfirmedDeletes.add(file.name);
-        if (editorSession === session) setStatus('Couldn’t confirm deletion. Flecha will check after reconnecting.', true);
+        showUnconfirmedDelete('Couldn’t confirm deletion. Check again or copy your draft and reopen Boosts.');
       } else if (editorSession === session) setStatus('Couldn’t delete this Boost.', true);
     } finally {
       if (!unconfirmedDeletes.has(file.name)) deleting.delete(file.name);
@@ -214,6 +209,11 @@ deleteButton.onclick = () => {
     }
   });
 };
+
+function showUnconfirmedDelete(message: string) {
+  deleteCheckStatus.textContent = message;
+  retryDeleteCheck.hidden = !message;
+}
 
 function verifyDeletes() {
   if (checkingDeletes) return checkingDeletes;
@@ -239,8 +239,7 @@ function verifyDeletes() {
     }, () => false),
   )).then((results) => {
     const failed = results.includes(false);
-    deleteCheckStatus.textContent = failed ? 'Couldn’t check whether the Boost was deleted.' : '';
-    retryDeleteCheck.hidden = !failed;
+    showUnconfirmedDelete(failed ? 'Couldn’t check deletion. Try again or copy your draft and reopen Boosts.' : '');
   }).finally(() => {
     checkingDeletes = undefined;
     retryDeleteCheck.disabled = false;
@@ -279,20 +278,29 @@ async function refresh(reload = false) {
   if (!keepEditor) await open(name, reload);
   await listing;
 }
-retryOpen.onclick = () => void refresh();
+function clearOpenFailure() {
+  failedOpen = undefined;
+  openError.textContent = '';
+  retryOpen.hidden = true;
+}
+
+function retryFailedOpen() {
+  if (!failedOpen || failedOpen.fallback !== selected()) return false;
+  failedOpen.reconnect = false;
+  history.replaceState(null, '', `#${encodeURIComponent(failedOpen.name)}`);
+  return true;
+}
+
+retryOpen.onclick = () => { if (retryFailedOpen()) void refresh(); };
 retryList.onclick = () => void renderList();
 retryDeleteCheck.onclick = () => void verifyDeletes().then(() => refresh(true));
 window.addEventListener('hashchange', () => {
-  reconnectSelection = undefined;
+  clearOpenFailure();
   void refresh();
 });
 on('boosts:changed', () => void renderList());
 onReconnect(() => {
-  const retry = reconnectSelection;
-  reconnectSelection = undefined;
-  if (retry && retry.fallback === selected()) {
-    history.replaceState(null, '', `#${encodeURIComponent(retry.name)}`);
-  }
+  if (failedOpen?.reconnect) retryFailedOpen();
   void verifyDeletes().then(() => refresh(true));
 });
 

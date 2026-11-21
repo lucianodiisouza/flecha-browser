@@ -8,7 +8,7 @@
  * page the `window` in its address (window.html?window=<id>). While a handler runs, its
  * synchronous part can ask for the calling page's window with callerWindow().
  */
-import type { Message } from './protocol';
+import { isPortSerializationError, type Message } from './protocol';
 
 type Handler = (...args: any[]) => unknown;
 
@@ -92,8 +92,7 @@ function post(port: chrome.runtime.Port, message: Message): boolean {
     return true;
   } catch (error) {
     // Chromium reports serialization failures as ordinary errors without closing the port.
-    if (error instanceof Error && (error.message === 'Could not serialize message.' ||
-      error.message.startsWith('Message length exceeded maximum allowed length'))) {
+    if (error instanceof Error && isPortSerializationError(error)) {
       if (message.type === 'result' && message.error === undefined) {
         post(port, { type: 'result', id: message.id, error: error.message });
       }

@@ -424,17 +424,33 @@ export function shortcutMap(state: Store['state']): Record<string, string> {
 function registerShortcuts(ctx: NativeContext) {
   if (!has('setShortcuts')) return;
   let sent = '';
+  let applying = false;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  // Use the shell port's recovery cadence for another transient Chromium connection failure.
+  let retryDelay = 100;
   // While Settings records a shortcut the keys go to its page, not to Flecha's commands.
   let recorder: chrome.runtime.Port | undefined;
   const apply = () => {
     // The browser keeps one map for every window; the regular shell sets it.
-    if (incognito) return;
+    if (incognito || applying || retry !== undefined) return;
     const map = recorder ? {} : shortcutMap(ctx.store.state);
     const json = JSON.stringify(map);
     if (json === sent) return;
-    sent = json;
-    void chrome.flechaPrivate.setShortcuts(map).then((rejected) => {
+    applying = true;
+    void Promise.resolve().then(() => chrome.flechaPrivate.setShortcuts(map)).then((rejected) => {
+      sent = json;
+      retryDelay = 100;
       if (rejected.length) console.warn('Flecha shell: the browser could not read these shortcuts', rejected);
+    }, (error: unknown) => {
+      console.warn('Flecha shell: could not apply shortcuts', error);
+      retry = setTimeout(() => {
+        retry = undefined;
+        apply();
+      }, retryDelay);
+      retryDelay = Math.min(retryDelay * 2, 5000);
+    }).finally(() => {
+      applying = false;
+      apply();
     });
   };
   const stopRecording = () => {

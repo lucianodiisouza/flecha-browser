@@ -54,3 +54,34 @@ test('Today activation belongs to its owning window and a shared tab claim reque
   assert.equal(store.windowShowing(tab.id), second);
   store.saveNow();
 });
+
+test('a reconnect can only see a sidebar width that storage has accepted', async () => {
+  const writing = Promise.withResolvers();
+  const pending = Promise.withResolvers();
+  const writes = [];
+  const store = new Store({ load: () => undefined, save(json) {
+    writes.push(JSON.parse(json));
+    if (writes.length === 1) {
+      writing.resolve();
+      return pending.promise;
+    }
+  } });
+  const previous = store.state.sidebarWidth;
+  const seen = [];
+  store.onChange(() => seen.push(store.state.sidebarWidth));
+  const write = store.setSidebarWidth(300);
+  const rejected = assert.rejects(write, /Storage failed/);
+  await writing.promise;
+  assert.equal(writes[0].sidebarWidth, 300);
+  assert.equal(store.state.sidebarWidth, previous);
+  assert.deepEqual(seen, []);
+  const otherSave = store.saveNow();
+  pending.reject(new Error('Storage failed'));
+  await rejected;
+  await otherSave;
+  assert.equal(writes[1].sidebarWidth, previous);
+  assert.equal(store.state.sidebarWidth, previous);
+  assert.equal(await store.setSidebarWidth(320), 320);
+  assert.equal(writes.at(-1).sidebarWidth, 320);
+  assert.deepEqual(seen, [320]);
+});

@@ -37,13 +37,14 @@ function hasAddressCredentials(input: string): boolean {
   return destinationHasTail || !/^\s/.test(password) || /\s/.test(password.trim());
 }
 
-export const spacedQuestion = (tail: string) =>
+const spacedQuestion = (tail: string) =>
   /^\?\s+(?:\S+\s+\S|(?:who|what|when|where|why|which|how)\?$)/i.test(tail) && !tail.includes('=');
 
 export function looksLikeRejectedAddress(input: string): boolean {
   if (hasAddressCredentials(input)) return true;
-  const [typed] = input.split(/[/?#\\]/, 1);
-  const tail = input.slice(typed.length);
+  const addressText = input.replaceAll('？', '?');
+  const [typed] = addressText.split(/[/?#\\]/, 1);
+  const tail = addressText.slice(typed.length);
   let authority = typed;
   try { authority = decodeURIComponent(authority); } catch { /* A bad escape can still follow a host. */ }
   authority = authority.replace(/[。．｡]|%2e|%e3%80%82|%ef%bc%8e|%ef%bd%a1/gi, '.').trim();
@@ -56,7 +57,8 @@ export function looksLikeRejectedAddress(input: string): boolean {
   const addressTail = /^[/?#\\]\S/.test(tail) || tail.includes('=');
   const numericPort = /^[+-]?\d/.test(port) && !/\s/.test(port);
   if (/^localhost$|^[^\s.@]+\.[^\s@]+$/i.test(host)) {
-    return colon < 0 ? !!tail && !spacedQuestion(tail) : !/\s/.test(typed) || addressTail || numericPort;
+    const separatedQuestion = /\s$/.test(typed) && spacedQuestion(tail);
+    return colon < 0 ? !!tail && !separatedQuestion : !/\s/.test(typed) || addressTail || numericPort;
   }
   return colon >= 0 && !!tail && (addressTail || numericPort) && /^[a-z\d-]*[a-z][a-z\d-]*$/i.test(host);
 }
@@ -75,7 +77,9 @@ export function resolveInput(raw: string, engine?: SearchEngineId): string {
 /** What was typed as a URL, completed (`github.com` → `https://github.com`); undefined when it reads as a search. */
 export function webAddress(raw: string, { allowBareHost = false } = {}): string | undefined {
   const input = raw.trim();
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input) || /^(about|data|file):/i.test(input)) return input;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input) || /^(about|data|file):/i.test(input)) {
+    return input.replace(/[\t\n\r]/g, encodeURIComponent);
+  }
   if (/^mailto:/i.test(input)) return /\s/.test(input.slice(7).split('?', 1)[0]) ? undefined : input;
   const [authority] = input.split(/[/?#]/, 1);
   const bare = /^(\[[\da-f:.]+\]|[^:\s\\@\[\]]+)(?::(\d+))?$/i.exec(authority);
@@ -84,7 +88,9 @@ export function webAddress(raw: string, { allowBareHost = false } = {}): string 
   // In Settings the input is an address. Reserve recognized URI schemes when a single label has a port.
   if (port && /^(blob|ftp|http|https|news|sms|ssh|tel|urn)$/i.test(host)) return undefined;
   try {
-    const url = new URL(`https://${input}`);
+    const tail = input.slice(authority.length).replace(/[\t\n\r]/g, encodeURIComponent);
+    const endpoint = authority + tail;
+    const url = new URL(`https://${endpoint}`);
     const hostname = url.hostname.replace(/\.$/, '');
     const ipv4 = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(hostname);
     const ipv6 = hostname.startsWith('[');
@@ -98,8 +104,7 @@ export function webAddress(raw: string, { allowBareHost = false } = {}): string 
     // Implicit HTTP is for loopback, the wildcard bind address and RFC 1918 networks.
     const localIp = ipv4 && (first === 127 || first === 10 || (first === 172 && second >= 16 && second <= 31) ||
       (first === 192 && second === 168) || hostname === '0.0.0.0');
-    if (!allowBareHost && domain && !localHost && !port && spacedQuestion(input.slice(authority.length))) return undefined;
-    const address = `${localHost || localIp ? 'http' : 'https'}://${input}`;
+    const address = `${localHost || localIp ? 'http' : 'https'}://${endpoint}`;
     return /\s/.test(input) ? new URL(address).href : address;
   } catch {
     return undefined;

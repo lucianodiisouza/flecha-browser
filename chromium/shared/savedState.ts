@@ -119,19 +119,25 @@ export function repairState(raw: Record<string, unknown>): BrowserState | undefi
     .filter((w) => isNumber(w.closedAt))
     .map((w) => ({ ...window(w), closedAt: w.closedAt as number }))
     .filter((w) => Object.keys(w.spaces).length);
-  const windowSpaces = [...windows, ...closedWindows].flatMap((win) => Object.values(win.spaces));
-  for (const ws of windowSpaces) {
+  const windowSpaces = [...windows, ...closedWindows].flatMap((win) => Object.entries(win.spaces));
+  function pinnedIds(nodes: PinnedNode[]): string[] {
+    return nodes.flatMap((node) => node.kind === 'tab' ? [node.tabId] : pinnedIds(node.children));
+  }
+  const pinnedBySpace = new Map(spaces.map((space) => [space.id, new Set(pinnedIds(space.pinned))]));
+  const favoriteIds = new Set(favorites);
+  const belongs = (id: string, spaceId: string, ws: WindowSpace) =>
+    favoriteIds.has(id) || pinnedBySpace.get(spaceId)?.has(id) || ws.today.includes(id);
+  for (const [spaceId, ws] of windowSpaces) {
     if (ws.splitMode !== 'responsive' || !Array.isArray(ws.split) || ws.split.length !== 2) continue;
     const [desktop, phone] = ws.split;
     if (!ws.today.includes(phone) || tabs[phone]?.device !== 'mobile') continue;
-    if (placed.has(desktop) && tabs[desktop]?.device !== 'mobile') continue;
+    if (belongs(desktop, spaceId, ws) && tabs[desktop]?.device !== 'mobile') continue;
     delete tabs[phone];
-    placed.delete(phone);
     ws.today = ws.today.filter((id) => id !== phone);
   }
-  for (const ws of windowSpaces) {
-    if (ws.activeTabId !== undefined && !placed.has(ws.activeTabId)) delete ws.activeTabId;
-    if (!Array.isArray(ws.split) || ws.split.length !== 2 || !ws.split.every((id) => placed.has(id))) {
+  for (const [spaceId, ws] of windowSpaces) {
+    if (ws.activeTabId !== undefined && !belongs(ws.activeTabId, spaceId, ws)) delete ws.activeTabId;
+    if (!Array.isArray(ws.split) || ws.split.length !== 2 || !ws.split.every((id) => belongs(id, spaceId, ws))) {
       delete ws.split;
       delete ws.splitMode;
     }

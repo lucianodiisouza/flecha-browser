@@ -39,7 +39,7 @@ const INCOMING_DROP_IDLE_MS = 2 * (350 + 200);
 /** The Space whose button is being dragged: drag events only say what kind of thing it is. */
 let draggedSpace: string | undefined;
 let draggedTab: { id: string; spaceId: string } | undefined;
-let incomingDrop: { element: HTMLElement; spaceId: string } | undefined;
+let incomingDrop: HTMLElement | undefined;
 let incomingDropTimer: ReturnType<typeof setTimeout> | undefined;
 let pinnedHoverTimer: ReturnType<typeof setTimeout> | undefined;
 let clearDropTarget: (() => void) | undefined;
@@ -730,7 +730,7 @@ function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-ove
     hoveredSide = undefined;
     if (clearDropTarget === endHover) clearDropTarget = undefined;
     el.classList.remove(hoverClass, 'drop-split-left', 'drop-split-right');
-    if (incomingDrop?.element !== el) return;
+    if (incomingDrop !== el) return;
     clearTimeout(incomingDropTimer);
     incomingDrop = undefined;
     queueMicrotask(() => {
@@ -756,7 +756,7 @@ function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-ove
     e.preventDefault();
     hoveredSpaceId = state?.activeSpaceId;
     if (!draggedTab && hoveredSpaceId) {
-      incomingDrop = { element: el, spaceId: hoveredSpaceId };
+      incomingDrop = el;
       refreshIncomingDrop();
     }
     hoveredSide = splitSide(e);
@@ -1919,7 +1919,6 @@ api.onEditHomeUrl(editHomeUrl);
 api.onPeek(renderPeek);
 api.onDownloads(renderDownloads);
 onReconnect(() => {
-  if (!palette.hidden) hidePalette();
   if (topSitesAttempted > topSitesFetched) {
     topSitesAttempted = topSitesFetched = 0;
     if (state) render(state);

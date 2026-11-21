@@ -536,7 +536,6 @@ document.getElementById('copyAgentJson')!.addEventListener('click', (e) => copie
 document.getElementById('newAgentToken')!.addEventListener('click', async () => render(await api.newAgentToken()));
 
 function render(view: SettingsView) {
-  lastPreferences = view;
   adBlock.checked = view.adBlock;
   if (searchEngine.options.length !== view.searchEngines.length) {
     searchEngine.replaceChildren(...view.searchEngines.map((e) => new Option(e.name, e.id)));
@@ -568,6 +567,7 @@ function render(view: SettingsView) {
     : canSet
       ? 'Links from other apps open in your current default browser.'
       : 'Not available in this build of Flecha.';
+  lastPreferences = view;
 }
 
 function renderAgent(view: SettingsView) {
@@ -616,13 +616,15 @@ const loadStatus = document.getElementById('settings-load-status')!;
 const preferencePanes = document.querySelectorAll<HTMLElement>('[data-preferences]');
 let lastPreferences: SettingsView | undefined;
 function showLoadError() {
-  if (lastPreferences) render(lastPreferences);
+  if (lastPreferences) {
+    try { render(lastPreferences); } catch (error) { console.error(error); }
+  }
   for (const pane of preferencePanes) pane.inert = true;
   loadError.hidden = false;
   loadStatus.textContent = 'Preferences are unavailable. Retry or reload Settings.';
 }
 function setPreference(patch: Parameters<SettingsApi['set']>[0], show = render) {
-  return api.set(patch).then(show, showLoadError);
+  return api.set(patch).then(show).catch(showLoadError);
 }
 let refreshing: Promise<void> | undefined;
 function refresh() {
@@ -634,7 +636,7 @@ function refresh() {
     if (removingEnvironments.size) void environmentWrites.then(() => {
       for (const id of removingEnvironments.keys()) queueEnvironmentRemoval(id);
     });
-  }, showLoadError).finally(() => { refreshing = undefined; });
+  }).catch(showLoadError).finally(() => { refreshing = undefined; });
 }
 
 loadError.querySelector('button')!.addEventListener('click', refresh);

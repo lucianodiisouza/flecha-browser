@@ -4,7 +4,7 @@ import { SPACE_COLORS, SPACE_EMOJIS } from './spaceChoices.js';
 import { isMac, primaryModifier } from '../lib/platform';
 import { isEnter } from '../lib/keys';
 import { isUndoKey } from '../lib/undo';
-import { ConnectionError } from '../protocol';
+import { isConnectionError } from '../protocol';
 
 /**
  * Settings → Tabs & Spaces: favorites and every Space's pinned tree and Today tabs in one
@@ -409,7 +409,7 @@ export async function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
     wireEditor([url, title], async () => {
       if (addNeedsRefresh || !url.value.trim()) return;
       const result = await api.editTabs({ op: 'add', url: url.value, title: title.value, to }).catch((error: unknown) => {
-        if (!(error instanceof ConnectionError) || !error.sent) throw error;
+        if (!isConnectionError(error) || !error.sent) throw error;
         addNeedsRefresh = true;
         loadMessage.textContent = 'Couldn’t confirm the new tab. Refresh Tabs & Spaces before adding again. ';
         loadError.hidden = false;

@@ -2,7 +2,7 @@
  * The page side of the shell's messaging: what a Flecha page uses in place of Electron's
  * ipcRenderer. cmd() fires a command, invoke() awaits a reply, on() listens for events.
  */
-import { ConnectionError, type Message } from './protocol';
+import { ConnectionError, isPortSerializationError, type Message } from './protocol';
 import { toast } from './settingsUi';
 
 type Reply = { resolve: (value: unknown) => void; reject: (error: Error) => void };
@@ -97,7 +97,7 @@ function post(message: Message, reply?: Reply) {
     const reason = error instanceof Error ? error : new Error(String(error));
     // GinPort also throws for serialization failures, which leave the port usable.
     const terminal = contextInvalidated(reason.message);
-    if (terminal || reason.message === 'Attempting to use a disconnected port object') {
+    if (!isPortSerializationError(reason)) {
       if (message.type === 'invoke' && reply) {
         connection.replies.delete(message.id);
         reply.reject(new ConnectionError(false, reason.message));
@@ -127,7 +127,11 @@ export const cmd =
   (name: string) =>
   (...args: unknown[]) => {
     const sent = post({ type: 'cmd', name, args });
-    if (!sent) toast(startupFailure ?? (invalidated ? 'Flecha didn’t send this command. Reload this page.' : 'Flecha didn’t send this command. Try again.'));
+    if (!sent) {
+      if (startupFailure) toast(startupFailure);
+      else if (invalidated) toast('Flecha didn’t send this command. Reload this page.');
+      else toast('Flecha didn’t send this command. Try again.');
+    }
     return sent;
   };
 

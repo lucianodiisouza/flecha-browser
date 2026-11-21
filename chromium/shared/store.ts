@@ -908,10 +908,22 @@ export class Store {
     return this.window(windowId).sidebarVisible ?? this.state.sidebarVisible;
   }
 
-  /** The sidebar's width, the same in every window. */
-  setSidebarWidth(width: number) {
-    this.state.sidebarWidth = clampSidebarWidth(width);
-    this.changed();
+  private sidebarWidthWrite: Promise<number> | undefined;
+
+  /** Publish the shared sidebar width once it can be recovered from storage. */
+  setSidebarWidth(width: number): Promise<number> {
+    const saved = clampSidebarWidth(width);
+    const previous = this.sidebarWidthWrite;
+    const write = Promise.resolve(previous).catch(() => undefined).then(async () => {
+      await this.persistence.save(this.serialize(saved));
+      this.state.sidebarWidth = saved;
+      this.changed('structure', false);
+      return saved;
+    }).finally(() => {
+      if (this.sidebarWidthWrite === write) this.sidebarWidthWrite = undefined;
+    });
+    this.sidebarWidthWrite = write;
+    return write;
   }
 
   // ---- imports --------------------------------------------------------------------
@@ -992,9 +1004,10 @@ export class Store {
         return ids.find((id) => !had.has(id)) ?? ids[0];
       };
       for (const urls of imported.splits ?? []) {
+        if (urls.length === 2 && ws.split && ws.splitMode !== 'responsive' &&
+            ws.split.every((id, index) => s.tabs[id]?.url === urls[index])) continue;
         const left = tabByUrl(urls[0]);
         const right = urls.length === 2 ? tabByUrl(urls[1], left) : undefined;
-        if (left && right && ws.split?.[0] === left && ws.split[1] === right) continue;
         if (urls.length === 2 && !ws.split && left && right) {
           ws.split = [left, right];
           out.splits++;
@@ -1205,17 +1218,20 @@ export class Store {
     else (target as string[]).splice(at, 0, id);
   }
 
-  saveNow() {
+  saveNow(): ReturnType<StatePersistence['save']> {
     clearTimeout(this.saveTimer);
+    if (this.sidebarWidthWrite) {
+      return this.sidebarWidthWrite.catch(() => undefined).then(() => this.saveNow());
+    }
     return this.persistence.save(this.serialize());
   }
 
   /** The state as it is saved, without what only a live page has (loading, audible). */
-  serialize(): string {
+  serialize(sidebarWidth = this.state.sidebarWidth): string {
     const tabs = Object.fromEntries(
       Object.entries(this.state.tabs).map(([id, { loading, audible, ...tab }]) => [id, tab]),
     );
-    return JSON.stringify({ version: STATE_VERSION, ...this.state, tabs }, null, 2);
+    return JSON.stringify({ version: STATE_VERSION, ...this.state, sidebarWidth, tabs }, null, 2);
   }
 
   // ---- internals ------------------------------------------------------------------

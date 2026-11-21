@@ -3,7 +3,7 @@
  * (components/omnibox/browser/search_provider.cc and search_suggestion_parser.cc).
  */
 import type { SearchEngineId } from '../../shared/types';
-import { looksLikeRejectedAddress, searchEngine, spacedQuestion, webAddress } from './url';
+import { looksLikeRejectedAddress, searchEngine, webAddress } from './url';
 
 /** Chromium's kDefaultMinimumTimeBetweenSuggestQueriesMs (omnibox_field_trial.cc), measured from the last request sent. */
 export const SUGGEST_INTERVAL_MS = 100;
@@ -132,10 +132,6 @@ export function suggestable(query: string): boolean {
   const q = query.trim();
   if (!q || webAddress(q) || looksLikeRejectedAddress(q)) return false;
   const words = q.normalize('NFKC').split(/\s+/);
-  const first = words[0];
-  if (first.endsWith('?') && spacedQuestion(q.slice(q.indexOf('?'))) && isHost(first.slice(0, -1))) {
-    words[0] = first.slice(0, -1);
-  }
   // Text with no spaces is more than one word where something that can't be in an address splits it.
   const alone = words.flatMap((word) => word.split(NOT_IN_ADDRESS)).filter(Boolean).length === 1;
   return !words.some((word) => spellings(word).some((form) => form && addressPart(form, alone)));

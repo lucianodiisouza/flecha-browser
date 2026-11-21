@@ -71,8 +71,8 @@ function loadBoosts() {
   });
 }
 
-let writes = Promise.resolve();
-let commits = writes;
+let commits = Promise.resolve();
+let effects = Promise.resolve();
 
 function writeBoosts(
   name: string,
@@ -80,30 +80,33 @@ function writeBoosts(
   reload: boolean,
   change: (nextFiles: typeof files, nextCompiled: typeof compiled) => boolean,
 ) {
-  const commit = writes.then(async () => {
+  const commit = commits.then(async () => {
     await loadBoosts();
     const nextFiles = { ...files };
     const nextCompiled = { ...compiled };
-    if (!change(nextFiles, nextCompiled)) return false;
-    await chrome.storage.local.set({ [STORE_KEY]: nextFiles, [COMPILED_KEY]: nextCompiled });
-    files = nextFiles;
-    compiled = nextCompiled;
-    return true;
+    const changed = change(nextFiles, nextCompiled);
+    if (changed) {
+      await chrome.storage.local.set({ [STORE_KEY]: nextFiles, [COMPILED_KEY]: nextCompiled });
+      files = nextFiles;
+      compiled = nextCompiled;
+    }
+    return { changed, saved: get(name) };
   });
   commits = commit.then(() => undefined, () => undefined);
-  const write = commit.then(async (changed) => {
-    const saved = get(name);
+  return commit.then(async ({ changed, saved }) => {
     if (changed) {
-      if (parsed.kind === 'script') {
-        registered = registered.then(registerUserScripts);
-        await registered;
-      }
-      await refreshPages(parsed, reload).catch((error) => console.warn('Flecha boosts: couldn’t refresh pages', error));
+      const apply = effects.then(async () => {
+        if (parsed.kind === 'script') {
+          registered = registered.then(registerUserScripts);
+          await registered;
+        }
+        await refreshPages(parsed, reload);
+      });
+      effects = apply.catch((error) => console.warn('Flecha boosts: couldn’t refresh pages', error));
+      await effects;
     }
     return saved;
   });
-  writes = write.then(() => undefined, () => undefined);
-  return write;
 }
 
 const userScripts = () => {
@@ -203,7 +206,9 @@ async function runScriptWithDebugger(tabId: number, documentId: string, name: st
   });
   if (!bound?.result) return;
   const holder = Symbol('boost');
-  if (!(await hold(tabId, holder))) return reportError(tabId, documentId, name, 'this page doesn’t allow boost scripts');
+  if (!(await hold(tabId, holder))) {
+    return reportError(tabId, documentId, name, 'the debugger could not attach. Enable Allow User Scripts for the Flecha shell to run script Boosts without the debugger.');
+  }
   let objectId: string | undefined;
   try {
     // Capture the renderer's document object before checking Chromium's current document ID.
@@ -315,7 +320,7 @@ export async function create(host: string, kind: BoostKind) {
   host = String(host).trim().toLowerCase().replace(/^www\./, '');
   if (!/^[a-z0-9-]+(\.[a-z0-9-]+)*$/.test(host) || (kind !== 'script' && kind !== 'styles')) return undefined;
   const name = boostName(host, kind);
-  await writes;
+  await commits;
   await loadBoosts();
   if (files[name] !== undefined) return name;
   return (await save(name, TEMPLATES[kind](host), { reload: false, onlyIfMissing: true })) && name;

@@ -10,9 +10,22 @@ export type Message =
 
 /** Whether the disconnected page had already submitted its request to the port. */
 export class ConnectionError extends Error {
+  override readonly name = 'FlechaConnectionError';
+
   constructor(readonly sent: boolean, message: string) {
     super(message);
   }
+}
+
+/** Settings and its lazy tab pane each have a copy of this module. */
+export function isConnectionError(error: unknown): error is ConnectionError {
+  return error instanceof Error && error.name === 'FlechaConnectionError' &&
+    'sent' in error && typeof error.sent === 'boolean';
+}
+
+export function isPortSerializationError(error: Error): boolean {
+  return error.message === 'Could not serialize message.' ||
+    error.message.startsWith('Message length exceeded maximum allowed length');
 }
 
 /**

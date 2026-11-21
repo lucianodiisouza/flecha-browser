@@ -135,6 +135,13 @@ test('a split formed from existing tabs reports a change', async () => {
   const repeated = await applyBrowserImport(data, { mode: 'merge', isolate: [] }, store, noHistory);
   assert.equal(repeated.changed, false);
   assert.ok(repeated.details.every((detail) => !detail.includes('kept as')));
+  const [left, right] = store.activeSpaceIn().split;
+  const earlier = store.addTab(urls[0]);
+  store.togglePin(earlier.id);
+  const duplicate = await applyBrowserImport(data, { mode: 'merge', isolate: [] }, store, noHistory);
+  assert.deepEqual(store.activeSpaceIn().split, [left, right]);
+  assert.equal(duplicate.changed, false);
+  assert.ok(duplicate.details.every((detail) => !detail.includes('kept as')));
 });
 
 test('an open phone mirror does not suppress a bookmark from Merge', async () => {

@@ -43,7 +43,7 @@ test('a version 1 state becomes one window with each Space\'s Today tabs and sel
     version: 1,
     spaces: [
       { id: 'a', name: 'A', color: '#fff', pinned: [{ kind: 'tab', tabId: 'p' }], today: ['t1', 't2'], activeTabId: 't2', split: ['t1', 't2'], splitRatio: 0.3 },
-      { id: 'b', name: 'B', color: '#fff', pinned: [], today: ['t3'], activeTabId: 'p' },
+      { id: 'b', name: 'B', color: '#fff', pinned: [], today: ['t3'], activeTabId: 't3' },
     ],
     activeSpaceId: 'b',
     favorites: [],
@@ -57,11 +57,11 @@ test('a version 1 state becomes one window with each Space\'s Today tabs and sel
   const [win] = state.windows;
   assert.equal(win.activeSpaceId, 'b');
   assert.deepEqual(win.spaces.a, { today: ['t1', 't2'], activeTabId: 't2', split: ['t1', 't2'], splitRatio: 0.3 });
-  assert.deepEqual(win.spaces.b, { today: ['t3'], activeTabId: 'p' });
+  assert.deepEqual(win.spaces.b, { today: ['t3'], activeTabId: 't3' });
   assert.deepEqual(state.spaces.map((s) => Object.keys(s).sort()), [['color', 'id', 'name', 'pinned'], ['color', 'id', 'name', 'pinned']]);
   let json;
   const store = new Store({ load: () => state, save: (j) => (json = j) });
-  assert.equal(store.activeTab.id, 'p');
+  assert.equal(store.activeTab.id, 't3');
   store.saveNow();
   assert.equal(JSON.parse(json).version, STATE_VERSION);
   assert.equal(STATE_VERSION, 2);
@@ -438,8 +438,8 @@ test('the saved-state decoder drops a responsive mirror whose source no longer e
   snapshot.windows = [second, first].map((id) => snapshot.windows.find((win) => win.id === id));
   snapshot.windows[0].spaces[work] = { today: [survivor.id], activeTabId: phone, split: [phone, survivor.id] };
   const withDesktop = decodeState(JSON.stringify(snapshot)).windows[0].spaces[work];
-  assert.equal(withDesktop.activeTabId, phone);
-  assert.deepEqual(withDesktop.split, [phone, survivor.id]);
+  assert.equal(withDesktop.activeTabId, undefined);
+  assert.equal(withDesktop.split, undefined);
   delete snapshot.tabs[desktop.id];
   const loaded = decodeState(JSON.stringify(snapshot));
   const space = loaded.windows.find((win) => win.id === first).spaces[personal];

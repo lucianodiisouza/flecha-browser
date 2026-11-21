@@ -476,6 +476,13 @@ async function start() {
     const tab = await chrome.tabs.get(chromeId).catch(() => undefined);
     if (!tab || tab.windowId === chromeWindowId) return;
     const from = tab.windowId;
+    const source = windowOf(from);
+    const id = flechaIdFor(chromeId);
+    if (source && id) {
+      for (const space of store.windowView(source).spaces) {
+        if (space.split?.includes(id)) nativePairs.delete(space.split);
+      }
+    }
     movingFrom.add(from);
     try {
       if ((await chrome.tabs.query({ windowId: from })).length === 1 && !placeholders.has(from)) await makePlaceholder(from);
@@ -832,7 +839,12 @@ async function start() {
       if (nativePairs.get(pair) !== confirmed) return;
       const left = tabs.find((tab) => tab.id === leftId);
       const right = tabs.find((tab) => tab.id === rightId);
-      if (left?.splitViewId !== undefined && left.splitViewId >= 0 && left.splitViewId === right?.splitViewId) return;
+      if (!left || !right) {
+        nativePairs.delete(pair);
+        sync(windowId);
+        return;
+      }
+      if (left.splitViewId !== undefined && left.splitViewId >= 0 && left.splitViewId === right.splitViewId) return;
       exitSplit(windowId);
       return;
     }
@@ -1248,7 +1260,6 @@ async function start() {
     await chromeWindowFor(win.id);
   }
 
-  let sidebarWidthWrites = Promise.resolve();
   handle({
     ready: sendState,
     newTab: (input: string) => openTab(input),
@@ -1377,14 +1388,7 @@ async function start() {
     },
     setSidebarWidth: (width: number) => {
       if (!Number.isFinite(width)) return store.state.sidebarWidth;
-      const write = sidebarWidthWrites.then(async () => {
-        store.setSidebarWidth(width);
-        const saved = store.state.sidebarWidth;
-        await store.saveNow();
-        return saved;
-      });
-      sidebarWidthWrites = write.then(() => undefined, () => undefined);
-      return write;
+      return store.setSidebarWidth(width);
     },
     'frame:resized': () => {
       const windowId = windowOf(callerWindow());
@@ -1653,6 +1657,7 @@ async function start() {
     if (port.name === 'flecha-toolbar') return;
     const palette = frameOf(chromeWindowId).palette;
     if (palette) sendTo(port, 'palette', palette.mode, palette.id);
+    else sendTo(port, 'close-palette');
     if (chromeWindowId !== undefined) {
       currentPeek(chromeWindowId, (peek) => sendTo(port, 'peek', peek, chromeWindowId));
     }

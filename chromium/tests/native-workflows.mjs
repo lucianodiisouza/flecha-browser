@@ -283,7 +283,7 @@ try {
   await instrument(session);
   const rpc = (name, ...args) => evaluate(session, `testInvoke(${JSON.stringify(name)}, ...${JSON.stringify(args)})`);
   const stateWhere = (predicate, expected = `shell state matching ${predicate}`) => withinStep(evaluate(session, `testWait(${predicate})`), expected);
-  const until = async (ready, expected) => {
+  const until = async (ready, expected = 'the browser condition to be met') => {
     let stop = false;
     const poll = async () => {
       while (!stop) {
@@ -293,7 +293,6 @@ try {
         await new Promise(resolve => setTimeout(resolve, 50));
       }
     };
-    if (!expected) return poll();
     try {
       return await withinStep(poll(), expected);
     } finally {
@@ -356,6 +355,7 @@ try {
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
   })()`;
+  let environmentRetryFailed = false;
   try {
     await withinStep(loaded(retryPage, retryUrl), 'the Environment settings page');
     await until(() => evaluate(retryPage, `!${environmentPane}.inert`), 'Environment preferences to load');
@@ -403,8 +403,14 @@ try {
     assert.deepEqual(await evaluate(retryPage, 'retryProbe.writes.map(edit => edit.op)'), ['create', 'edit']);
     await rpc('settings:set', { environment: { op: 'remove', id: projectId } });
     console.log('PASS Environment retry saves a newer name after a lost create reply and failed reconciliation read');
+  } catch (error) {
+    environmentRetryFailed = true;
+    throw error;
   } finally {
-    await send('Target.closeTarget', { targetId: retryTarget });
+    await withinStep(send('Target.closeTarget', { targetId: retryTarget }), 'the Environment test tab to close').catch((error) => {
+      if (!environmentRetryFailed) throw error;
+      console.warn('Could not close the Environment test tab', error);
+    });
   }
   await rpc('openSettings', 'import');
   const settingsImport = await attach((await findTarget(t => t.url.includes('/settings.html#import'))).targetId);

@@ -29,7 +29,8 @@ test('worker restart resumes shell messages and a bad payload leaves other repli
       sent: [], onDisconnect: event(), onMessage: event(), disconnect: () => port.onDisconnect.emit(),
       postMessage(message) {
         if (transportError) throw new Error(transportError);
-        port.sent.push(JSON.parse(JSON.stringify(message)));
+        try { port.sent.push(JSON.parse(JSON.stringify(message))); }
+        catch { throw new Error('Could not serialize message.'); }
       },
     };
     ports.push(port);
@@ -67,13 +68,13 @@ test('worker restart resumes shell messages and a bad payload leaves other repli
   const next = invoke('afterRestart');
   const circular = {};
   circular.self = circular;
-  await assert.rejects(invoke('invalid', circular), /circular/);
+  await assert.rejects(invoke('invalid', circular), /Could not serialize message/);
   ports[1].onMessage.emit({ type: 'result', id: ports[1].sent[0].id, value: 'ok' });
   assert.equal(await next, 'ok');
   assert.deepEqual(ports.map((port) => port.sent.map(({ name }) => name)), [['beforeRestart'], ['afterRestart']]);
 
   const disconnect = t.mock.method(ports[1], 'disconnect');
-  transportError = 'Attempting to use a disconnected port object';
+  transportError = 'Unrecognized port failure';
   await assert.rejects(invoke('broken'), (error) => error.sent === false);
   assert.equal(disconnect.mock.callCount(), 1);
   t.mock.timers.tick(400);
@@ -270,7 +271,8 @@ test('a Boost save returns its own result before the queued deletion updates Chr
   assert.equal(register.mock.callCount(), 1);
   const deleting = boosts.remove(name);
   await nextTurn();
-  assert.equal(persist.mock.callCount(), 1);
+  assert.equal(persist.mock.callCount(), 2);
+  assert.equal(await boosts.getCommitted(name), undefined);
   assert.equal(unregister.mock.callCount(), 2, 'startup and save only while save refresh is pending');
   refresh.resolve([]);
   assert.equal((await saved).code, 'source');
@@ -554,6 +556,23 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
   assert.equal(code.value, 'retained draft');
   assert.equal(location.hash, '#first.css');
 
+  location.hash = '#unlisted.css';
+  handlers.get('hashchange')();
+  await nextTurn();
+  const failedOpen = messages.filter(({ name }) => name === 'boosts:get').at(-1);
+  port.onMessage.emit({ type: 'result', id: failedOpen.id, error: 'Fixture editor read failed' });
+  await nextTurn();
+  assert.equal(location.hash, '#first.css');
+  assert.equal(node('retry-open').hidden, false);
+  assert.equal(code.value, 'retained draft');
+  globalThis.confirm = () => false;
+  node('retry-open').onclick();
+  await nextTurn();
+  assert.equal(location.hash, '#first.css');
+  assert.equal(messages.filter(({ name }) => name === 'boosts:get').at(-1), failedOpen);
+  assert.equal(node('retry-open').hidden, false);
+  globalThis.confirm = () => true;
+
   code.value = 'new revision';
   button.onclick();
   code.value = 'newest revision';
@@ -632,7 +651,8 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
   const deleteCount = messages.filter(({ name }) => name === 'boosts:delete').length;
   port.onDisconnect.emit();
   await nextTurn();
-  assert.match(node('status').textContent, /Couldn’t confirm deletion/);
+  assert.match(node('delete-check-status').textContent, /Couldn’t confirm deletion.*reopen Boosts/);
+  assert.equal(node('retry-delete-check').hidden, false);
   t.mock.timers.tick(5_000);
   await nextTurn();
   const verification = messages.filter(({ name }) => name === 'boosts:get').at(-1);
@@ -672,6 +692,22 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
   assert.equal(sentSaves().length, savesBefore, 'Save cannot recreate a clean Boost after deletion is confirmed');
   assert.equal(code.value, '');
   assert.equal(location.hash.slice(1), '');
+
+  location.hash = '#terminal.css';
+  handlers.get('hashchange')();
+  await nextTurn();
+  reply(messages.filter(({ name }) => name === 'boosts:get').at(-1), { ...file, name: 'terminal.css' });
+  await nextTurn();
+  code.value = 'copyable draft';
+  node('delete').onclick();
+  await nextTurn();
+  chrome.runtime.lastError = { message: 'Extension context invalidated.' };
+  port.onDisconnect.emit();
+  await nextTurn();
+  assert.equal(code.readOnly, true);
+  assert.equal(code.value, 'copyable draft');
+  assert.match(node('delete-check-status').textContent, /copy your draft and reopen Boosts/);
+  assert.equal(node('retry-delete-check').hidden, false);
 });
 
 test('the agent restores focus, replays idle logs, and recovers a stalled debugger', async (t) => {
@@ -1105,9 +1141,35 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   await nextTurn();
   assert.ok(results.some(({ id, result }) => id === 60 && !result.isError), 'a later tool can use a confirmed replacement session');
 
+  readPending = Promise.withResolvers();
+  detachPending = Promise.withResolvers();
+  port.onMessage.emit({ type: 'tool', id: 61, name: 'evaluate', args: { tabId: phone, expression: 'fixture' } });
+  await nextTurn();
+  for (const _ of [1, 2]) {
+    t.mock.timers.tick(60_000);
+    await nextTurn();
+  }
+  assert.deepEqual(calls.at(-1), ['detach', tab.id]);
+  detachPending.reject(new Error('Chrome refused to detach'));
+  detachPending = undefined;
+  await nextTurn();
+  t.mock.timers.tick(60_000);
+  await nextTurn();
+  port.onMessage.emit({ type: 'tool', id: 62, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  assert.match(results.find(({ id }) => id === 62)?.result.content[0].text ?? '', /has not confirmed the debugger reset/);
+  readPending.resolve();
+  readPending = undefined;
+  await nextTurn();
+  port.onMessage.emit({ type: 'tool', id: 63, name: 'console_logs', args: { tabId: phone } });
+  await nextTurn();
+  t.mock.timers.tick(100);
+  await nextTurn();
+  assert.ok(results.some(({ id, result }) => id === 63 && !result.isError));
+
   store.togglePin(phone);
   readPending = Promise.withResolvers();
-  port.onMessage.emit({ type: 'tool', id: 43, name: 'read_page', args: { tabId: phone } });
+  port.onMessage.emit({ type: 'tool', id: 43, name: 'click', args: { tabId: phone, selector: 'button' } });
   await nextTurn();
   port.onMessage.emit({ type: 'tool', id: 44, name: 'console_logs', args: { tabId: phone } });
   await nextTurn();
@@ -1116,6 +1178,7 @@ test('the agent restores focus, replays idle logs, and recovers a stalled debugg
   assert.ok(store.state.tabs[phone], 'unloading a pinned tab preserves its saved link');
   readPending.resolve();
   await nextTurn();
+  assert.match(results.find(({ id }) => id === 43).result.content[0].text, /closed before the tool could run/);
   assert.match(results.find(({ id }) => id === 44).result.content[0].text, /closed before the tool could run/);
 });
 
@@ -1232,6 +1295,36 @@ test('the responsive split keeps the phone viewport width when the window grows'
     const phoneWidth = total * (1 - phoneSplitRatio(total));
     assert.ok(Math.abs(phoneWidth - PHONE_WIDTH) < 1, 'split ratio rounds within a CSS pixel');
   }
+});
+
+test('a failed native shortcut write retries the latest shortcut map', async (t) => {
+  const restore = Promise.withResolvers();
+  const write = t.mock.fn(async () => []);
+  write.mock.mockImplementationOnce(() => restore.promise, 1);
+  globalThis.chrome = { flechaPrivate: { onShortcut: event(), setShortcuts: write } };
+  t.after(() => delete globalThis.chrome);
+  t.mock.method(console, 'warn', () => {});
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { registerNative } = await loadModule('chromium/shell/native.ts', { fresh: true });
+  const state = { keybindings: {} };
+  let changed;
+  registerNative({ store: { state, onChange(fn) { changed = fn; } } });
+  await nextTurn();
+  state.keybindings = { newTab: 'Alt+X' };
+  changed('structure');
+  await nextTurn();
+  assert.equal(write.mock.calls.at(-1).arguments[0]['Alt+X'], 'newTab');
+  restore.reject(new Error('Native shortcut map unavailable'));
+  await nextTurn();
+  state.keybindings = { newTab: 'Alt+Y' };
+  changed('structure');
+  t.mock.timers.tick(100);
+  await nextTurn();
+  assert.equal(write.mock.callCount(), 3);
+  assert.equal(write.mock.calls.at(-1).arguments[0]['Alt+Y'], 'newTab');
+  changed('structure');
+  await nextTurn();
+  assert.equal(write.mock.callCount(), 3);
 });
 
 test('resetting responsive emulation does not reload the new debugger session', async (t) => {

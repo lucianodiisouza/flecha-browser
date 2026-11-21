@@ -24,6 +24,8 @@ test('typed addresses open directly with encoded paths and queries', () => {
   assert.equal(resolveInput('203.0.113.9:3000'), 'https://203.0.113.9:3000');
   assert.equal(resolveInput('[fd00::1]:8443'), 'https://[fd00::1]:8443');
   assert.equal(resolveInput('example.com/my notes'), 'https://example.com/my%20notes');
+  assert.equal(resolveInput('example.com/my\tnotes'), 'https://example.com/my%09notes');
+  assert.equal(resolveInput('https://example.com/my\tnotes'), 'https://example.com/my%09notes');
   assert.equal(resolveInput('[fd00::1]/my notes'), 'https://[fd00::1]/my%20notes');
   const query = 'example.com? section=release notes&token=fixture';
   assert.equal(new URL(resolveInput(query)).searchParams.get('token'), 'fixture');
@@ -36,6 +38,8 @@ test('typed addresses open directly with encoded paths and queries', () => {
     ['app.localhost? Why?', 'http://app.localhost/?%20Why?'],
     ['192.168.0.10? opaque fixture', 'http://192.168.0.10/?%20opaque%20fixture'],
     ['example.com? opaque-fixture?', 'https://example.com/?%20opaque-fixture?'],
+    ['example.com? opaque fixture', 'https://example.com/?%20opaque%20fixture'],
+    ['example.com? Why?', 'https://example.com/?%20Why?'],
   ]) {
     assert.equal(resolveInput(input), address);
     assert.equal(suggestable(input), false);
@@ -78,6 +82,7 @@ test('rejected addresses keep credentials and private paths out of search', () =
     'localhost: bad? access token=fixture',
     'example.com: /api?token=fixture',
     'example.com :65536/private?token=fixture',
+    'example.com？ opaque fixture',
     '%65xample%2ecom:65536/api?token=fixture',
     '%ZZxample%2ecom:65536/api?token=fixture',
     'example%E3%80%82com:65536/private?token=fixture',
@@ -101,7 +106,7 @@ test('rejected addresses keep credentials and private paths out of search', () =
 
 test('prose still searches when its topic looks like a host', () => {
   assert.equal(suggestable('re: meet @ noon'), true);
-  for (const question of ['example.com? What is this', 'example.com? Why?']) {
+  for (const question of ['example.com ? What is this', 'example.com ? Why?', 'example.com ？ Why?']) {
     assert.equal(new URL(resolveInput(question)).searchParams.get('q'), question);
     assert.equal(suggestable(question), true);
   }
