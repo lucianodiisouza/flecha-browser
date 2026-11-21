@@ -57,6 +57,25 @@ if (has('setShortcuts')) {
   );
 }
 
+// A new Flechinha opens with the size and place the last one was left at (patch 0046). The
+// browser places the window, so it is right before it shows; the shell only remembers.
+const PLACEMENT_KEY = 'flechinhaPlacement';
+if (has('setFlechinhaBounds') && !incognito) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  chrome.windows.onBoundsChanged.addListener((window) => {
+    const { id, left, top, width, height } = window;
+    if (window.state !== 'normal' || left === undefined || top === undefined || !width || !height) return;
+    // Once the drag or resize has settled, not at every step of it.
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      if (!(await isFlechinhaWindow(id))) return;
+      const bounds = { left, top, width, height };
+      void chrome.flechaPrivate.setFlechinhaBounds(bounds);
+      void chrome.storage.local.set({ [PLACEMENT_KEY]: bounds });
+    }, 300);
+  });
+}
+
 export function registerNative(ctx: NativeContext) {
   registerShortcuts(ctx);
   registerTheme(ctx);
@@ -293,6 +312,13 @@ function registerFlechinha(ctx: NativeContext) {
   if (!incognito) {
     applyLinks();
     ctx.store.onChange(applyLinks);
+  }
+  // The browser forgets the remembered placement when it quits.
+  if (has('setFlechinhaBounds') && !incognito) {
+    void chrome.storage.local.get(PLACEMENT_KEY).then((saved) => {
+      const bounds = saved[PLACEMENT_KEY] as chrome.flechaPrivate.FlechinhaBounds | undefined;
+      if (bounds) void chrome.flechaPrivate.setFlechinhaBounds(bounds);
+    });
   }
   void chrome.flechaPrivate.getFlechinhas().then((ids) => ids.forEach((id) => flechinhas.add(id)));
   chrome.windows.onRemoved.addListener((id) => flechinhas.delete(id));
