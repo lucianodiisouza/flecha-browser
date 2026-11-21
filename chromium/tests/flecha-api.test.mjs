@@ -100,39 +100,53 @@ test('native frame and fullscreen recover from lookup and request failures', asy
 });
 
 test('the worker’s closed snapshot preserves a palette opened locally in the side panel', async t => {
-  let receive;
-  const sent = [];
+  const ports = [];
   globalThis.location = { pathname: '/sidebar.html' };
   globalThis.document = { documentElement: { dataset: { surface: 'panel' } } };
   globalThis.window = { addEventListener() {} };
   globalThis.matchMedia = () => ({ matches: false, addEventListener() {} });
   globalThis.chrome = {
-    runtime: { connect: () => ({
-      onMessage: { addListener: listener => { receive = listener; } },
-      onDisconnect: { addListener() {} },
-      postMessage: message => sent.push(message),
-    }) },
+    runtime: { connect() {
+      const port = {
+        sent: [],
+        onMessage: { addListener: listener => { port.receive = listener; } },
+        onDisconnect: { addListener: listener => { port.disconnect = listener; } },
+        postMessage: message => port.sent.push(message),
+      };
+      ports.push(port);
+      return port;
+    } },
   };
   t.mock.method(globalThis, 'setInterval', () => {});
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   await loadModule('chromium/shell/flechaApi.ts', { fresh: true });
   const api = window.flecha;
   const events = [];
   api.onPalette((mode) => events.push(mode));
   api.onClosePalette(() => events.push('closed'));
-  const emit = (name, ...args) => receive({ type: 'event', name, args });
+  const emit = (name, ...args) => ports.at(-1).receive({ type: 'event', name, args });
   api.openPalette('new-tab');
   emit('palette-closed');
   assert.deepEqual(events, ['new-tab']);
   emit('palette', 'navigate', 'worker');
   emit('palette-closed');
   assert.deepEqual(events, ['new-tab', 'navigate', 'closed']);
-  api.openPalette('split');
-  emit('close-palette');
-  assert.deepEqual(events, ['new-tab', 'navigate', 'closed', 'split', 'closed']);
+
   emit('palette', 'navigate', 'dismissed');
   api.closePalette();
-  assert.deepEqual(sent.at(-1), { type: 'cmd', name: 'closePalette', args: ['dismissed'] });
+  const close = { type: 'cmd', name: 'closePalette', args: ['dismissed'] };
+  assert.deepEqual(ports[0].sent, [close]);
+  ports[0].disconnect();
+  t.mock.timers.tick(5_000);
+  assert.equal(ports.length, 2);
+  assert.deepEqual(ports[1].sent, [close]);
   emit('palette', 'navigate', 'dismissed');
-  assert.equal(events.length, 6, 'replaying a dismissed worker palette does not reopen it');
-  assert.equal(events.at(-1), 'navigate');
+  assert.deepEqual(events, ['new-tab', 'navigate', 'closed', 'navigate']);
+
+  api.openPalette('split');
+  emit('close-palette', 'dismissed');
+  assert.equal(events.at(-1), 'split', 'a delayed acknowledgement does not close a local palette');
+  emit('palette', 'new-tab', 'next');
+  emit('close-palette', 'next');
+  assert.equal(events.at(-1), 'closed', 'the close event still hides the matching worker palette');
 });

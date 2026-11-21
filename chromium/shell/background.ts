@@ -330,9 +330,10 @@ async function start() {
   function closePaletteIn(chromeWindowId: number | undefined) {
     const frame = frames.get(chromeWindowId);
     if (!frame?.palette) return;
+    const { id } = frame.palette;
     delete frame.palette;
     sendFrame(chromeWindowId);
-    broadcastTo(chromeWindowId, 'close-palette');
+    broadcastTo(chromeWindowId, 'close-palette', id);
   }
 
   /** Windows being made, by Flecha window: a second ask while one is made waits for it. */

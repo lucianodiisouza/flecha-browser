@@ -595,6 +595,21 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
   reply(fallbackRead, { ...file, code: 'second edit' });
   await nextTurn();
   assert.equal(node('retry-open').hidden, false, 'refreshing the fallback does not erase the failed deep link');
+  assert.match(node('open-error').textContent, /Couldn’t load this Boost/);
+  node('retry-open').onclick();
+  await nextTurn();
+  const retriedOpen = messages.filter(({ name }) => name === 'boosts:get').at(-1);
+  assert.deepEqual(retriedOpen.args, ['unlisted.css']);
+  reply(retriedOpen, { ...file, name: 'unlisted.css', code: 'unlisted source' });
+  await nextTurn();
+  assert.equal(code.value, 'unlisted source');
+  assert.equal(node('retry-open').hidden, true);
+  assert.equal(node('open-error').textContent, '');
+  location.hash = '#first.css';
+  handlers.get('hashchange')();
+  await nextTurn();
+  reply(messages.filter(({ name }) => name === 'boosts:get').at(-1), { ...file, code: 'second edit' });
+  await nextTurn();
 
   code.value = 'new revision';
   button.onclick();
@@ -1419,6 +1434,53 @@ test('a failed native shortcut write retries the latest shortcut map', async (t)
   changed('structure');
   await nextTurn();
   assert.equal(write.mock.callCount(), 3);
+});
+
+test('a shortcut pause without an acknowledgement stops and can be restarted on the same port', async (t) => {
+  let refuseAcknowledgement = true;
+  const write = t.mock.fn(async (map) => {
+    if (Object.keys(map).length === 0 && refuseAcknowledgement) return new Promise(() => {});
+    return [];
+  });
+  const connect = event();
+  const replies = [];
+  const port = {
+    name: 'flecha-settings', onMessage: event(), onDisconnect: event(),
+    postMessage: (message) => replies.push(message),
+  };
+  globalThis.chrome = { runtime: { onConnect: connect }, flechaPrivate: { onShortcut: event(), setShortcuts: write } };
+  t.after(() => delete globalThis.chrome);
+  t.mock.method(console, 'warn', () => {});
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { registerNative, listen } = await loadModule('chromium/tests/native-shortcuts-entry.ts');
+  registerNative({ store: { state: {}, onChange() {} } });
+  listen(Promise.resolve());
+  connect.emit(port);
+  await nextTurn();
+
+  const record = (id, on) => port.onMessage.emit({ type: 'invoke', id, name: 'settings:recording', args: [on] });
+  const original = write.mock.calls[0].arguments[0];
+  record(1, true);
+  await nextTurn();
+  assert.deepEqual(write.mock.calls[1].arguments[0], {});
+  t.mock.timers.tick(9_999);
+  await nextTurn();
+  assert.deepEqual(replies, []);
+  t.mock.timers.tick(1);
+  await nextTurn();
+  assert.deepEqual(replies, [{ type: 'result', id: 1, value: false }]);
+  t.mock.timers.tick(100);
+  await nextTurn();
+  assert.deepEqual(write.mock.calls.at(-1).arguments[0], original);
+
+  refuseAcknowledgement = false;
+  record(2, true);
+  await nextTurn();
+  assert.deepEqual(replies.at(-1), { type: 'result', id: 2, value: true });
+  assert.deepEqual(write.mock.calls.at(-1).arguments[0], {});
+  record(3, false);
+  await nextTurn();
+  assert.deepEqual(write.mock.calls.at(-1).arguments[0], original);
 });
 
 test('resetting responsive emulation does not reload the new debugger session', async (t) => {

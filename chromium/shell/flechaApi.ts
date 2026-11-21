@@ -134,7 +134,10 @@ function hideWorkerPalette() {
   workerPaletteVisible = false;
   for (const listen of closePaletteListeners) listen();
 }
-on('close-palette', hideWorkerPalette);
+on('close-palette', (id: string) => {
+  if (id === dismissedPalette) dismissedPalette = undefined;
+  if (workerPaletteVisible && id === workerPaletteId) hideWorkerPalette();
+});
 on('palette-closed', () => { if (workerPaletteVisible) hideWorkerPalette(); });
 onReconnect(() => {
   if (dismissedPalette) cmd('closePalette')(dismissedPalette);

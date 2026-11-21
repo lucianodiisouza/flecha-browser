@@ -412,6 +412,61 @@ try {
       console.warn('Could not close the Environment test tab', error);
     });
   }
+  // Shortcut recording cancels on disconnect, even while the native pause is pending.
+  const shortcutUrl = extension + 'settings.html?shortcuts-reconnect=1#shortcuts';
+  const shortcutWorker = await attach((await findTarget(t => t.type === 'service_worker' && t.url.startsWith(extension))).targetId);
+  await evaluate(shortcutWorker, `(() => {
+    const original = chrome.flechaPrivate.setShortcuts;
+    const probe = globalThis.shortcutReconnect = { original, connections: 0, starts: 0, pause: Promise.withResolvers() };
+    probe.observe = port => {
+      if (port.name !== 'flecha-settings' || !port.sender?.url?.includes('?shortcuts-reconnect=1')) return;
+      probe.port = port;
+      probe.connections++;
+      port.onMessage.addListener(message => {
+        if (message.name === 'settings:recording' && message.args[0] === true) probe.starts++;
+      });
+    };
+    chrome.runtime.onConnect.addListener(probe.observe);
+    chrome.flechaPrivate.setShortcuts = async map => {
+      if (!Object.keys(map).length && probe.pause) await probe.pause.promise;
+      return original.call(chrome.flechaPrivate, map);
+    };
+  })()`);
+  const { targetId: shortcutTarget } = await send('Target.createTarget', { url: shortcutUrl });
+  const shortcutPage = await attach(shortcutTarget);
+  try {
+    await withinStep(loaded(shortcutPage, shortcutUrl), 'the shortcut test page to load');
+    const keycap = 'document.querySelector("#shortcut-groups .keycap")';
+    await until(() => evaluate(shortcutPage, `!!${keycap}`), 'the shortcut keycaps to render');
+    for (const [index, label] of ['Preparing…', 'Press keys…'].entries()) {
+      const starts = index + 1;
+      const connections = await evaluate(shortcutWorker, 'shortcutReconnect.connections');
+      await evaluate(shortcutPage, `${keycap}.click()`);
+      await until(() => evaluate(shortcutWorker, `shortcutReconnect.starts === ${starts}`), 'the recording request to reach the worker');
+      await until(() => evaluate(shortcutPage, `${keycap}.textContent === ${JSON.stringify(label)}`), 'the keycap to show the recording state');
+      await evaluate(shortcutWorker, 'shortcutReconnect.port.disconnect()');
+      await until(() => evaluate(shortcutPage, `!document.querySelector('.keycap.recording') &&
+        document.querySelector('#shortcut-notice').textContent.includes('Recording ended')`), 'the disconnected page to clear recording');
+      await until(() => evaluate(shortcutWorker, `shortcutReconnect.connections > ${connections}`), 'the shortcut page to reconnect');
+      await withinStep(evaluate(shortcutPage, 'window.settings.get()'), 'the replacement Settings port to answer');
+      assert.equal(await evaluate(shortcutWorker, 'shortcutReconnect.starts'), starts);
+      assert.equal(await evaluate(shortcutPage, `window.dispatchEvent(new KeyboardEvent('keydown',
+        { key: 'Escape', code: 'Escape', cancelable: true }))`), true);
+      await evaluate(shortcutWorker, 'shortcutReconnect.pause?.resolve(); shortcutReconnect.pause = undefined');
+    }
+    console.log('PASS Settings cancels preparing and ready recordings on disconnect without resuming capture');
+  } finally {
+    await withinStep(evaluate(shortcutWorker, `shortcutReconnect.pause?.resolve();
+      chrome.flechaPrivate.setShortcuts = shortcutReconnect.original;
+      chrome.runtime.onConnect.removeListener(shortcutReconnect.observe)`), 'the shortcut fixture to release the native API')
+      .catch(error => console.warn('Could not restore the shortcut fixture', error));
+    // The injected disconnect is on the worker's end. A fresh recording on the replacement port
+    // also lets the worker restore the normal map before the rest of the workflow uses shortcuts.
+    await withinStep(evaluate(shortcutPage, 'window.settings.recordShortcut(true).then(() => window.settings.recordShortcut(false))'),
+      'the fixture to restore the shortcut map').catch(error => console.warn('Could not restore shortcuts', error));
+    await withinStep(send('Target.closeTarget', { targetId: shortcutTarget }), 'the shortcut test page to close')
+      .catch(error => console.warn('Could not close the shortcut test tab', error));
+  }
   await rpc('openSettings', 'import');
   const settingsImport = await attach((await findTarget(t => t.url.includes('/settings.html#import'))).targetId);
   await loaded(settingsImport, 'chrome-extension://');
