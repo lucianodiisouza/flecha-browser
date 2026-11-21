@@ -1478,9 +1478,9 @@ test('a shortcut pause without an acknowledgement stops and can be restarted on 
   await nextTurn();
   assert.deepEqual(replies.at(-1), { type: 'result', id: 2, value: true });
   assert.deepEqual(write.mock.calls.at(-1).arguments[0], {});
-  record(3, false);
+  port.onDisconnect.emit();
   await nextTurn();
-  assert.deepEqual(write.mock.calls.at(-1).arguments[0], original);
+  assert.deepEqual(write.mock.calls.at(-1).arguments[0], original, 'the worker restores the map when the recording port closes');
 });
 
 test('resetting responsive emulation does not reload the new debugger session', async (t) => {

@@ -146,6 +146,12 @@ test('the worker’s closed snapshot preserves a palette opened locally in the s
   api.openPalette('split');
   emit('close-palette', 'dismissed');
   assert.equal(events.at(-1), 'split', 'a delayed acknowledgement does not close a local palette');
+  ports[1].disconnect();
+  t.mock.timers.tick(5_000);
+  assert.equal(ports.length, 3);
+  assert.deepEqual(ports[2].sent, [], 'an acknowledged dismissal is not sent again');
+  emit('palette', 'navigate', 'dismissed');
+  assert.equal(events.at(-1), 'split', 'the acknowledged palette is still ignored if replayed');
   emit('palette', 'new-tab', 'next');
   emit('close-palette', 'next');
   assert.equal(events.at(-1), 'closed', 'the close event still hides the matching worker palette');

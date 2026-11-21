@@ -417,7 +417,7 @@ try {
   const shortcutWorker = await attach((await findTarget(t => t.type === 'service_worker' && t.url.startsWith(extension))).targetId);
   await evaluate(shortcutWorker, `(() => {
     const original = chrome.flechaPrivate.setShortcuts;
-    const probe = globalThis.shortcutReconnect = { original, connections: 0, starts: 0, pause: Promise.withResolvers() };
+    const probe = globalThis.shortcutReconnect = { original, connections: 0, starts: 0, restoredMaps: 0, pause: Promise.withResolvers() };
     probe.observe = port => {
       if (port.name !== 'flecha-settings' || !port.sender?.url?.includes('?shortcuts-reconnect=1')) return;
       probe.port = port;
@@ -428,8 +428,11 @@ try {
     };
     chrome.runtime.onConnect.addListener(probe.observe);
     chrome.flechaPrivate.setShortcuts = async map => {
-      if (!Object.keys(map).length && probe.pause) await probe.pause.promise;
-      return original.call(chrome.flechaPrivate, map);
+      const normal = Object.keys(map).length !== 0;
+      if (!normal && probe.pause) await probe.pause.promise;
+      const rejected = await original.call(chrome.flechaPrivate, map);
+      if (normal) probe.restoredMaps++;
+      return rejected;
     };
   })()`);
   const { targetId: shortcutTarget } = await send('Target.createTarget', { url: shortcutUrl });
@@ -438,8 +441,8 @@ try {
     await withinStep(loaded(shortcutPage, shortcutUrl), 'the shortcut test page to load');
     const keycap = 'document.querySelector("#shortcut-groups .keycap")';
     await until(() => evaluate(shortcutPage, `!!${keycap}`), 'the shortcut keycaps to render');
-    for (const [index, label] of ['Preparing…', 'Press keys…'].entries()) {
-      const starts = index + 1;
+    for (const label of ['Preparing…', 'Press keys…']) {
+      const starts = (await evaluate(shortcutWorker, 'shortcutReconnect.starts')) + 1;
       const connections = await evaluate(shortcutWorker, 'shortcutReconnect.connections');
       await evaluate(shortcutPage, `${keycap}.click()`);
       await until(() => evaluate(shortcutWorker, `shortcutReconnect.starts === ${starts}`), 'the recording request to reach the worker');
@@ -453,6 +456,13 @@ try {
       assert.equal(await evaluate(shortcutPage, `window.dispatchEvent(new KeyboardEvent('keydown',
         { key: 'Escape', code: 'Escape', cancelable: true }))`), true);
       await evaluate(shortcutWorker, 'shortcutReconnect.pause?.resolve(); shortcutReconnect.pause = undefined');
+      // A disconnect injected from the worker only notifies the page. Reset the worker fixture
+      // between cases and wait until Chromium actually has the normal shortcut map again.
+      const restoredMaps = await evaluate(shortcutWorker, 'shortcutReconnect.restoredMaps');
+      await withinStep(evaluate(shortcutPage, 'window.settings.recordShortcut(true).then(() => window.settings.recordShortcut(false))'),
+        'the fixture to restore the shortcut map');
+      await until(() => evaluate(shortcutWorker, `shortcutReconnect.restoredMaps > ${restoredMaps}`),
+        'Chromium to apply the normal shortcut map');
     }
     console.log('PASS Settings cancels preparing and ready recordings on disconnect without resuming capture');
   } finally {
@@ -460,10 +470,6 @@ try {
       chrome.flechaPrivate.setShortcuts = shortcutReconnect.original;
       chrome.runtime.onConnect.removeListener(shortcutReconnect.observe)`), 'the shortcut fixture to release the native API')
       .catch(error => console.warn('Could not restore the shortcut fixture', error));
-    // The injected disconnect is on the worker's end. A fresh recording on the replacement port
-    // also lets the worker restore the normal map before the rest of the workflow uses shortcuts.
-    await withinStep(evaluate(shortcutPage, 'window.settings.recordShortcut(true).then(() => window.settings.recordShortcut(false))'),
-      'the fixture to restore the shortcut map').catch(error => console.warn('Could not restore shortcuts', error));
     await withinStep(send('Target.closeTarget', { targetId: shortcutTarget }), 'the shortcut test page to close')
       .catch(error => console.warn('Could not close the shortcut test tab', error));
   }
