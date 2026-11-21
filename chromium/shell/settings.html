@@ -28,6 +28,7 @@
       <div class="nav-label">Developer</div>
       <button class="nav-item" data-pane="environments"><span class="nav-icon amber"><i data-icon="code"></i></span>Environments</button>
       <button class="nav-item" data-pane="boosts"><span class="nav-icon orange"><i data-icon="zap"></i></span>Boosts</button>
+      <button class="nav-item" data-pane="console"><span class="nav-icon red"><i data-icon="terminal"></i></span>Console Errors</button>
       <button class="nav-item" data-pane="agents"><span class="nav-icon purple"><i data-icon="sparkle"></i></span>Coding Agents</button>
       <div class="nav-label">Help</div>
       <button class="nav-item" data-pane="shortcuts"><span class="nav-icon gray"><i data-icon="keyboard"></i></span>Keyboard Shortcuts</button>
@@ -292,6 +293,22 @@
           </div>
         </div>
         <p class="footnote">Tip: press <kbd data-keys="Alt+CmdOrCtrl+B">⌥⌘B</kbd> on any site to create or edit its boost.</p>
+      </section>
+
+      <section class="pane" data-pane="console">
+        <p class="lead">
+          Tabs on local addresses (<code>localhost</code>, <code>.local</code>, <code>.test</code>) show a red count of their console errors in the
+          sidebar, so you notice what your own page broke. Devices on your network live on those addresses too, and their errors aren't yours to fix.
+        </p>
+        <div class="card host-list-card">
+          <div class="row">
+            <div class="row-text">
+              <strong>Don't show error badges on these hosts</strong>
+              <small>One per line. <span class="mono">*</span> stands for anything: <span class="mono">*.local</span> covers every <span class="mono">.local</span> name.</small>
+            </div>
+          </div>
+          <textarea id="consoleBadgeHiddenHosts" class="env-targets" rows="4" spellcheck="false" placeholder="*.local&#10;router.test"></textarea>
+        </div>
       </section>
 
       <section class="pane" data-pane="agents">

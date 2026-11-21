@@ -111,6 +111,10 @@ body {
   background: linear-gradient(#4cc6d8, #1e9db3);
 }
 
+.nav-icon.red {
+  background: linear-gradient(#f0706a, #d6403a);
+}
+
 .nav-icon.amber {
   background: linear-gradient(#f0b24a, #d98a12);
 }
@@ -404,6 +408,16 @@ code {
 .icon-button svg {
   width: 13px;
   height: 13px;
+}
+
+/* ---- console errors: the hidden hosts, in the same field as an environment's targets ---- */
+
+.host-list-card {
+  padding: 0 6px 8px;
+}
+
+.host-list-card .row {
+  padding: 10px;
 }
 
 /* ---- environments ------------------------------------------------------- */
