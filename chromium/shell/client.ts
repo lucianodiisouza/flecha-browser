@@ -46,9 +46,12 @@ function disconnected(connection: Connection, terminal = false) {
     reply.reject(new ConnectionError(!startupFailure, startupFailure ?? 'Flecha’s background restarted'));
   }
   connection.replies.clear();
-  for (const cb of disconnectListeners) cb();
   if (terminal) stop();
   else scheduleRetry(Date.now() - connection.openedAt >= STABLE_MS);
+  for (const cb of disconnectListeners) {
+    try { cb(); }
+    catch (error) { console.error('Flecha shell: disconnect listener failed', error); }
+  }
 }
 
 function connect() {

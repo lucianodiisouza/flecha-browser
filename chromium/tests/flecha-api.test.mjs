@@ -101,12 +101,17 @@ test('native frame and fullscreen recover from lookup and request failures', asy
 
 test('the worker’s closed snapshot preserves a palette opened locally in the side panel', async t => {
   let receive;
+  const sent = [];
   globalThis.location = { pathname: '/sidebar.html' };
   globalThis.document = { documentElement: { dataset: { surface: 'panel' } } };
   globalThis.window = { addEventListener() {} };
   globalThis.matchMedia = () => ({ matches: false, addEventListener() {} });
   globalThis.chrome = {
-    runtime: { connect: () => ({ onMessage: { addListener: listener => { receive = listener; } }, onDisconnect: { addListener() {} } }) },
+    runtime: { connect: () => ({
+      onMessage: { addListener: listener => { receive = listener; } },
+      onDisconnect: { addListener() {} },
+      postMessage: message => sent.push(message),
+    }) },
   };
   t.mock.method(globalThis, 'setInterval', () => {});
   await loadModule('chromium/shell/flechaApi.ts', { fresh: true });
@@ -124,4 +129,10 @@ test('the worker’s closed snapshot preserves a palette opened locally in the s
   api.openPalette('split');
   emit('close-palette');
   assert.deepEqual(events, ['new-tab', 'navigate', 'closed', 'split', 'closed']);
+  emit('palette', 'navigate', 'dismissed');
+  api.closePalette();
+  assert.deepEqual(sent.at(-1), { type: 'cmd', name: 'closePalette', args: ['dismissed'] });
+  emit('palette', 'navigate', 'dismissed');
+  assert.equal(events.length, 6, 'replaying a dismissed worker palette does not reopen it');
+  assert.equal(events.at(-1), 'navigate');
 });

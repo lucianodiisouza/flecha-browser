@@ -98,7 +98,9 @@ export async function release(tabId: number, holder: Holder, resetShared?: () =>
     const cleanup = Promise.resolve().then(async () => {
       const attachment = attaching.get(tabId);
       if (attachment) await attachment.catch(() => undefined);
-      if (!attachmentResets.has(tabId) && holders.get(tabId) === set && set.get(holder) === claim) await resetShared();
+      const reset = attachmentResets.get(tabId);
+      if (reset) await reset.done.catch(() => undefined);
+      if (holders.get(tabId) === set && set.get(holder) === claim) await resetShared();
     }).finally(async () => {
       try {
         if (holders.get(tabId) === set && set.get(holder) === claim) await release(tabId, holder);

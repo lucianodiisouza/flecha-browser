@@ -42,7 +42,11 @@ test('worker restart resumes shell messages and a bad payload leaves other repli
     delete globalThis.document;
     delete globalThis.location;
   });
-  const { cmd, invoke, on, onReconnect } = await loadModule('chromium/shell/client.ts');
+  const { cmd, invoke, on, onDisconnect, onReconnect } = await loadModule('chromium/shell/client.ts');
+  const log = t.mock.method(console, 'error', () => {});
+  const observeDisconnect = t.mock.fn();
+  onDisconnect(() => { throw new Error('Bad disconnect observer'); });
+  onDisconnect(observeDisconnect);
   let reconnects = 0;
   onReconnect(() => ++reconnects);
   const received = [];
@@ -51,6 +55,8 @@ test('worker restart resumes shell messages and a bad payload leaves other repli
   const rejected = assert.rejects(pending, /background restarted/);
   ports[0].onDisconnect.emit();
   await rejected;
+  assert.equal(observeDisconnect.mock.callCount(), 1);
+  assert.match(log.mock.calls[0].arguments[0], /disconnect listener failed/);
 
   t.mock.timers.tick(100);
   assert.equal(attempts, 2);
@@ -693,6 +699,14 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
   reply(messages.filter(({ name }) => name === 'boosts:get').at(-1), { ...file, name: 'third.css' });
   await nextTurn();
   assert.equal(code.value, 'original');
+  location.hash = '#another-failed-deep-link.css';
+  handlers.get('hashchange')();
+  await nextTurn();
+  const missingRead = messages.filter(({ name }) => name === 'boosts:get').at(-1);
+  port.onMessage.emit({ type: 'result', id: missingRead.id, error: 'The second deep link failed' });
+  await nextTurn();
+  assert.equal(location.hash, '#third.css');
+  assert.equal(node('retry-open').hidden, false);
   node('delete').onclick();
   await nextTurn();
   port.onDisconnect.emit();
@@ -709,6 +723,7 @@ test('Boosts serializes saves and keeps the editor address aligned with a retain
   assert.equal(sentSaves().length, savesBefore, 'Save cannot recreate a clean Boost after deletion is confirmed');
   assert.equal(code.value, '');
   assert.equal(location.hash.slice(1), '');
+  assert.equal(node('retry-open').hidden, true, 'deleting the fallback clears an unusable Retry');
 
   location.hash = '#pending-first.css';
   handlers.get('hashchange')();
@@ -1315,12 +1330,11 @@ test('canceling a debugger attachment invalidates shared cleanup even while a re
   await nextTurn();
   assert.equal(detach.mock.callCount(), 1);
   cleanup.resolve();
-  await leaving;
-  await nextTurn();
-  assert.deepEqual(renewed.mock.calls.map(({ arguments: result }) => result), [[false]]);
+  assert.equal(renewed.mock.callCount(), 0);
   onDetach.emit({ tabId: 12 }, 'canceled_by_user');
   await resetting;
-  await renewing;
+  await Promise.all([leaving, renewing]);
+  assert.deepEqual(renewed.mock.calls.map(({ arguments: result }) => result), [[false]]);
   assert.equal(attach.mock.callCount(), 1);
   assert.equal(await hold(12, 'agent'), true);
   detachReply.resolve();
@@ -1345,6 +1359,27 @@ test('a refused debugger reset keeps shared ownership until the same attachment 
   await hold(12, 'replacement');
   await reset();
   assert.equal(detach.mock.callCount(), 2, 'retrying an old reset cannot detach a replacement session');
+});
+
+test('a shared release cleans up its domains if the pending debugger reset fails', async (t) => {
+  const detach = Promise.withResolvers();
+  globalThis.chrome = { debugger: { onDetach: event(), attach: async () => {}, detach: () => detach.promise } };
+  t.after(() => delete globalThis.chrome);
+  const { hold, isHeld, release, captureDebuggerReset } = await loadModule('chromium/shell/features/debuggee.ts', { fresh: true });
+  await hold(12, 'agent');
+  await hold(12, 'responsive');
+  const resetting = captureDebuggerReset(12, 'responsive')();
+  const refused = assert.rejects(resetting, /detach refused/);
+  const clean = t.mock.fn(async () => {});
+  const leaving = release(12, 'agent', clean);
+  await nextTurn();
+  assert.equal(clean.mock.callCount(), 0);
+  assert.equal(isHeld(12, 'agent'), true);
+  detach.reject(new Error('Debugger detach refused'));
+  await Promise.all([refused, leaving]);
+  assert.equal(clean.mock.callCount(), 1);
+  assert.equal(isHeld(12, 'agent'), false);
+  assert.equal(isHeld(12, 'responsive'), true);
 });
 
 test('the responsive split keeps the phone viewport width when the window grows', async () => {

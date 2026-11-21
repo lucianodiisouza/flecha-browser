@@ -4,7 +4,7 @@ import { setupDebugPane } from './debugPane.js';
 import { lazySettingsPane } from './lazySettingsPane';
 import { isEnter } from '../lib/keys';
 import { importFromBrowser } from '../windowUi';
-import { onReconnect } from '../client';
+import { onDisconnect, onReconnect } from '../client';
 import { toast } from '../settingsUi';
 import { formatTargets, parseTargets } from '../lib/environments';
 
@@ -459,8 +459,13 @@ function renderShortcuts() {
           const recording = recordingId === item.id;
           cap.classList.toggle('recording', recording);
           cap.classList.toggle('empty', !item.keys);
-          cap.textContent = recording ? (recordingReady ? 'Press keys…' : 'Preparing…') : item.keys || 'None';
-          cap.title = recording ? 'Esc cancels · ⌫ removes the shortcut' : 'Click to record a new shortcut';
+          if (recording) {
+            cap.textContent = recordingReady ? 'Press keys…' : 'Preparing…';
+            cap.title = recordingReady ? 'Esc cancels · ⌫ removes the shortcut' : 'Click to cancel';
+          } else {
+            cap.textContent = item.keys || 'None';
+            cap.title = 'Click to record a new shortcut';
+          }
           cap.addEventListener('click', () => void startRecording(recording ? undefined : item.id));
           actions.append(cap);
         }
@@ -491,7 +496,14 @@ async function startRecording(id: string | undefined) {
   if (request === recordingRequest) renderShortcuts();
 }
 
-window.addEventListener('blur', () => { if (recordingId) void startRecording(undefined); });
+onDisconnect(() => {
+  if (!recordingId) return;
+  recordingRequest++;
+  recordingId = undefined;
+  recordingReady = false;
+  renderShortcuts();
+  showNotice('Recording ended when Flecha disconnected. Try again.');
+});
 api.onKey(async (key) => {
   if (!recordingId || !recordingReady) return;
   if (['Shift', 'Control', 'Alt', 'Meta'].includes(key.key)) return;

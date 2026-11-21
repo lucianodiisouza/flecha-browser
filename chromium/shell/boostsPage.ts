@@ -140,7 +140,7 @@ async function open(name: string, reload = false) {
   if (editorSession === previousEditor && code.value !== oldCode) return restoreHash();
   if (writeRevisions.get(name) !== revision) return open(name, reload);
   discard = undefined;
-  if (failedOpen?.name === name || !reload) clearOpenFailure();
+  if (failedOpen && (!reload || name === failedOpen.name || name !== failedOpen.fallback)) clearOpenFailure();
   if (!reload || current?.name !== file?.name) editorSession = Symbol();
   current = file;
   highlightListSelection();

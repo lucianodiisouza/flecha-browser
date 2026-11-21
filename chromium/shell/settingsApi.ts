@@ -20,7 +20,6 @@ function tellNotYet<T>(result: T): T {
 // ---- recording shortcuts: Electron catches keys in before-input-event; here the page does ----
 
 let recording = false;
-let recordingRequested = false;
 let recordingRevision = 0;
 const keyListeners: Array<(key: RecordedKey) => void> = [];
 const findListeners: Array<() => void> = [];
@@ -49,7 +48,6 @@ window.addEventListener(
 /** Recording also pauses Flecha's browser-wide shortcuts, so those keys reach this page. */
 async function setRecording(on: boolean) {
   const revision = ++recordingRevision;
-  recordingRequested = on;
   if (!on) {
     recording = false;
     cmd('settings:recording')(false);
@@ -60,9 +58,9 @@ async function setRecording(on: boolean) {
   if (accepted === false) throw new Error('Shortcut recording was canceled');
   recording = true;
 }
-onDisconnect(() => { recording = false; });
-onReconnect(() => {
-  if (recordingRequested) void setRecording(true).catch(() => undefined);
+onDisconnect(() => {
+  recordingRevision++;
+  recording = false;
 });
 
 // The background (Flecha's ⌘F, say) can ask for the search field too.

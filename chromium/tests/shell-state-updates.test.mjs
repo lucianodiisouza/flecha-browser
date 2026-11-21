@@ -90,14 +90,14 @@ test('saving a sidebar width waits for an older full-state write', async () => {
   const slowSave = Promise.withResolvers();
   const snapshots = [];
   const store = new Store({ load: () => undefined, async save(json) {
-    if (snapshots.length === 0) await slowSave.promise;
     snapshots.push(JSON.parse(json));
+    if (snapshots.length === 1) await slowSave.promise;
   } });
   const oldSave = store.saveNow();
   const width = store.setSidebarWidth(320);
   await Promise.resolve();
   assert.equal(store.state.sidebarWidth, undefined);
-  assert.deepEqual(snapshots, []);
+  assert.deepEqual(snapshots.map((state) => state.sidebarWidth), [undefined]);
   slowSave.resolve();
   await oldSave;
   assert.equal(await width, 320);

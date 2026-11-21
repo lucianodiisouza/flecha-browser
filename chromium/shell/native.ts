@@ -411,6 +411,23 @@ function registerTheme(ctx: NativeContext) {
 
 // ---- keyboard shortcuts (patch 0016) ----------------------------------------------------
 
+// The native workflow checks give each browser step this same budget.
+const SHORTCUT_TIMEOUT_MS = 10_000;
+
+async function writeShortcuts(map: Record<string, string>) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      chrome.flechaPrivate.setShortcuts(map),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Chromium did not acknowledge the shortcut map')), SHORTCUT_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Accelerator → command id, as setShortcuts() wants it: the fixed families, then yours. */
 export function shortcutMap(state: Store['state']): Record<string, string> {
   const map = fixedShortcuts();
@@ -444,7 +461,7 @@ function registerShortcuts(ctx: NativeContext) {
       return;
     }
     applying = true;
-    void Promise.resolve().then(() => chrome.flechaPrivate.setShortcuts(map)).then((rejected) => {
+    void writeShortcuts(map).then((rejected) => {
       sent = json;
       retryDelay = 100;
       if (rejected.length) console.warn('Flecha shell: the browser could not read these shortcuts', rejected);
@@ -480,9 +497,19 @@ function registerShortcuts(ctx: NativeContext) {
       if (recorder?.port === port) return recorder.paused;
       recorder?.port.onDisconnect.removeListener(stopRecording);
       recorder?.confirm(false);
-      let confirm!: (ready: boolean) => void;
-      const paused = new Promise<boolean>((resolve) => { confirm = resolve; });
-      recorder = { port, paused, confirm };
+      let done!: (ready: boolean) => void;
+      const paused = new Promise<boolean>((resolve) => { done = resolve; });
+      const session = {
+        port, paused,
+        confirm(ready: boolean) {
+          clearTimeout(deadline);
+          done(ready);
+        },
+      };
+      const deadline = setTimeout(() => {
+        if (recorder === session) stopRecording();
+      }, SHORTCUT_TIMEOUT_MS);
+      recorder = session;
       port.onDisconnect.addListener(stopRecording);
       apply(true);
       return paused;

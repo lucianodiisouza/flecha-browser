@@ -121,23 +121,24 @@ on('frame', (state) => {
 
 const paletteListeners: Array<(mode: PaletteMode) => void> = [];
 const closePaletteListeners: Array<() => void> = [];
-let paletteId: string | undefined;
+let workerPaletteId: string | undefined;
+let workerPaletteVisible = false;
 let dismissedPalette: string | undefined;
 on('palette', (mode: PaletteMode, id: string) => {
-  if (id === paletteId || id === dismissedPalette) return;
-  paletteId = id;
+  if (id === workerPaletteId || id === dismissedPalette) return;
+  workerPaletteId = id;
+  workerPaletteVisible = true;
   for (const listen of paletteListeners) listen(mode);
 });
 function hideWorkerPalette() {
-  paletteId = undefined;
+  workerPaletteVisible = false;
   for (const listen of closePaletteListeners) listen();
 }
 on('close-palette', hideWorkerPalette);
-on('palette-closed', () => { if (paletteId !== undefined) hideWorkerPalette(); });
+on('palette-closed', () => { if (workerPaletteVisible) hideWorkerPalette(); });
 onReconnect(() => {
-  if (!windowFrame) return;
   if (dismissedPalette) cmd('closePalette')(dismissedPalette);
-  cmd('setSidebarPeek')(sidebarPeek);
+  if (windowFrame) cmd('setSidebarPeek')(sidebarPeek);
 });
 const renameListeners: Array<(tabId: string) => void> = [];
 const editHomeUrlListeners: Array<(tabId: string) => void> = [];
@@ -227,16 +228,14 @@ const api: FlechaApi = {
   },
   // The frame grows over the page first, as in Electron; the side panel just opens it.
   openPalette: surface === 'window' ? cmd('openPalette') : (mode) => {
-    paletteId = undefined;
+    workerPaletteVisible = false;
     paletteListeners.forEach((cb) => cb(mode));
   },
   closePalette: () => {
-    if (surface !== 'window') {
-      paletteId = undefined;
-      return;
-    }
-    dismissedPalette = paletteId;
-    cmd('closePalette')(paletteId);
+    if (!workerPaletteVisible) return;
+    workerPaletteVisible = false;
+    dismissedPalette = workerPaletteId;
+    cmd('closePalette')(dismissedPalette);
   },
   toggleSidebar: cmd('toggleSidebar'),
   resizeSidebar: (width, done) => {

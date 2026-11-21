@@ -27,6 +27,7 @@ test('typed addresses open directly with encoded paths and queries', () => {
   assert.equal(resolveInput('example.com/my\tnotes'), 'https://example.com/my%09notes');
   assert.equal(resolveInput('https://example.com/my\tnotes'), 'https://example.com/my%09notes');
   assert.equal(resolveInput('https://exam\nple.com/my\tnotes'), 'https://example.com/my%09notes');
+  assert.equal(resolveInput('data://,a\tb'), 'data://,a%09b');
   assert.equal(resolveInput('[fd00::1]/my notes'), 'https://[fd00::1]/my%20notes');
   const query = 'example.com? section=release notes&token=fixture';
   assert.equal(new URL(resolveInput(query)).searchParams.get('token'), 'fixture');
