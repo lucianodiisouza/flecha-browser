@@ -1050,9 +1050,24 @@ function renderSpaceEditor() {
       h('button', { class: `emoji${space.emoji === emoji ? ' selected' : ''}`, onclick: () => api.updateSpace(space.id, { emoji }) }, emoji),
     ),
   );
-  const custom = h('input', { type: 'color', value: space.color, title: 'Custom colour' }) as HTMLInputElement;
-  custom.addEventListener('input', () => api.updateSpace(space.id, { color: custom.value }));
-  $('space-colors').replaceChildren(
+  // The custom swatch and its input stay in place across renders: each colour picked re-renders
+  // the editor, and replacing the input closed its colour picker at the first click, with no
+  // chance to drag across it.
+  const colors = $('space-colors');
+  let customSwatch = colors.querySelector<HTMLLabelElement>('label.custom');
+  if (!customSwatch) {
+    const input = h('input', { type: 'color', value: space.color, title: 'Custom colour' }) as HTMLInputElement;
+    input.addEventListener('input', () => editingSpace && api.updateSpace(editingSpace, { color: input.value }));
+    customSwatch = h('label', { title: 'Custom colour' }, input) as HTMLLabelElement;
+    colors.append(customSwatch);
+  }
+  customSwatch.className = `swatch custom${SPACE_COLORS.includes(space.color) ? '' : ' selected'}`;
+  customSwatch.style.setProperty('--swatch', shownSpaceColor(space.color));
+  const customInput = customSwatch.querySelector('input')!;
+  // Not while its picker is open: the colour on its way back could be an older one of this drag.
+  if (document.activeElement !== customInput && customInput.value !== space.color) customInput.value = space.color;
+  for (const swatch of colors.querySelectorAll('button.swatch')) swatch.remove();
+  customSwatch.before(
     ...SPACE_COLORS.map((color) =>
       h('button', {
         class: `swatch${space.color === color ? ' selected' : ''}`,
@@ -1061,7 +1076,6 @@ function renderSpaceEditor() {
         onclick: () => api.updateSpace(space.id, { color }),
       }),
     ),
-    h('label', { class: `swatch custom${SPACE_COLORS.includes(space.color) ? '' : ' selected'}`, style: `--swatch: ${shownSpaceColor(space.color)}`, title: 'Custom colour' }, custom),
   );
   $<HTMLInputElement>('space-isolated-toggle').checked = !!space.isolated;
   $<HTMLButtonElement>('space-delete').disabled = state!.spaces.length < 2;

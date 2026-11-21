@@ -859,13 +859,25 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
       el('button', { class: `tm-emoji${space.emoji ? '' : ' selected'}`, title: 'No icon', onclick: () => update({ emoji: '' }) }, icon('close')),
       ...SPACE_EMOJIS.map((e) => el('button', { class: `tm-emoji${space.emoji === e ? ' selected' : ''}`, onclick: () => update({ emoji: e }) }, e)),
     );
-    const custom = el('input', { type: 'color', value: space.color, title: 'Custom colour' });
-    custom.addEventListener('input', () => update({ color: custom.value }));
-    node.querySelector('.tm-pop-swatches')!.replaceChildren(
+    // The custom swatch and its input stay across renders: replacing the input closed its
+    // colour picker at the first click (see the sidebar's Space editor).
+    const swatches = node.querySelector<HTMLElement>('.tm-pop-swatches')!;
+    let customSwatch = swatches.querySelector<HTMLLabelElement>('label.custom');
+    if (!customSwatch) {
+      const input = el('input', { type: 'color', value: space.color, title: 'Custom colour' });
+      input.addEventListener('input', () => update({ color: input.value }));
+      customSwatch = el('label', { title: 'Custom colour' }, input) as HTMLLabelElement;
+      swatches.append(customSwatch);
+    }
+    customSwatch.className = `tm-swatch custom${SPACE_COLORS.includes(space.color) ? '' : ' selected'}`;
+    customSwatch.style.setProperty('--swatch', shownSpaceColor(space.color));
+    const customInput = customSwatch.querySelector('input')!;
+    if (document.activeElement !== customInput && customInput.value !== space.color) customInput.value = space.color;
+    for (const swatch of swatches.querySelectorAll('button.tm-swatch')) swatch.remove();
+    customSwatch.before(
       ...SPACE_COLORS.map((color) =>
         el('button', { class: `tm-swatch${space.color === color ? ' selected' : ''}`, style: `--swatch: ${shownSpaceColor(color)}`, title: color, onclick: () => update({ color }) }),
       ),
-      el('label', { class: `tm-swatch custom${SPACE_COLORS.includes(space.color) ? '' : ' selected'}`, style: `--swatch: ${shownSpaceColor(space.color)}`, title: 'Custom colour' }, custom),
     );
     (node.querySelector('.tm-pop-delete') as HTMLButtonElement).disabled = view!.spaces.length < 2;
     placeSpaceEditor();
