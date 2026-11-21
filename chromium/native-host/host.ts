@@ -17,14 +17,12 @@ import path from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { detectBrowsers, readBookmarksHtml, readBrowser } from './browserImport';
 import { AGENT_TOOLS, McpBridge, fail, type AgentResult } from './agentServer';
-import type { HostMethods, ToHost, ToShell } from './protocol';
+import { toolWatchdog, type HostMethods, type ToHost, type ToShell } from './protocol';
 
 const SHELL_ORIGIN = 'chrome-extension://abdiaepfgbbhdjaecjipmaailijaaide/';
 /** Chromium refuses messages from a host over 1 MB; leave room for the chunk's own fields. */
 const MAX_MESSAGE = 1024 * 1024 - 1024;
 const CHUNK = 128 * 1024;
-/** How long a tool may take in the shell before the agent is told it failed. */
-const TOOL_TIMEOUT = 60_000;
 
 const log = (...args: unknown[]) => console.error('[flecha-host]', ...args);
 
@@ -119,7 +117,7 @@ function register(mcp: McpServer) {
     const run = (args: Record<string, unknown> = {}) =>
       new Promise<AgentResult>((resolve) => {
         const id = nextTool++;
-        const wait = TOOL_TIMEOUT + (typeof args.timeoutMs === 'number' ? args.timeoutMs : 0);
+        const wait = toolWatchdog(args.timeoutMs);
         const timer = setTimeout(() => finish(fail(`Flecha didn’t answer ${name} within ${wait / 1000}s`)), wait);
         const finish = (result: AgentResult) => {
           clearTimeout(timer);

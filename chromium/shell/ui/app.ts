@@ -9,9 +9,11 @@ import { isMac } from '../lib/platform';
 import { isEnter } from '../lib/keys';
 import { isUndoKey } from '../lib/undo';
 import { spaceDropBefore } from '../lib/spaceOrder';
+import { canDropToSplit, pageSplitTarget } from '../lib/splitDrop';
+import { onReconnect } from '../client';
 import { EMPTY_ACTIONS, EMPTY_TABS, type Match, type ResultKind, displayUrl, historyQuery, inlineCompletion, matchQuality, rank, score } from '../lib/commandBar';
 import { suggestable, suggestionRequests } from '../lib/suggest';
-import { searchUrl } from '../lib/url';
+import { searchUrl, webAddress } from '../lib/url';
 import type { MenuEntry } from '../settingsUi';
 import { importFromBrowser, showPageMenu } from '../windowUi';
 import { SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from '../../shared/sidebarWidth';
@@ -27,13 +29,22 @@ declare global {
 }
 
 const api = window.flecha;
-/** Where this page is shown: the Electron window (unset), or the Chromium build's side panel or new tab page. */
-const surface = document.documentElement.dataset.surface as 'panel' | 'newtab' | undefined;
+/** The window frame, side panel or new tab page. */
+const surface = document.documentElement.dataset.surface;
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const DRAG_TYPE = 'application/x-flecha-tab';
 const SPACE_DRAG_TYPE = 'application/x-flecha-space';
+// Allow one missed dragover cycle. HTML schedules each cycle at 350 ms with up to 200 ms jitter.
+const INCOMING_DROP_IDLE_MS = 2 * (350 + 200);
 /** The Space whose button is being dragged: drag events only say what kind of thing it is. */
 let draggedSpace: string | undefined;
+let draggedTab: { id: string; spaceId: string } | undefined;
+let incomingDrop: HTMLElement | undefined;
+let incomingDropTimer: ReturnType<typeof setTimeout> | undefined;
+let pinnedHoverTimer: ReturnType<typeof setTimeout> | undefined;
+let clearDropTarget: (() => void) | undefined;
+let deferredRows = false;
+let externalPinnedDrag = false;
 
 let state: UiState | undefined;
 
@@ -116,6 +127,11 @@ function favicon(tab: TabInfo, src = faviconSource(tab)) {
 
 function render(s: UiState) {
   const previous = state;
+  if (previous && previous.activeSpaceId !== s.activeSpaceId) {
+    clearDropTarget?.();
+    incomingDrop = undefined;
+    externalPinExpansion(false);
+  }
   state = s;
   const space = s.spaces.find((sp) => sp.id === s.activeSpaceId) ?? s.spaces[0];
   const active = space.activeTabId ? s.tabs[space.activeTabId] : undefined;
@@ -147,7 +163,8 @@ function render(s: UiState) {
   // never draws the empty state, the new tab page always does.
   renderEmptyState(s, space, surface === 'newtab' || (!active && surface !== 'panel'));
 
-  keyedRows($('favorites'), use => {
+  const preserveRows = !!draggedTab || !!incomingDrop;
+  if (!preserveRows) keyedRows($('favorites'), use => {
     for (const id of s.favorites) {
       const tab = s.tabs[id];
       if (!tab) continue;
@@ -173,12 +190,19 @@ function render(s: UiState) {
   title.dataset.spaceId = space.id;
   $('space-isolated').hidden = !space.isolated;
 
-  // Re-rendering would throw away a tab or folder name being typed in place.
-  if (!document.querySelector('#scroll [contenteditable="true"]')) {
+  // Keep the native drag source and any name being typed in place.
+  if (!preserveRows && !document.querySelector('#scroll [contenteditable="true"]')) {
     renderPinned($('pinned'), space.pinned, space);
     keyedRows($('today'), use => todayRows(s, space, use));
     renderAgentFolder(s, space);
+    deferredRows = false;
+  } else if (incomingDrop) {
+    deferredRows = true;
   }
+  $('pinned-header').hidden = incognito;
+  $('scroll').style.visibility = draggedTab && draggedTab.spaceId !== space.id ? 'hidden' : '';
+  updatePinnedVisibility(space);
+  if (draggedTab) showSplitDrop(draggedTab.id);
 
   keyedRows($('spaces'), use => {
     for (const sp of s.spaces) {
@@ -212,8 +236,18 @@ function render(s: UiState) {
   if (!sitePanel.hidden) renderSitePanel();
 }
 
+function updatePinnedVisibility(space: Space) {
+  const expanded = !space.pinnedCollapsed || draggedTab?.spaceId === space.id || externalPinnedDrag;
+  $('pinned').hidden = !expanded;
+  $('btn-toggle-pinned').setAttribute('aria-expanded', String(expanded));
+  $('pinned-count').hidden = expanded || !space.pinned.length;
+  $('pinned-count').textContent = String(space.pinned.length);
+}
+
 /** What a blank Space offers: search, the sites you go back to most, and your dev servers. */
 let topSitesFetched = 0;
+let topSitesAttempted = 0;
+let fetchingTopSites = false;
 let topSites: HistoryEntry[] = [];
 function renderEmptyState(s: UiState, space: Space, show: boolean) {
   const empty = $('empty-state');
@@ -224,12 +258,14 @@ function renderEmptyState(s: UiState, space: Space, show: boolean) {
   $('empty-title').textContent = hour < 5 ? 'Up late?' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   $('empty-space').replaceChildren(h('span', { class: 'empty-space-emoji' }, space.emoji ?? ''), h('span', {}, space.name));
   // History changes as you browse, so the tiles are fetched each time the page becomes empty.
-  if (wasHidden || Date.now() - topSitesFetched > 60_000) {
-    topSitesFetched = Date.now();
-    api.topSites().then((sites) => {
+  if (!fetchingTopSites && (wasHidden || Date.now() - Math.max(topSitesFetched, topSitesAttempted) > 60_000)) {
+    fetchingTopSites = true;
+    topSitesAttempted = Date.now();
+    void api.topSites().then((sites) => {
       topSites = sites;
+      topSitesFetched = Date.now();
       if (state) render(state);
-    });
+    }, () => undefined).finally(() => { fetchingTopSites = false; });
   }
   // Drawn on every update so icons appear as they are fetched.
   $('empty-top').hidden = !topSites.length;
@@ -392,7 +428,7 @@ function renderPinned(parent: HTMLElement, nodes: PinnedNode[], space: Space, fo
         if (tab) tabRow(use, tab, space, { zone: 'pinned', folderId, beforeTabId: tab.id });
         continue;
       }
-      const folder = use('folder:' + node.id, () => {
+      const folder = use(`folder:${space.id}:${node.id}`, () => {
         const name = h('span', { class: 'title folder-name' });
         const header = h('button', {
           class: 'row',
@@ -402,7 +438,7 @@ function renderPinned(parent: HTMLElement, nodes: PinnedNode[], space: Space, fo
             editInline(name, name.textContent ?? '', value => api.renameFolder(node.id, value));
           },
         }, h('span', { class: 'row-icon folder-icon' }), name, h('span', { class: 'chevron' }, icon('chevron')));
-        acceptDrops(header, { zone: 'pinned', folderId: node.id });
+        acceptDrops(header, { zone: 'pinned', spaceId: space.id, folderId: node.id });
         return h('div', { class: 'folder' }, header, h('div', { class: 'folder-children' }));
       });
       const header = folder.firstElementChild!;
@@ -505,11 +541,12 @@ function patchTabIcon(row: HTMLElement, tab: TabInfo, loading: boolean) {
 const rowContents = new WeakMap<HTMLElement, { tab: TabInfo; errors?: number; boostedHosts: string[] }>();
 /** Row listeners use stable tab and drop-target IDs. Only its changing contents are patched. */
 function tabRow(use: UseRow, tab: TabInfo, space: Space, target: DropTarget | undefined) {
-  const row = use('tab:' + tab.id, () => {
+  const row = use(`tab:${space.id}:${tab.id}`, () => {
     const el = h('button', { class: 'row' });
-    wireTab(el, tab, target);
+    wireTab(el, tab, target && { ...target, spaceId: space.id });
     return el;
   });
+  row.draggable = tab.device !== 'mobile';
   const split = space.split;
   row.classList.toggle('active', tab.id === space.activeTabId);
   row.classList.toggle('in-split', !!split?.includes(tab.id) && !!space.activeTabId && split.includes(space.activeTabId));
@@ -649,7 +686,7 @@ function spaceDrag(spaceId: string): Props {
 
 function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget | undefined) {
   el.dataset.tabId = tab.id;
-  el.draggable = true;
+  el.draggable = tab.device !== 'mobile';
   el.addEventListener('click', () => api.activate(tab.id));
   el.addEventListener('auxclick', (e) => e.button === 1 && api.close(tab.id));
   el.addEventListener('contextmenu', (e) => {
@@ -657,33 +694,91 @@ function wireTab(el: HTMLElement, tab: TabInfo, target: DropTarget | undefined) 
     api.tabMenu(tab.id);
   });
   el.addEventListener('dragstart', (e) => {
+    const space = state?.spaces.find((item) => item.id === state?.activeSpaceId);
+    const current = state?.tabs[tab.id];
+    if (!space || !current || current.device === 'mobile') return e.preventDefault();
+    draggedTab = { id: tab.id, spaceId: space.id };
     e.dataTransfer!.setData(DRAG_TYPE, tab.id);
     e.dataTransfer!.effectAllowed = 'move';
     $('favorites').classList.add('show-empty');
+    updatePinnedVisibility(space);
     showSplitDrop(tab.id);
   });
   el.addEventListener('dragend', () => {
+    clearDropTarget?.();
+    if (draggedTab?.id !== tab.id) return;
+    draggedTab = undefined;
     $('favorites').classList.remove('show-empty');
     hideSplitDrop();
+    if (state) render(state);
   });
-  if (target) acceptDrops(el, target, 'drop-before');
+  if (target) acceptDrops(el, target, 'drop-before', el.classList.contains('row') ? tab.id : undefined);
 }
 
-function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-over') {
+function refreshIncomingDrop() {
+  clearTimeout(incomingDropTimer);
+  incomingDropTimer = setTimeout(() => {
+    if (incomingDrop) clearDropTarget?.();
+  }, INCOMING_DROP_IDLE_MS);
+}
+
+function acceptDrops(el: HTMLElement, target: DropTarget, hoverClass = 'drag-over', splitTarget?: string) {
+  let hoveredSpaceId: string | undefined;
+  let hoveredSide: 'left' | 'right' | undefined;
+  const endHover = () => {
+    hoveredSpaceId = undefined;
+    hoveredSide = undefined;
+    if (clearDropTarget === endHover) clearDropTarget = undefined;
+    el.classList.remove(hoverClass, 'drop-split-left', 'drop-split-right');
+    if (incomingDrop !== el) return;
+    clearTimeout(incomingDropTimer);
+    incomingDrop = undefined;
+    queueMicrotask(() => {
+      if (!incomingDrop && deferredRows && state) render(state);
+    });
+  };
+  const currentTarget = () => (!draggedTab || draggedTab.spaceId === state?.activeSpaceId) &&
+    (!target.spaceId || target.spaceId === state?.activeSpaceId);
+  const splitSide = (e: DragEvent): 'left' | 'right' | undefined => {
+    if (!draggedTab || !state || !canDropToSplit(state.tabs, draggedTab.id, splitTarget)) return;
+    const rect = el.getBoundingClientRect();
+    // The split zones follow upstream #13. Top and bottom remain available for moving tabs.
+    if (e.clientY - rect.top <= 7 || rect.bottom - e.clientY <= 7) return;
+    const x = (e.clientX - rect.left) / rect.width;
+    if (x < 0.25) return 'left';
+    if (x >= 0.4) return 'right';
+  };
   el.addEventListener('dragover', (e) => {
     if (!e.dataTransfer?.types.includes(DRAG_TYPE)) return;
-    e.preventDefault();
     e.stopPropagation();
-    el.classList.add(hoverClass);
+    clearDropTarget?.();
+    if (!currentTarget()) return;
+    e.preventDefault();
+    hoveredSpaceId = state?.activeSpaceId;
+    if (!draggedTab && hoveredSpaceId) {
+      incomingDrop = el;
+      refreshIncomingDrop();
+    }
+    hoveredSide = splitSide(e);
+    clearDropTarget = endHover;
+    el.classList.add(hoveredSide ? `drop-split-${hoveredSide}` : hoverClass);
   });
-  el.addEventListener('dragleave', () => el.classList.remove(hoverClass));
+  el.addEventListener('dragleave', (e) => {
+    if (!(e.relatedTarget instanceof Node) || !el.contains(e.relatedTarget)) endHover();
+  });
   el.addEventListener('drop', (e) => {
-    el.classList.remove(hoverClass);
+    const spaceId = hoveredSpaceId;
+    const side = hoveredSide;
+    endHover();
     const id = e.dataTransfer?.getData(DRAG_TYPE);
     if (!id) return;
     e.preventDefault();
     e.stopPropagation();
-    api.moveTab(id, target);
+    if (!spaceId || spaceId !== state?.activeSpaceId || !currentTarget()) return;
+    if (side !== splitSide(e) || (side && id !== draggedTab?.id)) return;
+    hideSplitDrop();
+    if (side && splitTarget) api.dropToSplit(id, side, { kind: 'row', tabId: splitTarget, spaceId });
+    else api.moveTab(id, { ...target, spaceId });
   });
 }
 
@@ -997,7 +1092,7 @@ let completion: ReturnType<typeof inlineCompletion>;
 let mayComplete = false;
 
 function looksLikeUrl(q: string) {
-  return /^[a-z][a-z0-9+.-]*:\/\//i.test(q) || (!/\s/.test(q) && /\.[a-z]{2,}(:\d+)?(\/|$)/i.test(q)) || /^localhost(:\d+)?/.test(q);
+  return webAddress(q) !== undefined;
 }
 
 function openPalette(mode: PaletteMode) {
@@ -1532,20 +1627,20 @@ document.addEventListener('mousedown', (e) => {
 // ---- drop a tab on the page to split ---------------------------------------------------
 
 const splitDrop = $('split-drop');
+let hoveredPageDrop: { half: HTMLElement; target: Parameters<FlechaApi['dropToSplit']>[2] } | undefined;
 
 /** Drop zones over the page while a tab is dragged, unless it's the tab already on screen. */
 function showSplitDrop(tabId: string) {
   const space = state?.spaces.find((s) => s.id === state!.activeSpaceId);
-  if (!space?.activeTabId || space.activeTabId === tabId || (space.split?.includes(tabId) && space.split.includes(space.activeTabId))) return;
-  // Where the page is: right of the docked sidebar, else the whole window inside the gap.
-  const left = document.body.dataset.sidebar === 'docked' ? $('sidebar').offsetWidth : 8;
-  Object.assign(splitDrop.style, { left: `${left}px`, top: '8px', right: '8px', bottom: '8px' });
+  if (surface !== 'window' || !state || !space || draggedTab?.spaceId !== space.id || !canDropToSplit(state.tabs, tabId, pageSplitTarget(space, tabId))) return hideSplitDrop();
+  if (!splitDrop.hidden) return;
   splitDrop.hidden = false;
   api.setTabDragging(true);
 }
 
 function hideSplitDrop() {
   if (splitDrop.hidden) return;
+  hoveredPageDrop = undefined;
   splitDrop.hidden = true;
   for (const half of splitDrop.children) half.classList.remove('over');
   api.setTabDragging(false);
@@ -1553,19 +1648,26 @@ function hideSplitDrop() {
 
 for (const half of splitDrop.querySelectorAll<HTMLElement>('.drop-half')) {
   half.addEventListener('dragover', (e) => {
-    if (!e.dataTransfer?.types.includes(DRAG_TYPE)) return;
+    if (splitDrop.hidden || !draggedTab || !e.dataTransfer?.types.includes(DRAG_TYPE)) return;
+    const space = state?.spaces.find((s) => s.id === draggedTab?.spaceId);
+    const target = space && pageSplitTarget(space, draggedTab.id);
+    if (!space || !target || space.id !== state?.activeSpaceId) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     half.classList.add('over');
+    hoveredPageDrop = { half, target: { kind: 'page', tabId: target, spaceId: space.id } };
   });
-  half.addEventListener('dragleave', () => half.classList.remove('over'));
+  half.addEventListener('dragleave', () => {
+    half.classList.remove('over');
+    if (hoveredPageDrop?.half === half) hoveredPageDrop = undefined;
+  });
   half.addEventListener('drop', (e) => {
     const id = e.dataTransfer?.getData(DRAG_TYPE);
     e.preventDefault();
-    splitDrop.hidden = true;
-    for (const h of splitDrop.children) h.classList.remove('over');
-    if (id) api.dropToSplit(id, half.dataset.side as 'left' | 'right');
-    else api.setTabDragging(false);
+    if (splitDrop.hidden) return;
+    const hovered = hoveredPageDrop;
+    hideSplitDrop();
+    if (id && hovered?.half === half) api.dropToSplit(id, half.dataset.side as 'left' | 'right', hovered.target);
   });
 }
 
@@ -1774,6 +1876,32 @@ $('sidebar').addEventListener('contextmenu', (e) => {
 
 acceptDrops($('favorites'), { zone: 'favorites' });
 acceptDrops($('pinned'), { zone: 'pinned' });
+acceptDrops($('pinned-header'), { zone: 'pinned' });
+const pinnedSection = $('pinned-section');
+function externalPinExpansion(expanded: boolean) {
+  if (!expanded) clearTimeout(pinnedHoverTimer);
+  if (externalPinnedDrag === expanded) return;
+  externalPinnedDrag = expanded;
+  const space = state?.spaces.find((item) => item.id === state?.activeSpaceId);
+  if (space) updatePinnedVisibility(space);
+}
+function refreshPinnedHover(event: DragEvent) {
+  if (!draggedTab && event.dataTransfer?.types.includes(DRAG_TYPE)) {
+    externalPinExpansion(true);
+    clearTimeout(pinnedHoverTimer);
+    pinnedHoverTimer = setTimeout(() => externalPinExpansion(false), INCOMING_DROP_IDLE_MS);
+  }
+}
+pinnedSection.addEventListener('dragenter', refreshPinnedHover);
+pinnedSection.addEventListener('dragover', refreshPinnedHover, true);
+pinnedSection.addEventListener('drop', () => queueMicrotask(() => externalPinExpansion(false)), true);
+pinnedSection.addEventListener('dragleave', (event) => {
+  if (!(event.relatedTarget instanceof Node) || !pinnedSection.contains(event.relatedTarget)) externalPinExpansion(false);
+});
+$('btn-toggle-pinned').onclick = () => {
+  const space = state?.spaces.find((item) => item.id === state?.activeSpaceId);
+  if (space) api.updateSpace(space.id, { pinnedCollapsed: !space.pinnedCollapsed });
+};
 acceptDrops($('today'), { zone: 'today' });
 acceptDrops($('btn-newtab'), { zone: 'today' });
 
@@ -1790,4 +1918,11 @@ api.onRenameTab(renameTab);
 api.onEditHomeUrl(editHomeUrl);
 api.onPeek(renderPeek);
 api.onDownloads(renderDownloads);
+onReconnect(() => {
+  if (topSitesAttempted > topSitesFetched) {
+    topSitesAttempted = topSitesFetched = 0;
+    if (state) render(state);
+  }
+  if (surface === 'window') api.setTabDragging(!splitDrop.hidden);
+});
 api.ready();

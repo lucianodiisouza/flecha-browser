@@ -4,6 +4,7 @@ import { SPACE_COLORS, SPACE_EMOJIS } from './spaceChoices.js';
 import { isMac, primaryModifier } from '../lib/platform';
 import { isEnter } from '../lib/keys';
 import { isUndoKey } from '../lib/undo';
+import { isConnectionError } from '../protocol';
 
 /**
  * Settings → Tabs & Spaces: favorites and every Space's pinned tree and Today tabs in one
@@ -83,15 +84,20 @@ export function paneShortcut(e: { key: string; metaKey: boolean; ctrlKey: boolea
 
 export async function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
   const api = window.settings;
-  const initialView = await api.tabs();
+  const initialView = await api.tabs().catch(() => undefined);
   const pane = document.querySelector<HTMLElement>('.pane[data-pane="tabs-spaces"]')!;
   const tree = document.getElementById('tm-tree')!;
+  const retryLoad = el('button', { class: 'button' }, 'Retry');
+  const loadMessage = el('span', {}, 'Couldn’t load Tabs & Spaces. ');
+  const loadError = el('div', { class: 'tm-empty', role: 'status', hidden: true }, loadMessage, retryLoad);
+  tree.before(loadError);
   const search = document.getElementById('tm-search') as HTMLInputElement;
   const selectionBar = document.getElementById('tm-selection')!;
   const selectionCount = document.getElementById('tm-selection-count')!;
   if (!isMac) document.getElementById('tm-modifier')!.textContent = 'Ctrl';
 
   let view: TabsView | undefined;
+  let addNeedsRefresh = false;
   /** A view that arrived mid-edit or mid-drag; drawn once that's over. */
   let pending: TabsView | undefined;
   let query = '';
@@ -113,7 +119,7 @@ export async function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
   const lists = new Map<string, TabPlacement>();
 
   const iconButton = (name: IconName, title: string, onclick: (e: MouseEvent) => void, cls = '') =>
-    el('button', { class: `tm-icon-button ${cls}`, title, 'aria-label': title, onclick }, icon(name));
+    el('button', { class: `tm-icon-button ${cls}`, title, 'aria-label': title, onclick, disabled: addNeedsRefresh && name === 'plus' }, icon(name));
 
   function favicon(tab: Tab) {
     const site = host(tab.homeUrl ?? tab.url);
@@ -346,7 +352,7 @@ export async function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
     const finish = async (keep: boolean) => {
       if (done) return;
       done = true;
-      const error = keep ? await save() : undefined;
+      const error = keep ? await save().catch(() => 'Couldn’t confirm the save. Press Escape to cancel or Enter to try again.') : undefined;
       if (error) {
         done = false;
         const row = inputs[0].closest('.tm-editor')!;
@@ -401,8 +407,16 @@ export async function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
     const url = el('input', { class: 'tm-input url', placeholder: 'example.com', spellcheck: 'false', 'data-autofocus': '' });
     const title = el('input', { class: 'tm-input', placeholder: 'Title (optional)', spellcheck: 'false' });
     wireEditor([url, title], async () => {
-      if (!url.value.trim()) return;
-      const result = await api.editTabs({ op: 'add', url: url.value, title: title.value, to });
+      if (addNeedsRefresh || !url.value.trim()) return;
+      const result = await api.editTabs({ op: 'add', url: url.value, title: title.value, to }).catch((error: unknown) => {
+        if (!isConnectionError(error) || !error.sent) throw error;
+        addNeedsRefresh = true;
+        loadMessage.textContent = 'Couldn’t confirm the new tab. Refresh Tabs & Spaces before adding again. ';
+        loadError.hidden = false;
+        void api.tabs().then(show, () => undefined);
+        return undefined;
+      });
+      if (!result) return;
       if (result.error) return result.error;
       if (result.created) {
         selected = new Set([`t:${result.created}`]);
@@ -434,6 +448,7 @@ export async function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
   }
 
   function startAdd(listKey: string) {
+    if (addNeedsRefresh) return;
     if (listKey.startsWith('p:') || listKey.startsWith('d:')) collapsed.delete(listKey.slice(2));
     startEditing({ kind: 'add', list: listKey });
   }
@@ -460,10 +475,18 @@ export async function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
   }
 
   function show(next: TabsView) {
+    addNeedsRefresh = false;
+    loadMessage.textContent = 'Couldn’t load Tabs & Spaces. ';
+    loadError.hidden = true;
     if (editing || drag) {
       pending = next;
       return;
     }
+    applyView(next);
+  }
+
+  // Rendering a buffered view does not confirm an Add Tab that lost its reply.
+  function applyView(next: TabsView) {
     view = next;
     pending = undefined;
     render();
@@ -471,11 +494,8 @@ export async function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
   }
 
   function flushPending() {
-    if (pending) {
-      const next = pending;
-      pending = undefined;
-      show(next);
-    } else render();
+    if (pending) applyView(pending);
+    else render();
   }
 
   // ---- selection ----------------------------------------------------------------------
@@ -545,7 +565,6 @@ export async function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
     else if (request.tabIds?.length === 1) startEditing({ kind: 'tab', id: request.tabIds[0], focus: action === 'edit' ? 'url' : 'title' });
   }
 
-  show(initialView);
 
   tree.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
@@ -922,5 +941,10 @@ export async function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
   window.addEventListener('resize', placeSpaceEditor);
   for (const item of document.querySelectorAll<HTMLElement>('.nav-item')) item.addEventListener('click', closeSpaceEditor);
 
-  api.onTabs(show);
+  const failed = () => { loadError.hidden = false; };
+  const load = () => void api.tabs().then(show, failed);
+  retryLoad.onclick = load;
+  api.onTabs(show, failed);
+  if (initialView) show(initialView);
+  else failed();
 }

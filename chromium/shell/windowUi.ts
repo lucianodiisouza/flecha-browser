@@ -10,9 +10,10 @@
  */
 import type { DetectedBrowser, ImportOptions, ImportPreview, ImportResult, UiState } from '../shared/types';
 import { hasImport, previewLines, resultLine } from '../shared/importText';
-import { cmd, invoke, on } from './client';
+import { cmd, invoke, on, onReconnect } from './client';
+import { ConnectionError } from './protocol';
 import type { MenuRun } from './protocol';
-import { askDialog, popupMenu, type MenuEntry, type MenuOptions } from './settingsUi';
+import { askDialog, popupMenu, toast, type MenuEntry, type MenuOptions } from './settingsUi';
 import { DELETE_SPACE_DETAIL } from './lib/undo';
 
 const framed = typeof chrome.flechaPrivate?.setFrame === 'function';
@@ -20,7 +21,12 @@ const surface = document.documentElement.dataset.surface;
 const windowId = framed && surface === 'window' ? chrome.flechaPrivate.getWindowId() : undefined;
 
 let overlaid = false;
+const overlays = new Map<string, number>();
+export const hasWindowOverlay = () => overlays.size > 0;
 on('frame', (state: { overlay: boolean }) => (overlaid = state.overlay));
+onReconnect(() => {
+  if (windowId) cmd('frame:reconnect')([...overlays.keys()]);
+});
 
 /** Resolves on the next resize (the frame growing), or after `ms` if none comes. */
 const resized = (ms: number) =>
@@ -38,12 +44,19 @@ const resized = (ms: number) =>
 async function overWindow<T>(name: string, fn: () => Promise<T>): Promise<T> {
   if (!windowId) return fn();
   const grow = !overlaid;
-  cmd('setOverlay')(name, true);
+  const users = overlays.get(name) ?? 0;
+  overlays.set(name, users + 1);
+  if (!users) cmd('setOverlay')(name, true);
   if (grow) await resized(300);
   try {
     return await fn();
   } finally {
-    cmd('setOverlay')(name, false);
+    const remaining = (overlays.get(name) ?? 1) - 1;
+    if (remaining) overlays.set(name, remaining);
+    else {
+      overlays.delete(name);
+      cmd('setOverlay')(name, false);
+    }
   }
 }
 
@@ -62,7 +75,10 @@ export function setupWindowUi(h: WindowUiHooks) {
 
 /** Asks for the background's menu `name` about `id`, shows it at the pointer and runs the pick. */
 export async function showMenu(name: 'tabMenu' | 'spaceMenu', id: string) {
-  const items = await invoke<MenuEntry<MenuRun>[] | undefined>(name, id);
+  const items = await invoke<MenuEntry<MenuRun>[] | undefined>(name, id).catch(() => {
+    toast('Couldn’t open this menu. Try again.');
+    return undefined;
+  });
   if (!items?.length) return;
   const picked = await overWindow('menu', () => popupMenu(items));
   if (picked) await runMenuItem(picked.run);
@@ -130,6 +146,7 @@ export async function importFromBrowser() {
     let browsers: DetectedBrowser[];
     try {
       browsers = await invoke<DetectedBrowser[]>('detectBrowsers');
+      if (!Array.isArray(browsers)) throw new Error('Browser discovery is unavailable.');
     } catch (error) {
       return note('Couldn’t look for your browsers', error instanceof Error ? error.message : 'Browser discovery failed.');
     }
@@ -146,9 +163,11 @@ export async function importFromBrowser() {
       defaultId: 0,
       cancelId: buttons.length - 1,
     });
-    const picked = answer < browsers.length ? browserSource(browsers[answer]) : buttons[answer] === BOOKMARKS_FILE ? await bookmarksFileSource() : undefined;
-    if (!picked) return;
     try {
+      let picked: ImportSource | undefined;
+      if (answer < browsers.length) picked = browserSource(browsers[answer]);
+      else if (buttons[answer] === BOOKMARKS_FILE) picked = await bookmarksFileSource();
+      if (!picked) return;
       const preview = await picked.preview();
       if (!hasImport(preview)) return note(`Nothing to import from ${picked.name}`, preview.warnings.join('\n') || 'No bookmarks or history were found.');
       const detail = [
@@ -157,10 +176,10 @@ export async function importFromBrowser() {
         ...preview.warnings,
       ].join('\n');
       // Merge joins Spaces of the same name and leaves out tabs you or the favorites have; Add as New keeps everything.
-      const buttons = preview.spaces.length ? ['Merge', 'Add as New', 'Cancel'] : ['Import', 'Cancel'];
-      const answer = await askDialog({ message: `Import from ${picked.name}?`, detail, buttons, defaultId: 0, cancelId: buttons.length - 1 });
-      if (answer === buttons.length - 1) return;
-      const mode = buttons[answer] === 'Add as New' ? 'append' : 'merge';
+      const choices = preview.spaces.length ? ['Merge', 'Add as New', 'Cancel'] : ['Import', 'Cancel'];
+      const choice = await askDialog({ message: `Import from ${picked.name}?`, detail, buttons: choices, defaultId: 0, cancelId: choices.length - 1 });
+      if (choice === choices.length - 1) return;
+      const mode = choices[choice] === 'Add as New' ? 'append' : 'merge';
       // New Spaces from other Arc Profiles can have Separate Cookies and Logins; one that joins yours keeps its own.
       let isolate = preview.canIsolate ? preview.spaces.flatMap((s, i) => (s.profile && !(s.matches && mode === 'merge') ? [i] : [])) : [];
       if (isolate.length) {
@@ -174,10 +193,15 @@ export async function importFromBrowser() {
         if (separate === 2) return;
         if (separate !== 0) isolate = [];
       }
-      const r = await picked.run({ mode, isolate, spacesKey: preview.spacesKey });
-      return note(`Imported from ${picked.name}`, [resultLine(r), ...r.warnings, ...r.details].filter(Boolean).join('\n') || 'Nothing to import');
+      const r = await picked.run({ mode, isolate, spacesKey: preview.spacesKey }).catch((error: unknown) => {
+        if (error instanceof ConnectionError && error.sent) return undefined;
+        throw error;
+      });
+      if (!r) return note('Import result unavailable', 'Check which Spaces and bookmarks were imported before trying again.');
+      const result = resultLine(r);
+      return note(r.changed ? `Imported from ${picked.name}` : `Nothing imported from ${picked.name}`, [result, ...r.warnings, ...r.details].filter(Boolean).join('\n') || 'Nothing to import');
     } catch {
-      return note(`Couldn’t import ${picked.name}`, 'Try again.');
+      return note('Couldn’t import', 'Try again.');
     }
   });
 }

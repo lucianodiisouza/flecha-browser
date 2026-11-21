@@ -42,6 +42,7 @@ export interface SavedSpace {
   emoji?: string;
   color: string;
   pinned: PinnedNode[];
+  pinnedCollapsed?: boolean;
   /** Separate cookies, storage and logins from the other Spaces. */
   isolated?: boolean;
 }
@@ -106,6 +107,10 @@ export interface DetectedBrowser {
 
 /** What one import brought over. Problems that didn't stop it are listed in `warnings`. */
 export interface ImportResult {
+  /** Whether anything was added, including an empty folder or a split. */
+  changed: boolean;
+  folders: number;
+  splits: number;
   /** New Spaces. */
   spaces: number;
   /** Existing Spaces that imported tabs were merged into. */
@@ -177,6 +182,8 @@ export interface DownloadInfo {
 export interface EnvironmentTarget {
   label: string;
   origin: string;
+  /** Whether the address supplied the label. Absent in older saved targets. */
+  autoLabel?: boolean;
 }
 
 /** One project's origins, e.g. local → staging → production. */
@@ -304,10 +311,10 @@ export interface PeekState {
   bounds: { x: number; y: number; width: number; height: number };
 }
 
-export type DropTarget =
+export type DropTarget = { spaceId?: string } & (
   | { zone: 'favorites'; beforeTabId?: string }
   | { zone: 'today'; beforeTabId?: string }
-  | { zone: 'pinned'; folderId?: string; beforeTabId?: string };
+  | { zone: 'pinned'; folderId?: string; beforeTabId?: string });
 
 /**
  * A place in any Space, for Settings → Tabs & Spaces. `beforeId` is a tab (or, in pinned, a folder)
@@ -379,7 +386,11 @@ export interface SettingsView {
 }
 
 /** The downloads folder is only changed through the folder picker, never set directly. */
-export type SettingsPatch = Partial<Omit<SettingsView, 'searchEngines' | 'downloadsFolder' | 'defaultBrowser' | 'agent' | 'shortcuts' | 'notice'>> & {
+export type SettingsPatch = Partial<Omit<SettingsView, 'searchEngines' | 'downloadsFolder' | 'defaultBrowser' | 'agent' | 'shortcuts' | 'notice' | 'environments'>> & {
+  environment?:
+    | { op: 'create'; id: string; name: string; targetsText: string }
+    | { op: 'edit'; id: string; field: 'name' | 'targetsText'; value: string }
+    | { op: 'remove'; id: string };
   agentEnabled?: boolean;
   /** An accelerator, null for no shortcut, or 'default' to go back to Flecha's. */
   shortcut?: { id: string; keys: string | null };
@@ -491,7 +502,7 @@ export interface SettingsApi {
   /** The native menu for tabs (`tabIds`) or one folder: Move to…, Delete and, with `context`, Rename and Edit Address. */
   tabsMenu(request: { tabIds?: string[]; folderId?: string; context?: boolean }): Promise<TabsMenuAction | undefined>;
   /** The pane redraws whenever the sidebar changes something. */
-  onTabs(cb: (view: TabsView) => void): void;
+  onTabs(cb: (view: TabsView) => void, onError: () => void): void;
   /** Opens a tab in the browser window. */
   showTab(tabId: string): Promise<void>;
   /** The macOS emoji picker, for a Space's icon. */
@@ -538,7 +549,7 @@ export interface FlechaApi {
   stop(): void;
   switchSpace(spaceId: string): void;
   newSpace(): void;
-  updateSpace(spaceId: string, patch: { name?: string; emoji?: string; color?: string }): void;
+  updateSpace(spaceId: string, patch: { name?: string; emoji?: string; color?: string; pinnedCollapsed?: boolean }): void;
   setSpaceIsolated(spaceId: string, isolated: boolean): void;
   deleteSpace(spaceId: string): void;
   /** Puts the Space before `beforeSpaceId`, or last. */
@@ -586,7 +597,7 @@ export interface FlechaApi {
   splitWith(tabId: string): void;
   /** While a tab is dragged, the sidebar UI covers the page so it can be dropped there. */
   setTabDragging(dragging: boolean): void;
-  dropToSplit(tabId: string, side: 'left' | 'right'): void;
+  dropToSplit(tabId: string, side: 'left' | 'right', target: { kind: 'row' | 'page'; tabId: string; spaceId: string }): void;
   splitNew(input: string): void;
   closePeek(): void;
   openDownload(id: string): void;

@@ -7,9 +7,10 @@ test('the toolbar overrides the surface and only state consumers use the sidebar
   const connections = [];
   globalThis.location = { pathname: '/window.html' };
   globalThis.document = { documentElement: { dataset: { surface: 'window' } } };
+  globalThis.window = { addEventListener() {} };
   globalThis.chrome = { runtime: { connect({ name }) {
     connections.push(name);
-    return { onMessage: { addListener() {} } };
+    return { onMessage: { addListener() {} }, onDisconnect: { addListener() {} } };
   } } };
   t.mock.method(globalThis, 'setInterval', () => {});
   const { portForPage } = await loadModule('chromium/shell/client.ts');
@@ -37,11 +38,11 @@ test('native frame and fullscreen recover from lookup and request failures', asy
   getWindowId.mock.mockImplementationOnce(() => firstLookup.promise, 1);
   let receive;
   globalThis.location = { pathname: '/window.html' };
-  globalThis.document = { documentElement: { dataset: { surface: 'window' }, style: { setProperty() {} } } };
+  globalThis.document = { documentElement: { dataset: { surface: 'window' }, style: { setProperty() {} } }, getElementById: () => null };
   globalThis.window = { addEventListener() {} };
   globalThis.matchMedia = () => ({ matches: false, addEventListener() {} });
   globalThis.chrome = {
-    runtime: { connect: () => ({ onMessage: { addListener: listener => { receive = listener; } } }) },
+    runtime: { connect: () => ({ onMessage: { addListener: listener => { receive = listener; } }, onDisconnect: { addListener() {} } }) },
     flechaPrivate: {
       getWindowId,
       setFrame: (value, id) => request('frame', value.overlay, id),
@@ -96,4 +97,62 @@ test('native frame and fullscreen recover from lookup and request failures', asy
   assert.equal(calls.frame[4]?.value, false);
   assert.equal(calls.fullscreen.length, 4);
   calls.frame[4].resolve();
+});
+
+test('the worker’s closed snapshot preserves a palette opened locally in the side panel', async t => {
+  const ports = [];
+  globalThis.location = { pathname: '/sidebar.html' };
+  globalThis.document = { documentElement: { dataset: { surface: 'panel' } } };
+  globalThis.window = { addEventListener() {} };
+  globalThis.matchMedia = () => ({ matches: false, addEventListener() {} });
+  globalThis.chrome = {
+    runtime: { connect() {
+      const port = {
+        sent: [],
+        onMessage: { addListener: listener => { port.receive = listener; } },
+        onDisconnect: { addListener: listener => { port.disconnect = listener; } },
+        postMessage: message => port.sent.push(message),
+      };
+      ports.push(port);
+      return port;
+    } },
+  };
+  t.mock.method(globalThis, 'setInterval', () => {});
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await loadModule('chromium/shell/flechaApi.ts', { fresh: true });
+  const api = window.flecha;
+  const events = [];
+  api.onPalette((mode) => events.push(mode));
+  api.onClosePalette(() => events.push('closed'));
+  const emit = (name, ...args) => ports.at(-1).receive({ type: 'event', name, args });
+  api.openPalette('new-tab');
+  emit('palette-closed');
+  assert.deepEqual(events, ['new-tab']);
+  emit('palette', 'navigate', 'worker');
+  emit('palette-closed');
+  assert.deepEqual(events, ['new-tab', 'navigate', 'closed']);
+
+  emit('palette', 'navigate', 'dismissed');
+  api.closePalette();
+  const close = { type: 'cmd', name: 'closePalette', args: ['dismissed'] };
+  assert.deepEqual(ports[0].sent, [close]);
+  ports[0].disconnect();
+  t.mock.timers.tick(5_000);
+  assert.equal(ports.length, 2);
+  assert.deepEqual(ports[1].sent, [close]);
+  emit('palette', 'navigate', 'dismissed');
+  assert.deepEqual(events, ['new-tab', 'navigate', 'closed', 'navigate']);
+
+  api.openPalette('split');
+  emit('close-palette', 'dismissed');
+  assert.equal(events.at(-1), 'split', 'a delayed acknowledgement does not close a local palette');
+  ports[1].disconnect();
+  t.mock.timers.tick(5_000);
+  assert.equal(ports.length, 3);
+  assert.deepEqual(ports[2].sent, [], 'an acknowledged dismissal is not sent again');
+  emit('palette', 'navigate', 'dismissed');
+  assert.equal(events.at(-1), 'split', 'the acknowledged palette is still ignored if replayed');
+  emit('palette', 'new-tab', 'next');
+  emit('close-palette', 'next');
+  assert.equal(events.at(-1), 'closed', 'the close event still hides the matching worker palette');
 });

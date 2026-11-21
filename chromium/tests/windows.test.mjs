@@ -14,12 +14,36 @@ function twoWindows() {
   return { store, first, second, personal: store.state.spaces[0].id, work: work.id };
 }
 
+test('a targeted split uses the chosen row even when another tab is active', () => {
+  const { store, first, second } = twoWindows();
+  const left = store.addTab('https://example.com/left', { windowId: first });
+  const right = store.addTab('https://example.com/right', { windowId: first });
+  const unrelated = store.addTab('https://example.com/active', { windowId: first });
+  const elsewhere = store.addTab('https://example.com/elsewhere', { windowId: second });
+  store.splitWith(left.id, 'left', first, right.id);
+  assert.deepEqual(store.activeSpaceIn(first).split, [left.id, right.id]);
+  store.splitWith(unrelated.id, 'right', first, elsewhere.id);
+  assert.deepEqual(store.activeSpaceIn(first).split, [left.id, right.id]);
+  assert.equal(store.activeSpaceIn(second).split, undefined);
+});
+
+test('a folded Pinned section is shared by its Space and survives a save', () => {
+  const { store, first, second, personal, work } = twoWindows();
+  store.updateSpace(personal, { pinnedCollapsed: true });
+  assert.equal(store.windowView(first).spaces.find((space) => space.id === personal).pinnedCollapsed, true);
+  assert.equal(store.windowView(second).spaces.find((space) => space.id === personal).pinnedCollapsed, true);
+  const saved = decodeState(store.serialize());
+  const restored = new Store({ load: () => saved, save: () => {} });
+  assert.equal(restored.windowView(first).spaces.find((space) => space.id === personal).pinnedCollapsed, true);
+  assert.equal(restored.windowView(first).spaces.find((space) => space.id === work).pinnedCollapsed, undefined);
+});
+
 test('a version 1 state becomes one window with each Space\'s Today tabs and selection', () => {
   const v1 = {
     version: 1,
     spaces: [
       { id: 'a', name: 'A', color: '#fff', pinned: [{ kind: 'tab', tabId: 'p' }], today: ['t1', 't2'], activeTabId: 't2', split: ['t1', 't2'], splitRatio: 0.3 },
-      { id: 'b', name: 'B', color: '#fff', pinned: [], today: ['t3'], activeTabId: 'p' },
+      { id: 'b', name: 'B', color: '#fff', pinned: [], today: ['t3'], activeTabId: 't3' },
     ],
     activeSpaceId: 'b',
     favorites: [],
@@ -33,11 +57,11 @@ test('a version 1 state becomes one window with each Space\'s Today tabs and sel
   const [win] = state.windows;
   assert.equal(win.activeSpaceId, 'b');
   assert.deepEqual(win.spaces.a, { today: ['t1', 't2'], activeTabId: 't2', split: ['t1', 't2'], splitRatio: 0.3 });
-  assert.deepEqual(win.spaces.b, { today: ['t3'], activeTabId: 'p' });
+  assert.deepEqual(win.spaces.b, { today: ['t3'], activeTabId: 't3' });
   assert.deepEqual(state.spaces.map((s) => Object.keys(s).sort()), [['color', 'id', 'name', 'pinned'], ['color', 'id', 'name', 'pinned']]);
   let json;
   const store = new Store({ load: () => state, save: (j) => (json = j) });
-  assert.equal(store.activeTab.id, 'p');
+  assert.equal(store.activeTab.id, 't3');
   store.saveNow();
   assert.equal(JSON.parse(json).version, STATE_VERSION);
   assert.equal(STATE_VERSION, 2);
@@ -222,6 +246,254 @@ test('a split with a pinned tab shown in another window takes it from there', ()
   assert.equal(store.windowShowing(pinned.id), first);
   assert.equal(store.activeSpaceIn(second).split, undefined);
   assert.notEqual(store.activeSpaceIn(second).activeTabId, pinned.id);
+});
+
+test('taking a pinned target from a responsive split disposes of its phone mirror', () => {
+  const { store, first, second } = twoWindows();
+  const pinned = store.addTab('https://example.com/pin', { windowId: second });
+  store.togglePin(pinned.id, second);
+  const mirror = store.openResponsive(second);
+  store.togglePin(mirror, second);
+  store.toggleFavorite(mirror, second);
+  assert.deepEqual(store.activeSpaceIn(second).today, [mirror]);
+  assert.equal(store.locate(mirror).zone, 'today');
+  assert.equal(store.placeTab(mirror, { zone: 'favorites' }, second), false);
+  store.activate(mirror, { windowId: second });
+  const source = store.addTab('https://example.com/source', { windowId: first });
+
+  store.splitWith(source.id, 'right', first, pinned.id);
+
+  assert.deepEqual(store.activeSpaceIn(first).split, [pinned.id, source.id]);
+  const displaced = store.activeSpaceIn(second);
+  assert.equal(displaced.split, undefined);
+  assert.equal(displaced.splitMode, undefined);
+  assert.equal(displaced.activeTabId, undefined);
+  assert.deepEqual(displaced.today, []);
+  assert.equal(store.state.tabs[mirror], undefined);
+  assert.deepEqual(store.state.archive, []);
+});
+
+test('a stale sidebar destination leaves the dragged tab in its original Space', () => {
+  const { store, first, personal, work } = twoWindows();
+  const source = store.addTab('https://example.com/source', { windowId: first });
+  store.switchSpace(work, first);
+  store.moveTab(source.id, { zone: 'pinned', spaceId: personal }, first);
+  store.moveTab(source.id, { zone: 'today', spaceId: work, beforeTabId: 'gone' }, first);
+  assert.deepEqual(store.activeSpaceIn(first).today, []);
+  assert.equal(store.locate(source.id).space.id, personal);
+});
+
+test('closing a responsive source selects the next Today tab, and reopening a window omits phone mirrors', () => {
+  const { store, second } = twoWindows();
+  const desktop = store.addTab('https://example.com/desktop', { windowId: second });
+  const alternate = store.addTab('https://example.com/alternate', { windowId: second, activate: false });
+  const mirror = store.openResponsive(second);
+  store.closeTab(desktop.id);
+  assert.equal(store.activeTabIn(second)?.id, alternate.id);
+  assert.equal(store.state.tabs[mirror], undefined);
+  const nextMirror = store.openResponsive(second);
+  const newer = store.addTab('https://example.com/newer', { windowId: second, activate: false });
+  store.state.tabs[alternate.id].lastActive = 1;
+  store.activate(nextMirror, { windowId: second });
+  store.closeWindow(second);
+  assert.equal(store.state.tabs[nextMirror], undefined);
+  assert.equal(store.reopenWindow().id, second);
+  assert.deepEqual(new Set(store.activeSpaceIn(second).today), new Set([alternate.id, newer.id]));
+  assert.equal(store.activeTabIn(second)?.id, alternate.id);
+});
+
+test('loading older state preserves saved links and an unpaired tab in a closed window', () => {
+  const { store, first, second, personal } = twoWindows();
+  const olderWindowTab = store.addTab('https://example.com/restorable', { windowId: second });
+  store.closeWindow(second);
+  const pinned = store.addTab('https://example.com/pinned', { windowId: first });
+  const favorite = store.addTab('https://example.com/favorite', { windowId: first });
+  store.togglePin(pinned.id, first);
+  store.toggleFavorite(favorite.id, first);
+  const legacy = JSON.parse(store.serialize());
+  legacy.tabs[pinned.id].device = 'mobile';
+  legacy.tabs[favorite.id].device = 'mobile';
+  legacy.tabs.phone = { ...legacy.tabs[pinned.id], id: 'phone' };
+  const realWindowClosedAt = legacy.closedWindows[0].closedAt;
+  legacy.closedWindows.unshift({ id: 'only-phone', activeSpaceId: personal, closedAt: realWindowClosedAt + 1,
+    spaces: { [personal]: { today: ['phone'], activeTabId: 'phone' } } });
+  const restored = new Store({ load: () => legacy, save: () => {} });
+  assert.equal(restored.state.tabs.phone.device, undefined);
+  assert.equal(restored.reopenWindow().id, 'only-phone');
+  assert.equal(restored.activeTab?.id, 'phone');
+  assert.equal(restored.lastClosedWindowAt(), realWindowClosedAt);
+  assert.equal(restored.reopenWindow().id, second);
+  assert.equal(restored.activeTabIn(second)?.id, olderWindowTab.id);
+  assert.equal(restored.state.tabs[pinned.id].url, pinned.url);
+  assert.equal(restored.state.tabs[favorite.id].url, favorite.url);
+  restored.togglePin(pinned.id, first);
+  restored.toggleFavorite(favorite.id, first);
+  assert.equal(restored.locate(pinned.id).zone, 'today');
+  assert.equal(restored.locate(favorite.id).zone, 'today');
+});
+
+test('loading a legacy closed responsive split drops its phone and keeps its desktop selected', () => {
+  const { store, second, personal } = twoWindows();
+  const desktop = store.addTab('https://example.com/desktop', { windowId: second });
+  const phone = store.openResponsive(second);
+  store.activate(phone, { windowId: second });
+  const legacy = JSON.parse(store.serialize());
+  const window = legacy.windows.splice(legacy.windows.findIndex((window) => window.id === second), 1)[0];
+  legacy.closedWindows.push({ ...window, closedAt: Date.now() });
+  const restored = new Store({ load: () => decodeState(JSON.stringify(legacy)), save: () => {} });
+  assert.equal(restored.reopenWindow().id, second);
+  assert.equal(restored.activeSpaceIn(second).id, personal);
+  assert.equal(restored.activeSpaceIn(second).split, undefined);
+  assert.equal(restored.activeTabIn(second)?.id, desktop.id);
+  assert.equal(restored.state.tabs[phone], undefined);
+});
+
+test('undo restores a phone mirror only with its responsive pair', () => {
+  const { store, first } = twoWindows();
+  const desktop = store.addTab('https://example.com/desktop', { windowId: first });
+  const mirror = store.openResponsive(first);
+  store.removeTabs([desktop.id]);
+  store.undo();
+  assert.deepEqual(store.activeSpaceIn(first).split, [desktop.id, mirror]);
+  store.removeTabs([desktop.id]);
+  const left = store.addTab('https://example.com/left', { windowId: first });
+  const right = store.addTab('https://example.com/right', { windowId: first });
+  store.splitWith(right.id, 'right', first, left.id);
+  store.undo();
+  assert.deepEqual(store.activeSpaceIn(first).split, [left.id, right.id]);
+  assert.ok(store.state.tabs[desktop.id]);
+  assert.equal(store.state.tabs[mirror], undefined);
+  assert.equal(store.activeSpaceIn(first).today.includes(mirror), false);
+});
+
+test('undoing a responsive desktop deletion restores selection in a closed window', () => {
+  const { store, second, work } = twoWindows();
+  store.switchSpace(work, second);
+  store.addTab('https://example.com/other-space', { windowId: second });
+  store.switchSpace(store.state.spaces[0].id, second);
+  const desktop = store.addTab('https://example.com/desktop', { windowId: second });
+  const phone = store.openResponsive(second);
+  store.activate(phone, { windowId: second });
+  store.removeTabs([desktop.id]);
+  store.closeWindow(second);
+  store.undo();
+  assert.equal(store.reopenWindow().id, second);
+  assert.equal(store.activeTabIn(second)?.id, desktop.id);
+  assert.equal(store.state.tabs[phone], undefined);
+});
+
+test('loading responsive metadata checks the panes against the window’s Space', () => {
+  const { store, first, personal, work } = twoWindows();
+  const left = store.addTab('https://example.com/left', { windowId: first });
+  const right = store.addTab('https://example.com/right', { windowId: first });
+  store.switchSpace(work, first);
+  const elsewhere = store.addTab('https://example.com/elsewhere', { windowId: first });
+  store.togglePin(elsewhere.id, first);
+  store.switchSpace(personal, first);
+  store.splitWith(right.id, 'right', first, left.id);
+  const snapshot = JSON.parse(store.serialize());
+  const win = snapshot.windows.find((window) => window.id === first);
+  const ws = win.spaces[personal];
+  ws.splitMode = 'responsive';
+  const load = () => new Store({ load: () => decodeState(JSON.stringify(snapshot)), save: () => {} });
+  const ordinary = load();
+  assert.equal(ordinary.activeSpaceIn(first).splitMode, undefined);
+  assert.deepEqual(ordinary.activeSpaceIn(first).split, [left.id, right.id]);
+  snapshot.tabs[right.id].device = 'mobile';
+  ws.split = [elsewhere.id, right.id];
+  ws.activeTabId = right.id;
+  const unrelated = load();
+  assert.equal(unrelated.activeSpaceIn(first).split, undefined);
+  assert.equal(unrelated.activeTabIn(first), undefined);
+  assert.equal(unrelated.state.tabs[right.id], undefined);
+  assert.equal(unrelated.state.tabs[elsewhere.id].url, elsewhere.url);
+  ws.activeTabId = elsewhere.id;
+  assert.equal(load().activeTabIn(first), undefined);
+});
+
+test('loading a moved legacy phone tab preserves its history and its destination', () => {
+  const { store, first, personal, work } = twoWindows();
+  const desktop = store.addTab('https://example.com/desktop', { windowId: first });
+  const phone = store.openResponsive(first);
+  const snapshot = JSON.parse(store.serialize());
+  const win = snapshot.windows.find((window) => window.id === first);
+  win.spaces[personal] = { today: [desktop.id], activeTabId: desktop.id };
+  win.spaces[work] = { today: [phone], activeTabId: phone };
+  win.activeSpaceId = work;
+  const history = { index: 0, entries: [{ url: 'https://example.com/visited', title: 'Visited' }] };
+  snapshot.tabs[phone].history = history;
+  const loaded = new Store({ load: () => decodeState(JSON.stringify(snapshot)), save: () => {} });
+  assert.equal(loaded.activeTabIn(first)?.id, phone);
+  assert.equal(loaded.state.tabs[phone].device, undefined);
+  assert.deepEqual(loaded.state.tabs[phone].history, history);
+});
+
+test('the saved-state decoder drops a responsive mirror whose source no longer exists', () => {
+  const { store, first, second, personal, work } = twoWindows();
+  const desktop = store.addTab('https://example.com/desktop', { windowId: first });
+  store.togglePin(desktop.id, first);
+  const phone = store.openResponsive(first);
+  store.activate(phone, { windowId: first });
+  const survivor = store.addTab('https://example.com/survivor', { windowId: second });
+  const snapshot = JSON.parse(store.serialize());
+  snapshot.spaces.push({ ...snapshot.spaces.find((space) => space.id === personal), pinned: [] });
+  snapshot.windows = [second, first].map((id) => snapshot.windows.find((win) => win.id === id));
+  snapshot.windows[0].spaces[work] = { today: [survivor.id], activeTabId: phone, split: [phone, survivor.id] };
+  const valid = decodeState(JSON.stringify(snapshot));
+  assert.equal(valid.tabs[phone]?.device, 'mobile');
+  assert.deepEqual(valid.windows.find((win) => win.id === first).spaces[personal].split, [desktop.id, phone]);
+  const withDesktop = valid.windows[0].spaces[work];
+  assert.equal(withDesktop.activeTabId, undefined);
+  assert.equal(withDesktop.split, undefined);
+  delete snapshot.tabs[desktop.id];
+  const loaded = decodeState(JSON.stringify(snapshot));
+  const space = loaded.windows.find((win) => win.id === first).spaces[personal];
+  assert.equal(loaded.tabs[phone], undefined);
+  assert.equal(space.activeTabId, undefined);
+  assert.equal(space.split, undefined);
+  assert.deepEqual(space.today, []);
+  const otherSpace = loaded.windows.find((win) => win.id === second).spaces[work];
+  assert.equal(otherSpace.activeTabId, undefined);
+  assert.equal(otherSpace.split, undefined);
+});
+
+test('a hidden Space does not protect the unselected half of a split from auto-archive', () => {
+  const { store, first, personal, work } = twoWindows();
+  const left = store.addTab('https://example.com/left', { windowId: first });
+  const right = store.addTab('https://example.com/right', { windowId: first });
+  store.splitWith(right.id, 'right', first, left.id);
+  store.activate(left.id, { windowId: first });
+  store.switchSpace(work, first);
+  right.lastActive = 1;
+  assert.deepEqual(store.archiveStale(), [right.id]);
+  assert.equal(store.state.archive[0].url, right.url);
+  assert.equal(store.windowView(first).spaces.find((space) => space.id === personal).split, undefined);
+});
+
+test('auto-archive keeps both visible panes when the phone is selected', () => {
+  const { store, first } = twoWindows();
+  const desktop = store.addTab('https://example.com/desktop', { windowId: first });
+  const other = store.addTab('https://example.com/old', { windowId: first, activate: false });
+  const phone = store.openResponsive(first);
+  store.activate(phone, { windowId: first });
+  desktop.lastActive = other.lastActive = 1;
+  assert.deepEqual(store.archiveStale(), [other.id]);
+  assert.deepEqual(store.activeSpaceIn(first).split, [desktop.id, phone]);
+  assert.equal(store.activeTabIn(first)?.id, phone);
+});
+
+test('archiving a hidden responsive split removes its selected mirror without archiving it', () => {
+  const { store, first, personal, work } = twoWindows();
+  const desktop = store.addTab('https://example.com/desktop', { windowId: first });
+  const phone = store.openResponsive(first);
+  store.activate(phone, { windowId: first });
+  store.switchSpace(work, first);
+  desktop.lastActive = 1;
+  assert.deepEqual(store.archiveStale(), [desktop.id, phone]);
+  assert.deepEqual(store.state.archive.map((entry) => entry.url), [desktop.url]);
+  store.switchSpace(personal, first);
+  assert.equal(store.activeTabIn(first), undefined);
+  assert.equal(store.activeSpaceIn(first).split, undefined);
 });
 
 test('each window hides or shows its own sidebar; new windows start as the last choice', () => {

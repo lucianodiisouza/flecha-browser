@@ -8,8 +8,9 @@
 import type { Store } from '../shared/store';
 import { pinnedTabIds } from '../shared/store';
 import { SHORTCUTS, fixedShortcuts, keysFor } from './lib/shortcuts';
-import { broadcast, broadcastTo, callerWindow, handle } from './hub';
+import { broadcast, broadcastTo, callerPort, callerWindow, handle } from './hub';
 import { incognito, sessionKey } from './incognito';
+import { phoneSplitRatio } from './lib/responsiveViewport';
 
 export interface NativeContext {
   store: Store;
@@ -25,6 +26,8 @@ export interface NativeContext {
   chromeTabId?(flechaId: string): number | undefined;
   /** The Flecha tab of a Chromium tab. */
   flechaTabId?(chromeId: number): string | undefined;
+  /** The Flecha window of a Chromium window. */
+  flechaWindowId?(chromeId: number): string | undefined;
   /**
    * Forgets a Flecha tab's Chromium tab without closing it (it moved into a Flechinha), then
    * closes the Flecha tab. background.ts: `live.delete(id); rememberLive(); store.closeTab(id)`.
@@ -41,13 +44,26 @@ const api = () => (chrome as { flechaPrivate?: typeof chrome.flechaPrivate }).fl
 const has = <K extends keyof typeof chrome.flechaPrivate>(name: K) => typeof api()?.[name] === 'function';
 
 /**
- * The windows with a Peek open, from onPeekChanged. Kept across background restarts: the
- * browser can't be asked (patch 0026), and a ⌘W that wakes the background must still find the Peek.
+ * The last Peek in each window, from onPeekChanged. The browser can't be asked (patch 0026).
  */
 const PEEKS_KEY = sessionKey('peeks');
-const peeks = new Set<number>();
+const peeks = new Map<number, chrome.flechaPrivate.PeekState>();
+const legacyPeeks = new Set<number>();
+const savePeeks = () => chrome.storage.session.set({ [PEEKS_KEY]: [...legacyPeeks, ...peeks] })
+  .catch((error) => console.warn('Flecha shell: couldn’t save Peek state', error));
 const peeksLoaded = has('openPeek')
-  ? chrome.storage.session.get(PEEKS_KEY).then((saved) => (saved[PEEKS_KEY] as number[] | undefined)?.forEach((id) => peeks.add(id)))
+  ? chrome.storage.session.get(PEEKS_KEY).then(async (saved) => {
+    const entries = saved[PEEKS_KEY];
+    if (!Array.isArray(entries)) return;
+    for (const entry of entries) {
+      if (typeof entry === 'number') {
+        try { await chrome.flechaPrivate.closePeek(entry); }
+        catch { legacyPeeks.add(entry); }
+      }
+      else if (Array.isArray(entry) && typeof entry[0] === 'number' && entry[1]) peeks.set(entry[0], entry[1]);
+    }
+    if (entries.some((entry) => typeof entry === 'number')) await savePeeks();
+  }).catch((error) => console.warn('Flecha shell: couldn’t recover saved Peek state', error))
   : Promise.resolve();
 
 // Events go on in the module's first turn, or Chromium drops the one that woke the
@@ -115,31 +131,39 @@ function registerDevToolsAndDefaultBrowser() {
  * tab behind it. Returns whether `command` was the Peek's.
  */
 export function runInPeek(command: string, windowId: number | undefined) {
-  if (windowId === undefined || !peeks.has(windowId)) return false;
-  if (command === 'closeTab') void chrome.flechaPrivate.closePeek(windowId);
-  else if (command === 'openInFlecha') void chrome.flechaPrivate.promotePeek(windowId);
+  if (windowId === undefined || (!peeks.has(windowId) && !legacyPeeks.has(windowId))) return false;
+  let action: Promise<unknown>;
+  if (command === 'closeTab') action = chrome.flechaPrivate.closePeek(windowId);
+  else if (command === 'openInFlecha') action = chrome.flechaPrivate.promotePeek(windowId);
   else return false;
+  void action.then(() => {
+    if (legacyPeeks.delete(windowId)) return savePeeks();
+  }).catch((error) => console.warn('Flecha shell: couldn’t finish Peek action', error));
   return true;
+}
+
+export function currentPeek(windowId: number, send: (peek: chrome.flechaPrivate.PeekState | null) => void) {
+  void ready.then(() => send(peeks.get(windowId) ?? null));
 }
 
 // The frame pages draw Peek's backdrop and toolbar from the 'peek' event, as in Electron's
 // sendPeek(); while a Peek is open the browser keeps the frame over the whole window.
 if (has('openPeek')) {
-  const rememberPeek = (windowId: number, open: boolean) => {
-    if (open === peeks.has(windowId)) return;
-    if (open) peeks.add(windowId);
-    else peeks.delete(windowId);
-    void chrome.storage.session.set({ [PEEKS_KEY]: [...peeks] });
+  const rememberPeek = (windowId: number, peek?: chrome.flechaPrivate.PeekState) => {
+    const wasLegacy = legacyPeeks.delete(windowId);
+    if (peek) peeks.set(windowId, peek);
+    else if (!peeks.delete(windowId) && !wasLegacy) return;
+    void savePeeks();
   };
   chrome.flechaPrivate.onPeekChanged.addListener(
     when((_ctx, windowId: number, peek?: chrome.flechaPrivate.PeekState) => {
-      rememberPeek(windowId, !!peek);
+      rememberPeek(windowId, peek);
       // Each window has its own Peek, and its own toolbar for it.
       broadcastTo(windowId, 'peek', peek ?? null, windowId);
     }),
   );
   // A window closes without saying its Peek did.
-  chrome.windows.onRemoved.addListener(when((_ctx, windowId: number) => rememberPeek(windowId, false)));
+  chrome.windows.onRemoved.addListener(when((_ctx, windowId: number) => rememberPeek(windowId)));
   chrome.contextMenus.onClicked.addListener(
     when((_ctx, info: chrome.contextMenus.OnClickData, tab?: chrome.tabs.Tab) => {
       if (info.menuItemId === PEEK_MENU_ID && info.linkUrl) void openLinkInPeek(info.linkUrl, tab);
@@ -272,42 +296,101 @@ function registerFlechinha(ctx: NativeContext) {
 
 // ---- split ratio (patch 0019) ------------------------------------------------------------
 
+let applySplitRatio: ((windowId: string, reset?: boolean) => void) | undefined;
+
+export function frameResized(windowId: string) {
+  applySplitRatio?.(windowId);
+}
+
 if (has('setSplitRatio')) {
-  // Dragging the gap between the panes: the Store keeps the ratio (store.setSplitRatio clamps it).
+  // Keep a user-selected ratio in a regular split and restore the phone width in a responsive split.
   chrome.flechaPrivate.onSplitRatioChanged.addListener(
     when((ctx, tabId: number, ratio: number) => {
       const id = ctx.flechaTabId?.(tabId);
       const windowId = id && ctx.store.windowShowing(id);
-      if (windowId && ctx.store.activeSpaceIn(windowId).split?.[0] === id) ctx.store.setSplitRatio(ratio, windowId);
+      if (!windowId) return;
+      const space = ctx.store.activeSpaceIn(windowId);
+      if (space.split?.[0] !== id) return;
+      if (space.splitMode === 'responsive') applySplitRatio?.(windowId, true);
+      else ctx.store.setSplitRatio(ratio, windowId);
     }),
   );
 }
 
 /** Each window's active Space's splitRatio on Chromium's split (patch 0019 also draws it flat, 8px apart). */
 function registerSplitRatio(ctx: NativeContext) {
-  if (!has('setSplitRatio') || !ctx.chromeTabId) return;
-  /** The ratio last applied, by the split's left tab. */
-  const sent = new Map<number, number>();
-  const apply = () => {
-    for (const win of ctx.store.state.windows) {
-      const space = ctx.store.activeSpaceIn(win.id);
-      const left = space.split && ctx.chromeTabId!(space.split[0]);
-      if (left === undefined || !space.split) continue;
-      const ratio = space.splitRatio ?? 0.5;
-      if (sent.get(left) === ratio) continue;
-      // Fails until Chromium has made the split; tabs.onUpdated (splitViewId) tries again.
-      void chrome.flechaPrivate.setSplitRatio(left, ratio).then(
-        () => sent.set(left, ratio),
-        () => undefined,
-      );
+  const { store, chromeTabId } = ctx;
+  if (!has('setSplitRatio') || !chromeTabId) return;
+  const splitAreaResized = chrome.flechaPrivate.onSplitAreaResized;
+  const measurements = new Map<string, {
+    request?: symbol;
+    needsReset?: boolean;
+    applied?: { splitId: number; ratio: number };
+    writing?: Promise<void>;
+  }>();
+
+  const applyWindow = async (windowId: string, reset = false) => {
+    const measurement = measurements.get(windowId) ?? {};
+    const request = Symbol();
+    measurement.request = request;
+    if (reset) measurement.needsReset = true;
+    measurements.set(windowId, measurement);
+    await measurement.writing;
+    if (measurement.request !== request || !store.hasWindow(windowId)) return;
+    if (measurement.needsReset) {
+      measurement.applied = undefined;
+      measurement.needsReset = false;
     }
+    const space = store.activeSpaceIn(windowId);
+    const split = space.split;
+    if (space.splitMode === 'responsive' && (!space.activeTabId || !split?.includes(space.activeTabId))) return;
+    const left = split && chromeTabId(split[0]);
+    const right = split && chromeTabId(split[1]);
+    if (left === undefined || right === undefined) {
+      measurement.applied = undefined;
+      return;
+    }
+    const [desktop, other] = await Promise.all([chrome.tabs.get(left), chrome.tabs.get(right)]).catch(() => []);
+    if (measurement.request !== request || !store.hasWindow(windowId) ||
+        store.activeSpaceIn(windowId).split !== split) return;
+    const splitId = desktop?.splitViewId;
+    if (splitId === undefined || splitId < 0 || other?.splitViewId !== splitId) return;
+    let ratio = space.splitRatio ?? 0.5;
+    if (space.splitMode === 'responsive') {
+      if (!desktop.width || !other.width) return;
+      ratio = phoneSplitRatio(desktop.width + other.width);
+      if (!splitAreaResized) ratio = Math.min(0.9, ratio);
+    }
+    const previous = measurement.applied;
+    if (previous?.splitId === splitId && previous.ratio === ratio) return;
+    const write = ratio > 0.9 ? chrome.flechaPrivate.setSplitRatio(left, ratio, true) : chrome.flechaPrivate.setSplitRatio(left, ratio);
+    measurement.writing = write
+      .then(() => { measurement.applied = { splitId, ratio }; })
+      .catch(() => { measurement.applied = undefined; })
+      .finally(() => { measurement.writing = undefined; });
   };
+
+  const apply = () => {
+    for (const id of measurements.keys()) {
+      if (!store.hasWindow(id)) measurements.delete(id);
+    }
+    for (const win of store.state.windows) void applyWindow(win.id);
+  };
+  applySplitRatio = applyWindow;
   apply();
-  ctx.store.onChange((change) => { if (change === 'structure') apply(); });
+  store.onChange((change) => {
+    if (change === 'structure') apply();
+  });
   chrome.tabs.onUpdated.addListener((_id, info) => {
     if ('splitViewId' in info) apply();
   });
+  chrome.windows.onBoundsChanged.addListener(apply);
 }
+
+chrome.flechaPrivate?.onSplitAreaResized?.addListener(when((ctx, chromeWindowId: number) => {
+  const windowId = ctx.flechaWindowId?.(chromeWindowId);
+  if (windowId) frameResized(windowId);
+}));
 
 // ---- theme (patch 0018) ------------------------------------------------------------------
 
@@ -328,6 +411,23 @@ function registerTheme(ctx: NativeContext) {
 
 // ---- keyboard shortcuts (patch 0016) ----------------------------------------------------
 
+// The native workflow checks give each browser step this same budget.
+const SHORTCUT_TIMEOUT_MS = 10_000;
+
+async function writeShortcuts(map: Record<string, string>) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      chrome.flechaPrivate.setShortcuts(map),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Chromium did not acknowledge the shortcut map')), SHORTCUT_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Accelerator → command id, as setShortcuts() wants it: the fixed families, then yours. */
 export function shortcutMap(state: Store['state']): Record<string, string> {
   const map = fixedShortcuts();
@@ -340,26 +440,79 @@ export function shortcutMap(state: Store['state']): Record<string, string> {
 
 function registerShortcuts(ctx: NativeContext) {
   if (!has('setShortcuts')) return;
-  let sent = '';
+  let sent: string | undefined;
+  let applying = false;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  // Use the shell port's recovery cadence for another transient Chromium connection failure.
+  let retryDelay = 100;
   // While Settings records a shortcut the keys go to its page, not to Flecha's commands.
-  let recording = false;
-  const apply = () => {
+  let recorder: { port: chrome.runtime.Port; paused: Promise<boolean>; confirm(ready: boolean): void } | undefined;
+  const apply = (recordingChanged = false) => {
+    if (recordingChanged && retry !== undefined) {
+      clearTimeout(retry);
+      retry = undefined;
+    }
     // The browser keeps one map for every window; the regular shell sets it.
-    if (incognito) return;
-    const map = recording ? {} : shortcutMap(ctx.store.state);
+    if (incognito || applying || retry !== undefined) return;
+    const map = recorder ? {} : shortcutMap(ctx.store.state);
     const json = JSON.stringify(map);
-    if (json === sent) return;
-    sent = json;
-    void chrome.flechaPrivate.setShortcuts(map).then((rejected) => {
+    if (json === sent) {
+      recorder?.confirm(true);
+      return;
+    }
+    applying = true;
+    void writeShortcuts(map).then((rejected) => {
+      sent = json;
+      retryDelay = 100;
       if (rejected.length) console.warn('Flecha shell: the browser could not read these shortcuts', rejected);
+    }, (error: unknown) => {
+      sent = undefined;
+      console.warn('Flecha shell: could not apply shortcuts', error);
+      retry = setTimeout(() => {
+        retry = undefined;
+        apply();
+      }, retryDelay);
+      retryDelay = Math.min(retryDelay * 2, 5000);
+    }).finally(() => {
+      applying = false;
+      apply();
     });
+  };
+  const stopRecording = () => {
+    recorder?.port.onDisconnect.removeListener(stopRecording);
+    recorder?.confirm(false);
+    recorder = undefined;
+    apply(true);
   };
   apply();
   ctx.store.onChange((_change, detail) => { if (!detail) apply(); });
   handle({
     'settings:recording': (on: boolean) => {
-      recording = !!on;
-      apply();
+      const port = callerPort();
+      if (!port || incognito) return;
+      if (!on) {
+        if (recorder?.port === port) stopRecording();
+        return;
+      }
+      if (recorder?.port === port) return recorder.paused;
+      recorder?.port.onDisconnect.removeListener(stopRecording);
+      recorder?.confirm(false);
+      let done!: (ready: boolean) => void;
+      const paused = new Promise<boolean>((resolve) => { done = resolve; });
+      const session = {
+        port, paused,
+        confirm(ready: boolean) {
+          clearTimeout(deadline);
+          done(ready);
+        },
+      };
+      const deadline = setTimeout(() => {
+        if (recorder === session) stopRecording();
+      }, SHORTCUT_TIMEOUT_MS);
+      recorder = session;
+      port.onDisconnect.addListener(stopRecording);
+      apply(true);
+      return paused;
     },
   });
 }

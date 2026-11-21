@@ -23,6 +23,7 @@
       <button class="nav-item" data-pane="tabs-spaces"><span class="nav-icon indigo"><i data-icon="stack"></i></span>Tabs &amp; Spaces</button>
       <button class="nav-item" data-pane="privacy"><span class="nav-icon blue"><i data-icon="lock"></i></span>Privacy</button>
       <button class="nav-item" data-pane="downloads"><span class="nav-icon green"><i data-icon="download"></i></span>Downloads</button>
+      <button class="nav-item" data-pane="import"><span class="nav-icon teal"><i data-icon="import"></i></span>Import</button>
       <button class="nav-item" data-pane="video"><span class="nav-icon purple"><i data-icon="sparkle"></i></span>Video</button>
       <div class="nav-label">Developer</div>
       <button class="nav-item" data-pane="environments"><span class="nav-icon amber"><i data-icon="code"></i></span>Environments</button>
@@ -35,10 +36,26 @@
 
     <main>
       <header class="pane-titlebar"><h1 id="pane-title"></h1></header>
+      <p id="settings-load-status" role="status"></p>
+      <div id="settings-load-error" class="row" hidden>
+        <button class="button" type="button">Retry</button>
+      </div>
 
       <section id="search-results" class="pane" hidden></section>
 
-      <section class="pane" data-pane="general">
+      <section class="pane" data-pane="import">
+        <div class="card">
+          <div class="row">
+            <div class="row-text">
+              <strong>Import from another browser</strong>
+              <small>Bring over bookmarks, history, or Spaces. You can also choose an exported bookmarks file.</small>
+            </div>
+            <button id="import-browser" class="button" type="button">Import…</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="pane" data-pane="general" data-preferences inert>
         <div class="card">
           <div class="row">
             <div class="row-text">
@@ -107,7 +124,7 @@
         <p class="footnote">Off by default. Applies across all browser profiles after you restart Flecha. Changing this setting does not restart the browser.</p>
       </section>
 
-      <section class="pane" data-pane="appearance">
+      <section class="pane" data-pane="appearance" data-preferences inert>
         <div class="theme-cards" role="radiogroup" aria-label="Theme">
           <button class="theme-card" data-theme="system" role="radio">
             <span class="theme-preview system"><span></span><span></span></span>
@@ -134,7 +151,7 @@
         </div>
       </section>
 
-      <section class="pane" data-pane="tabs">
+      <section class="pane" data-pane="tabs" data-preferences inert>
         <div class="card">
           <label class="row">
             <div class="row-text">
@@ -186,7 +203,7 @@
         </p>
       </section>
 
-      <section class="pane" data-pane="privacy">
+      <section class="pane" data-pane="privacy" data-preferences inert>
         <div class="card">
           <label class="row">
             <div class="row-text">
@@ -202,7 +219,7 @@
         </p>
       </section>
 
-      <section class="pane" data-pane="downloads">
+      <section class="pane" data-pane="downloads" data-preferences inert>
         <div class="card">
           <div class="row">
             <div class="row-text">
@@ -221,7 +238,7 @@
         </div>
       </section>
 
-      <section class="pane" data-pane="environments">
+      <section class="pane" data-pane="environments" data-preferences inert>
         <p class="lead">
           Group the places a project runs. <kbd>⌥⌘E</kbd> moves the page to the next one with the same path, and the
           address bar shows a <span class="tone local">LOCAL</span> <span class="tone staging">STAGING</span>
@@ -249,7 +266,7 @@
         <p class="footnote">Tip: press <kbd>⌥⌘B</kbd> on any site to create or edit its boost.</p>
       </section>
 
-      <section class="pane" data-pane="agents">
+      <section class="pane" data-pane="agents" data-preferences inert>
         <p class="lead">
           Let Claude Code, Cursor and other MCP clients see and drive your tabs: read pages and their console, take
           screenshots, click, type and run JavaScript. You'll see what an agent is doing in the sidebar.
@@ -287,7 +304,7 @@
           </div>
         </div>
       </section>
-      <section class="pane" data-pane="shortcuts">
+      <section class="pane" data-pane="shortcuts" data-preferences inert>
         <div class="shortcuts-head">
           <p class="lead">Click a shortcut and press the keys you want. <kbd>⌫</kbd> removes it, <kbd>Esc</kbd> cancels.</p>
           <button id="resetShortcuts" class="button">Restore Defaults</button>

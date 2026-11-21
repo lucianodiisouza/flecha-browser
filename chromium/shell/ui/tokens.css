@@ -9,6 +9,24 @@
   font-display: swap;
 }
 
+.shell-toast {
+  position: fixed;
+  pointer-events: none;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  z-index: 1001;
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  background: var(--ink);
+  color: #fff;
+  box-shadow: var(--shadow-pop);
+}
+
+.shell-toast[hidden] {
+  display: none;
+}
+
 :root {
   color-scheme: light dark;
 

@@ -8,9 +8,8 @@
  */
 import type { Store } from '../../shared/store';
 import { hold, isHeld, onDebuggerDetach, release, send } from './debuggee';
+import { PHONE_WIDTH } from '../lib/responsiveViewport';
 
-/** An iPhone-15-wide viewport, as Electron's PHONE. */
-export const PHONE = { width: 393 };
 const chromeVersion = navigator.userAgent.match(/Chrome\/([\d.]+)/)?.[1] ?? '140.0.0.0';
 /** Electron's PHONE_USER_AGENT: a mobile Chrome user agent. */
 export const PHONE_USER_AGENT = `Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Mobile Safari/537.36`;
@@ -25,7 +24,7 @@ export interface ResponsiveContext {
 export function responsive(ctx: ResponsiveContext) {
   const { store } = ctx;
   /** Chromium tabs that are emulating, and those whose emulation the user cancelled (left alone). */
-  const emulating = new Set<number>();
+  const emulating = new Map<number, symbol>();
   const refused = new Set<number>();
   /** The desktop side's address each mirror last followed. */
   const followed = new Map<string, string>();
@@ -33,25 +32,33 @@ export function responsive(ctx: ResponsiveContext) {
   onDebuggerDetach((tabId, reason) => {
     emulating.delete(tabId);
     if (reason === 'canceled_by_user') refused.add(tabId);
+    if (reason === 'reset' && !refused.has(tabId) && Object.entries(store.state.tabs).some(
+      ([id, tab]) => tab.device === 'mobile' && ctx.liveTabId(id) === tabId,
+    )) void emulate(tabId, false);
   });
   chrome.tabs.onRemoved.addListener((tabId) => {
     emulating.delete(tabId);
     refused.delete(tabId);
   });
 
-  async function emulate(chromeId: number) {
-    emulating.add(chromeId);
-    if (!(await hold(chromeId, HOLDER))) return void emulating.delete(chromeId);
+  async function emulate(chromeId: number, reload = true) {
+    const generation = Symbol();
+    emulating.set(chromeId, generation);
+    const current = () => emulating.get(chromeId) === generation;
+    const attached = await hold(chromeId, HOLDER);
+    if (!current()) return;
+    if (!attached) return void emulating.delete(chromeId);
     await Promise.all([
       send(chromeId, 'Emulation.setUserAgentOverride', { userAgent: PHONE_USER_AGENT, platform: 'Android' }),
       // Height 0 keeps the tab's real height.
-      send(chromeId, 'Emulation.setDeviceMetricsOverride', { width: PHONE.width, height: 0, deviceScaleFactor: 3, mobile: true }),
+      send(chromeId, 'Emulation.setDeviceMetricsOverride', { width: PHONE_WIDTH, height: 0, deviceScaleFactor: 3, mobile: true }),
       send(chromeId, 'Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }),
       send(chromeId, 'Emulation.setEmitTouchEventsForMouse', { enabled: true, configuration: 'mobile' }),
     ]);
+    if (!reload || !current()) return;
     // The first load went out as a desktop; load it again as the phone (Electron emulated before loading).
     const tab = await chrome.tabs.get(chromeId).catch(() => undefined);
-    if (tab?.url && /^https?:/.test(tab.url)) await send(chromeId, 'Page.reload', { ignoreCache: false });
+    if (current() && tab?.url && /^https?:/.test(tab.url)) await send(chromeId, 'Page.reload', { ignoreCache: false });
   }
 
   /** Brings Chromium in line with the Store: mirrors emulate, other tabs let go, mirrors follow. */
@@ -64,10 +71,10 @@ export function responsive(ctx: ResponsiveContext) {
       mirrors.add(chromeId);
       if (!emulating.has(chromeId) && !refused.has(chromeId)) void emulate(chromeId);
     }
-    for (const chromeId of emulating) {
-      if (!mirrors.has(chromeId) && isHeld(chromeId, HOLDER)) {
+    for (const chromeId of emulating.keys()) {
+      if (!mirrors.has(chromeId)) {
         emulating.delete(chromeId);
-        void release(chromeId, HOLDER);
+        if (isHeld(chromeId, HOLDER)) void release(chromeId, HOLDER);
       }
     }
     // The phone follows the desktop side. Only that way: sites often send phones to an m.
@@ -87,22 +94,19 @@ export function responsive(ctx: ResponsiveContext) {
     }
   }
 
-  function toggle() {
-    const space = store.activeSpace;
+  function toggle(windowId?: string) {
+    const space = store.activeSpaceIn(windowId);
     if (space.splitMode === 'responsive') {
       // A mirror has no life of its own: ending the split closes it, and the background
       // closes its Chromium tab.
       const source = space.split?.[0];
-      const mirror = store.unsplit();
+      const mirror = store.unsplit(windowId);
       // Back to the desktop side, not whichever tab is next to the phone.
-      if (source && store.state.tabs[source]) store.activate(source);
+      if (source && store.state.tabs[source]) store.activate(source, { windowId });
       if (mirror) store.closeTab(mirror);
       return;
     }
-    const mirror = store.openResponsive();
-    // TODO(chromium): the shell doesn't lay splits out side by side yet, so the phone is shown
-    // on its own; once it does, both halves are on screen and this can go.
-    if (mirror) store.activate(mirror);
+    store.openResponsive(windowId);
   }
 
   return { sync, toggle };

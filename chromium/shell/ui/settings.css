@@ -420,6 +420,16 @@ code {
   box-shadow: 0 0 0 3px var(--focus);
 }
 
+.env-error:not(:empty) {
+  padding-top: 6px;
+  color: var(--red);
+  font-size: var(--text-sm);
+}
+
+.env-retry {
+  margin-top: 6px;
+}
+
 .nav-icon.pink {
   background: linear-gradient(#f27aa8, #d94a83);
 }
@@ -1035,6 +1045,15 @@ code {
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
   color: var(--text-3);
+}
+
+.tm-empty[hidden],
+#settings-load-error[hidden] {
+  display: none;
+}
+
+#settings-load-status:empty {
+  margin: 0;
 }
 
 .tm-none {

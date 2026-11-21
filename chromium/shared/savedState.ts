@@ -108,7 +108,7 @@ export function repairState(raw: Record<string, unknown>): BrowserState | undefi
   const spaces = rawSpaces.map((s) => repairSpace(s, claim));
   if (!spaces.length) return undefined;
   const spaceIds = new Set(spaces.map((s) => s.id));
-  const window = (w: Record<string, unknown>) => repairWindow(w, spaceIds, spaces[0].id, claim, (id) => placed.has(id as string));
+  const window = (w: Record<string, unknown>) => repairWindow(w, spaceIds, spaces[0].id, claim);
   // Before version 2 each Space held the Today tabs and selection of the one window.
   const rawWindows = Array.isArray(raw.windows)
     ? raw.windows.filter(isRecord)
@@ -119,8 +119,42 @@ export function repairState(raw: Record<string, unknown>): BrowserState | undefi
     .filter((w) => isNumber(w.closedAt))
     .map((w) => ({ ...window(w), closedAt: w.closedAt as number }))
     .filter((w) => Object.keys(w.spaces).length);
+  const windowSpaces = [...windows, ...closedWindows].flatMap((win) => Object.entries(win.spaces));
+  function pinnedIds(nodes: PinnedNode[]): string[] {
+    return nodes.flatMap((node) => node.kind === 'tab' ? [node.tabId] : pinnedIds(node.children));
+  }
+  const pinnedBySpace = new Map<string, Set<string>>();
+  for (const space of spaces) {
+    if (!pinnedBySpace.has(space.id)) pinnedBySpace.set(space.id, new Set(pinnedIds(space.pinned)));
+  }
+  const favoriteIds = new Set(favorites);
+  const belongs = (id: string, spaceId: string, ws: WindowSpace) =>
+    favoriteIds.has(id) || pinnedBySpace.get(spaceId)?.has(id) || ws.today.includes(id);
+  for (const [spaceId, ws] of windowSpaces) {
+    if (ws.splitMode !== 'responsive' || !Array.isArray(ws.split) || ws.split.length !== 2) continue;
+    const [desktop, phone] = ws.split;
+    if (!ws.today.includes(phone) || tabs[phone]?.device !== 'mobile') continue;
+    if (belongs(desktop, spaceId, ws) && tabs[desktop]?.device !== 'mobile') continue;
+    delete tabs[phone];
+    ws.today = ws.today.filter((id) => id !== phone);
+  }
+  for (const [spaceId, ws] of windowSpaces) {
+    if (ws.activeTabId !== undefined && !belongs(ws.activeTabId, spaceId, ws)) delete ws.activeTabId;
+    if (!Array.isArray(ws.split) || ws.split.length !== 2 || !ws.split.every((id) => belongs(id, spaceId, ws))) {
+      delete ws.split;
+      delete ws.splitMode;
+    }
+  }
   const settings = pick(raw, Object.keys(SETTINGS));
   dropInvalid(settings, SETTINGS);
+  if (Array.isArray(settings.environments)) {
+    settings.environments = settings.environments.map((env) => ({
+      id: env.id,
+      name: env.name,
+      targets: env.targets.map(({ label, origin, autoLabel }: Record<string, unknown>) =>
+        ({ label, origin, ...(typeof autoLabel === 'boolean' ? { autoLabel } : {}) })),
+    }));
+  }
   return {
     ...settings,
     spaces,
@@ -180,6 +214,7 @@ const TAB_FIELDS: Record<string, Check> = {
 const SPACE_FIELDS: Record<string, Check> = {
   emoji: isString,
   isolated: isBoolean,
+  pinnedCollapsed: isBoolean,
 };
 
 const WINDOW_SPACE_FIELDS: Record<string, Check> = {
@@ -220,11 +255,10 @@ function repairWindow(
   spaceIds: Set<string>,
   firstSpaceId: string,
   claim: (id: unknown) => id is string,
-  placed: (id: unknown) => boolean,
 ): FlechaWindow {
   const spaces: Record<string, WindowSpace> = {};
   for (const [spaceId, ws] of isRecord(raw.spaces) ? Object.entries(raw.spaces) : []) {
-    if (spaceIds.has(spaceId) && isRecord(ws)) spaces[spaceId] = repairWindowSpace(ws, claim, placed);
+    if (spaceIds.has(spaceId) && isRecord(ws)) spaces[spaceId] = repairWindowSpace(ws, claim);
   }
   return {
     id: typeof raw.id === 'string' ? raw.id : crypto.randomUUID(),
@@ -234,14 +268,9 @@ function repairWindow(
   };
 }
 
-function repairWindowSpace(raw: Record<string, unknown>, claim: (id: unknown) => id is string, placed: (id: unknown) => boolean): WindowSpace {
+function repairWindowSpace(raw: Record<string, unknown>, claim: (id: unknown) => id is string): WindowSpace {
   const ws = { ...pick(raw, ['activeTabId', 'split', ...Object.keys(WINDOW_SPACE_FIELDS)]), today: Array.isArray(raw.today) ? raw.today.filter(claim) : [] } as WindowSpace;
   dropInvalid(ws as unknown as Record<string, unknown>, WINDOW_SPACE_FIELDS);
-  if (ws.activeTabId !== undefined && !placed(ws.activeTabId)) delete ws.activeTabId;
-  if (ws.split && !(Array.isArray(ws.split) && ws.split.length === 2 && ws.split.every(placed))) {
-    delete ws.split;
-    delete ws.splitMode;
-  }
   return ws;
 }
 

@@ -5,7 +5,188 @@ import { test } from 'node:test';
 import { loadModule } from './load-module.mjs';
 
 const { displayUrl, historyQuery, inlineCompletion, matchQuality, rank, score } = await loadModule('chromium/shell/lib/commandBar.ts');
-const { SEARCH_ENGINES } = await loadModule('chromium/shell/lib/url.ts');
+const { SEARCH_ENGINES, resolveInput, webAddress } = await loadModule('chromium/shell/lib/url.ts');
+const { describe, formatTargets, parseTargets } = await loadModule('chromium/shell/lib/environments.ts');
+const { decodeState } = await loadModule('chromium/shared/savedState.ts');
+const { Store } = await loadModule('chromium/shared/store.ts');
+const { suggestable } = await loadModule('chromium/shell/lib/suggest.ts');
+const { devSuggestions } = await loadModule('chromium/shell/ui/devCommands.ts');
+
+test('typed addresses open directly with encoded paths and queries', () => {
+  for (const address of ['192.168.0.10:3000/docs', 'app.localhost:3030', '0.0.0.0:8000', '[::1]:8080']) {
+    assert.equal(resolveInput(address), `http://${address}`);
+  }
+  assert.equal(webAddress('mailto:dev@example.com'), 'mailto:dev@example.com');
+  assert.equal(new URL(resolveInput('%65xample.com/docs')).href, 'https://example.com/docs');
+  assert.equal(resolveInput('localhost:3000/my notes'), 'http://localhost:3000/my%20notes');
+  assert.equal(resolveInput('localhost:443/my notes'), 'http://localhost:443/my%20notes');
+  assert.equal(resolveInput('[0:0:0:0:0:0:0:1]:8080'), 'http://[0:0:0:0:0:0:0:1]:8080');
+  assert.equal(resolveInput('203.0.113.9:3000'), 'https://203.0.113.9:3000');
+  assert.equal(resolveInput('[fd00::1]:8443'), 'https://[fd00::1]:8443');
+  assert.equal(resolveInput('example.com/my notes'), 'https://example.com/my%20notes');
+  assert.equal(resolveInput('example.com/my\tnotes'), 'https://example.com/my%09notes');
+  assert.equal(resolveInput('https://example.com/my\tnotes'), 'https://example.com/my%09notes');
+  assert.equal(resolveInput('https://exam\nple.com/my\tnotes'), 'https://example.com/my%09notes');
+  assert.equal(resolveInput('data://,a\tb'), 'data://,a%09b');
+  assert.equal(resolveInput('[fd00::1]/my notes'), 'https://[fd00::1]/my%20notes');
+  const query = 'example.com? section=release notes&token=fixture';
+  assert.equal(new URL(resolveInput(query)).searchParams.get('token'), 'fixture');
+  assert.equal(suggestable(query), false);
+  const localQuery = 'localhost? access token=fixture';
+  assert.equal(resolveInput(localQuery), 'http://localhost/?%20access%20token=fixture');
+  assert.equal(suggestable(localQuery), false);
+  for (const [input, address] of [
+    ['localhost? opaque-fixture?', 'http://localhost/?%20opaque-fixture?'],
+    ['app.localhost? Why?', 'http://app.localhost/?%20Why?'],
+    ['192.168.0.10? opaque fixture', 'http://192.168.0.10/?%20opaque%20fixture'],
+    ['example.com? opaque-fixture?', 'https://example.com/?%20opaque-fixture?'],
+    ['example.com? opaque fixture', 'https://example.com/?%20opaque%20fixture'],
+    ['example.com? Why?', 'https://example.com/?%20Why?'],
+  ]) {
+    assert.equal(resolveInput(input), address);
+    assert.equal(suggestable(input), false);
+  }
+  for (const address of ['例子.中国', 'xn--fsqu00a.xn--fiqs8s']) assert.equal(resolveInput(address), `https://${address}`);
+});
+
+test('rejected addresses keep credentials and private paths out of search', () => {
+  for (const credentialed of [
+    'test-user:fixture-password@example.com/private',
+    'test-user:two words@example.com',
+    'test user:fixture-password@example.com/private',
+    'test user:two words@example.com/private',
+    'test user: fixture-password@example.com/private',
+    'test user: two words@example.com',
+    'test-token@example.com/private',
+    'test-token@example.com',
+    'test user@example.com/private?token=fixture',
+    'test user@example.com?token=fixture',
+    ':fixture-password@example.com/private',
+    ':two words@example.com/private',
+  ]) {
+    assert.equal(resolveInput(credentialed), 'about:blank');
+    assert.equal(suggestable(credentialed), false);
+  }
+  for (const broken of ['300.10.0.1', '192.168.1.010:3000', 'localhost: 3000', 'localhost:65536', 'localhost:3000@example.com']) {
+    assert.equal(webAddress(broken), undefined, broken);
+  }
+  for (const malformed of [
+    'localhost:-1',
+    'example.com:bad',
+    'example.com:',
+    'localhost:65536/api?token=fixture',
+    'example.com: -1/api?token=fixture',
+    'example.com:65 536/api?token=fixture',
+    'example.com:%20bad/api?token=fixture',
+    'example.com: bad/api?token=fixture',
+    'example.com: bad?token=fixture',
+    'example.com: bad? token=fixture',
+    'localhost: bad? access token=fixture',
+    'example.com: /api?token=fixture',
+    'example.com :65536/private?token=fixture',
+    'example.com？ opaque fixture',
+    '%65xample%2ecom:65536/api?token=fixture',
+    '%ZZxample%2ecom:65536/api?token=fixture',
+    'example%E3%80%82com:65536/private?token=fixture',
+    'example%EF%BC%8Ecom:65536/private?token=fixture',
+    'example%EF%BD%A1com:65536/private?token=fixture',
+    '%ZZxample%E3%80%82com:65536/private?token=fixture',
+    '[::gg]:80/api?token=fixture',
+    '2001:db8::1/private?token=fixture',
+    'fe80::1%eth0/private?token=fixture',
+    '2001:db8:0:0:0:0:0:1/private?token=fixture',
+    'staging:65536/api?token=fixture',
+    'staging:bad/api?token=fixture',
+    'build123: bad? token=fixture',
+    'staging:/api?token=fixture',
+    'staging :bad/api?token=fixture',
+  ]) {
+    assert.equal(resolveInput(malformed), 'about:blank');
+    assert.equal(suggestable(malformed), false);
+  }
+});
+
+test('prose still searches when its topic looks like a host', () => {
+  assert.equal(suggestable('re: meet @ noon'), true);
+  for (const question of ['example.com ? What is this', 'example.com ? Why?', 'example.com ？ Why?']) {
+    assert.equal(new URL(resolveInput(question)).searchParams.get('q'), question);
+    assert.equal(suggestable(question), true);
+  }
+  assert.equal(resolveInput('contact fixture@example.com'), 'https://www.google.com/search?q=contact%20fixture%40example.com');
+  for (const prose of ['email: alice@example.com', 'contact: alice@example.com', 'work email: alice@example.com']) {
+    assert.equal(new URL(resolveInput(prose)).searchParams.get('q'), prose);
+    assert.equal(suggestable(prose), false);
+  }
+  assert.equal(new URL(resolveInput('12:34:56')).searchParams.get('q'), '12:34:56');
+  assert.match(resolveInput('re: meet @ noon'), /[?&]q=re%3A%20meet%20%40%20noon/);
+  assert.equal(resolveInput('re: read? Where next'), 'https://www.google.com/search?q=re%3A%20read%3F%20Where%20next');
+  assert.equal(resolveInput('node.js: tutorial'), 'https://www.google.com/search?q=node.js%3A%20tutorial');
+  assert.equal(suggestable('node.js: tutorial'), true);
+  assert.equal(resolveInput('node.js: 2024 tutorial'), 'https://www.google.com/search?q=node.js%3A%202024%20tutorial');
+  assert.equal(resolveInput('node.js: 2024 tutorial?'), 'https://www.google.com/search?q=node.js%3A%202024%20tutorial%3F');
+  assert.equal(resolveInput('node.js: 2024 tutorial? Where next'), 'https://www.google.com/search?q=node.js%3A%202024%20tutorial%3F%20Where%20next');
+  assert.equal(resolveInput('node.js : 2024 tutorial? Where next'), 'https://www.google.com/search?q=node.js%20%3A%202024%20tutorial%3F%20Where%20next');
+  assert.match(resolveInput('mailto: vs tel: links'), /[?&]q=mailto%3A%20vs%20tel%3A%20links/);
+  assert.equal(resolveInput('mailto:?subject=Hello'), 'mailto:?subject=Hello');
+});
+
+test('environment classification follows explicit labels', () => {
+  const targets = parseTargets('prod https://staging.example.com\napp.localhost:3030\nflecha.dev\nlatest.example.com\n[::1]:8080\n0.0.0.0:8000\nstaging2.example.com\nqa01.example.com');
+  const envs = [{ id: 'project', name: 'Project', targets }];
+  assert.deepEqual(targets.map(({ origin }) => origin), ['https://staging.example.com', 'http://app.localhost:3030', 'https://flecha.dev', 'https://latest.example.com', 'http://[::1]:8080', 'http://0.0.0.0:8000', 'https://staging2.example.com', 'https://qa01.example.com']);
+  assert.deepEqual(targets.map(({ origin }) => describe(origin, envs).tone), ['production', 'local', 'production', 'production', 'local', 'local', 'staging', 'staging']);
+  assert.deepEqual(parseTargets('203.0.113.9:3000\n192.168.1.010:3000\ntel:1234\nssh:22\nInternal intranet'), [
+    { label: '203.0.113.9:3000', origin: 'https://203.0.113.9:3000', autoLabel: true },
+    { label: 'Internal', origin: 'https://intranet', autoLabel: false },
+  ]);
+  const extra = parseTargets('[fd00::1]:8443\nstaging:8443\nlocalhost-tools.example.com\nexample.test.com\napp.local');
+  assert.deepEqual(extra.map(({ origin }) => origin), [
+    'https://[fd00::1]:8443', 'https://staging:8443', 'https://localhost-tools.example.com', 'https://example.test.com', 'https://app.local',
+  ]);
+  assert.deepEqual(extra.map(({ origin }) => describe(origin, [{ id: 'extra', name: 'Extra', targets: extra }]).tone),
+    ['production', 'staging', 'production', 'production', 'local']);
+  const qualified = parseTargets('3d-staging:8443\nbuild.internal.:8443\nstaging.example.com.\nhttp://localhost.:3000\nwww.qa.co.uk\n[0:0:0:0:0:0:0:1]:8080');
+  assert.deepEqual(qualified.map(({ origin }) => origin), [
+    'https://3d-staging:8443', 'https://build.internal.:8443', 'https://staging.example.com.',
+    'http://localhost.:3000', 'https://www.qa.co.uk', 'http://[::1]:8080',
+  ]);
+  assert.deepEqual(qualified.map(({ origin }) => describe(origin, [{ id: 'qualified', name: 'Qualified', targets: qualified }]).tone),
+    ['staging', 'production', 'staging', 'local', 'production', 'local']);
+  const text = 'Local http://local\nhttps://staging.example.de\nhttps://qa.appspot.com\nhttps://qa.project.appspot.com';
+  const projects = parseTargets(text);
+  assert.equal(formatTargets(projects), text);
+  assert.deepEqual(projects.map(({ origin }) => describe(origin, [{ id: 'projects', name: 'Projects', targets: projects }]).tone),
+    ['local', 'staging', 'production', 'staging']);
+  const labels = parseTargets('QA_US https://example.com\nPROD_US https://staging.example.com');
+  assert.deepEqual(labels.map(({ origin }) => describe(origin, [{ id: 'labels', name: 'Labels', targets: labels }]).tone), ['staging', 'production']);
+});
+
+test('saved environment targets preserve explicit and legacy labels', () => {
+  const store = new Store({ load: () => undefined, save: () => {} });
+  const state = JSON.parse(store.serialize());
+  state.environments = [{ id: 'project', name: 'Project', targets: [
+    ...parseTargets('qa.example.com https://qa.example.com'),
+    { label: 'QA.EXAMPLE.COM', origin: 'https://qa.example.com' },
+    { label: 'example.com', origin: 'https://example.com' },
+    { label: 'prod', origin: 'https://staging.example.com', autoLabel: 'false' },
+  ] }];
+  const [project] = decodeState(JSON.stringify(state)).environments;
+  assert.equal(project.targets[3].autoLabel, undefined);
+  assert.equal(formatTargets(project.targets), 'qa.example.com https://qa.example.com\nQA.EXAMPLE.COM https://qa.example.com\nhttps://example.com\nprod https://staging.example.com');
+  assert.equal(describe('https://staging.example.com', [project]).tone, 'production');
+});
+
+test('developer command lookup ignores inherited properties and decodes UTF-8 JWTs', () => {
+  assert.deepEqual(devSuggestions('constructor hello'), []);
+  assert.deepEqual(devSuggestions('__proto__ hello'), []);
+  const header = { alg: 'none' };
+  const payload = { sub: 'räksmörgås' };
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const [suggestion] = devSuggestions(`${encode(header)}.${encode(payload)}.`);
+  assert.deepEqual(JSON.parse(suggestion.copy), { header, payload });
+  const malformed = Buffer.from('{"sub":"\xff"}', 'latin1').toString('base64url');
+  assert.deepEqual(devSuggestions(`${encode(header)}.${malformed}.`), []);
+});
 
 const result = (label, kind, match, extra = {}) => ({ label, score: score(kind, match), ...extra });
 const labels = (results) => rank(results).map((r) => r.label);

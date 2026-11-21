@@ -27,7 +27,8 @@ export function devSuggestions(query: string, currentUrl?: string): DevSuggestio
   const arg = rest.join(' ');
 
   if (keyword === 'gh' && arg) return [github(arg, currentUrl)];
-  const search = SEARCHES[keyword?.toLowerCase()];
+  const key = keyword.toLowerCase();
+  const search = Object.hasOwn(SEARCHES, key) ? SEARCHES[key] : undefined;
   if (search && arg) return [{ label: arg, sub: `Open in ${search.name}`, url: search.url(arg) }];
 
   const jwt = decodeJwt(q);
@@ -53,7 +54,8 @@ function decodeJwt(text: string): DevSuggestion | undefined {
   const parts = text.split('.');
   if (parts.length !== 3 || !/^eyJ/.test(parts[0])) return undefined;
   try {
-    const decode = (part: string) => JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/')));
+    const decoder = new TextDecoder('utf-8', { fatal: true });
+    const decode = (part: string) => JSON.parse(decoder.decode(Uint8Array.from(atob(part.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0))));
     const header = decode(parts[0]);
     const payload = decode(parts[1]);
     const facts = [header.alg && `alg ${header.alg}`, payload.sub && `sub ${payload.sub}`, expiry(payload.exp)].filter(Boolean);

@@ -27,10 +27,13 @@ export function hasImport(p: ImportPreview) {
 
 /** One line for what an import brought over: "1 new Space · 31 bookmarks · 5 pages". */
 export function resultLine(r: ImportResult): string {
+  if (!r.changed) return '';
   return [
     r.spaces && plural(r.spaces, 'new Space'),
     r.merged && `${plural(r.merged, 'Space')} merged`,
     r.bookmarks && plural(r.bookmarks, 'bookmark'),
+    r.folders && plural(r.folders, 'folder'),
+    r.splits && plural(r.splits, 'split view'),
     r.archived && plural(r.archived, 'archived tab'),
     r.history && plural(r.history, 'page'),
   ].filter(Boolean).join(' · ');

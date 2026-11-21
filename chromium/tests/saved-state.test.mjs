@@ -197,15 +197,14 @@ test('shapes the shell cannot start from are rejected', () => {
   }
 });
 
-test('the sidebar width is kept within Chromium\'s vertical tab strip limits, and saved', () => {
+test('the sidebar width is kept within Chromium\'s vertical tab strip limits, and saved', async () => {
   let json;
   const store = new Store({ load: () => undefined, save: (j) => { json = j; } });
-  store.setSidebarWidth(90);
+  await store.setSidebarWidth(90);
   assert.equal(store.state.sidebarWidth, 126);
-  store.setSidebarWidth(1000);
+  await store.setSidebarWidth(1000);
   assert.equal(store.state.sidebarWidth, 400);
-  store.setSidebarWidth(300.4);
-  store.saveNow();
+  await store.setSidebarWidth(300.4);
   assert.equal(decodeState(json).sidebarWidth, 300);
   const saved = JSON.parse(json);
   for (const width of [125, 401, '300']) assert.equal(decodeState(JSON.stringify({ ...saved, sidebarWidth: width })).sidebarWidth, undefined);

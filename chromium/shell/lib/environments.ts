@@ -1,5 +1,6 @@
-const randomUUID = () => crypto.randomUUID();
+import { getSubdomain } from 'tldts';
 import type { ActiveEnvironment, Environment, EnvironmentTarget } from '../../shared/types';
+import { webAddress } from './url';
 
 /**
  * Environments group the origins one project lives on (local, staging, production…).
@@ -43,11 +44,27 @@ export function describe(url: string, environments: Environment[] = []): ActiveE
   };
 }
 
+function autoLabel(target: EnvironmentTarget) {
+  return typeof target.autoLabel === 'boolean' ? target.autoLabel :
+    target.label === target.origin.replace(/^[a-z]+:\/\//i, '');
+}
+
+export function formatTargets(targets: EnvironmentTarget[]): string {
+  return targets.map((target) => autoLabel(target) ? target.origin : `${target.label} ${target.origin}`).join('\n');
+}
+
 /** Production is red so it is never mistaken for a safe place to click around. */
 function tone(target: EnvironmentTarget): ActiveEnvironment['tone'] {
-  const text = `${target.label} ${target.origin}`.toLowerCase();
-  if (/localhost|127\.0\.0\.1|\blocal\b|\.test\b|\.local\b/.test(text)) return 'local';
-  if (/stag|preview|qa|test|dev|sandbox|uat/.test(text)) return 'staging';
+  const address = target.origin.replace(/^[a-z]+:\/\//i, '').toLowerCase();
+  const label = autoLabel(target) ? '' : target.label.toLowerCase().replaceAll('_', ' ');
+  const staging = /\b(stag(e|ing)|preview|qa|test(ing)?|dev(elop(ment)?)?|sandbox|uat)\d*\b/;
+  if (/\bprod(uction)?\b/.test(label)) return 'production';
+  if (/\blocal\b/.test(label)) return 'local';
+  if (staging.test(label)) return 'staging';
+  const hostname = address.replace(/:\d+$/, '').replace(/\.$/, '');
+  if (/^(local|localhost|\[::1\]|0\.0\.0\.0|127(?:\.\d+){3})$|\.(localhost|test|local)$/i.test(hostname)) return 'local';
+  const subdomains = hostname.includes('.') ? getSubdomain(hostname, { allowPrivateDomains: true }) : hostname;
+  if (subdomains && staging.test(subdomains)) return 'staging';
   return 'production';
 }
 
@@ -59,23 +76,16 @@ export function parseTargets(text: string): EnvironmentTarget[] {
     if (!parts.length) continue;
     const raw = parts[parts.length - 1];
     try {
-      const origin = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : `https://${raw}`).origin;
-      const label = parts.length > 1 ? parts.slice(0, -1).join(' ') : new URL(origin).host;
-      targets.push({ label, origin });
+      const address = webAddress(raw, { allowBareHost: true });
+      if (!address) continue;
+      const url = new URL(address);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') continue;
+      const autoLabel = parts.length === 1;
+      const label = autoLabel ? url.host : parts.slice(0, -1).join(' ');
+      targets.push({ label, origin: url.origin, autoLabel });
     } catch {
       // Skip lines that aren't a URL.
     }
   }
   return targets;
-}
-
-export function sanitize(environments: unknown): Environment[] {
-  if (!Array.isArray(environments)) return [];
-  return environments
-    .map((e) => ({
-      id: typeof e?.id === 'string' ? e.id : randomUUID(),
-      name: String(e?.name ?? '').trim() || 'Project',
-      targets: parseTargets(typeof e?.targetsText === 'string' ? e.targetsText : ''),
-    }))
-    .filter((e) => e.targets.length > 0);
 }

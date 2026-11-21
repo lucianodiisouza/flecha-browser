@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 import { loadModule } from './load-module.mjs';
 
 const { applyStateUpdate, changedFields, OpenTabSnapshot } = await loadModule('chromium/shell/stateUpdates.ts');
@@ -53,4 +54,53 @@ test('Today activation belongs to its owning window and a shared tab claim reque
   assert.deepEqual(events.pop(), ['structure', undefined]);
   assert.equal(store.windowShowing(tab.id), second);
   store.saveNow();
+});
+
+test('a reconnect can only see a sidebar width that storage has accepted', async () => {
+  const writing = Promise.withResolvers();
+  const pending = Promise.withResolvers();
+  const writes = [];
+  const store = new Store({ load: () => undefined, save(json) {
+    writes.push(JSON.parse(json));
+    if (writes.length === 1) {
+      writing.resolve();
+      return pending.promise;
+    }
+  } });
+  const previous = store.state.sidebarWidth;
+  const seen = [];
+  store.onChange(() => seen.push(store.state.sidebarWidth));
+  const write = store.setSidebarWidth(300);
+  const rejected = assert.rejects(write, /Storage failed/);
+  await writing.promise;
+  assert.equal(writes[0].sidebarWidth, 300);
+  assert.equal(store.state.sidebarWidth, previous);
+  assert.deepEqual(seen, []);
+  const otherSave = store.saveNow();
+  pending.reject(new Error('Storage failed'));
+  await rejected;
+  await otherSave;
+  assert.equal(writes[1].sidebarWidth, previous);
+  assert.equal(store.state.sidebarWidth, previous);
+  assert.equal(await store.setSidebarWidth(320), 320);
+  assert.equal(writes.at(-1).sidebarWidth, 320);
+  assert.deepEqual(seen, [320]);
+});
+
+test('saving a sidebar width waits for an older full-state write', async () => {
+  const slowSave = Promise.withResolvers();
+  const snapshots = [];
+  const store = new Store({ load: () => undefined, async save(json) {
+    snapshots.push(JSON.parse(json));
+    if (snapshots.length === 1) await slowSave.promise;
+  } });
+  const oldSave = store.saveNow();
+  const width = store.setSidebarWidth(320);
+  await setImmediate();
+  assert.equal(store.state.sidebarWidth, undefined);
+  assert.deepEqual(snapshots.map((state) => state.sidebarWidth), [undefined]);
+  slowSave.resolve();
+  await oldSave;
+  assert.equal(await width, 320);
+  assert.deepEqual(snapshots.map((state) => state.sidebarWidth), [undefined, 320]);
 });

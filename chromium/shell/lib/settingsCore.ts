@@ -5,7 +5,7 @@
 import type { SettingsPatch, SettingsView } from '../../shared/types';
 import type { Store } from '../../shared/store';
 import { SEARCH_ENGINES } from './url';
-import { sanitize as sanitizeEnvironments } from './environments';
+import { formatTargets, parseTargets } from './environments';
 import { SHORTCUTS, defaultKeys, displayKeys, fixedShortcuts, isShortcutId, keysFor, sameKeys, shortcutList } from './shortcuts';
 
 /** A modifier and a key, or a function key alone: "Alt+Cmd+K", "F5". */
@@ -51,7 +51,7 @@ export function settingsView(store: Store, env: SettingsEnvironment): SettingsVi
     environments: (s.environments ?? []).map((e) => ({
       id: e.id,
       name: e.name,
-      targetsText: e.targets.map((t) => `${t.label} ${t.origin}`).join('\n'),
+      targetsText: formatTargets(e.targets),
     })),
     searchEngines: Object.entries(SEARCH_ENGINES).map(([id, e]) => ({ id: id as keyof typeof SEARCH_ENGINES, name: e.name })),
   };
@@ -78,6 +78,32 @@ export function setShortcut(store: Store, id: string, keys: string | null): stri
   return notice;
 }
 
+function editEnvironment(store: Store, edit: NonNullable<SettingsPatch['environment']>): string | undefined {
+  if (typeof edit.id !== 'string' || !edit.id) return 'Invalid Environment project.';
+  const projects = store.state.environments ?? [];
+  const previous = projects.find((project) => project.id === edit.id);
+  if (edit.op === 'remove') {
+    if (previous) store.setEnvironments(projects.filter((project) => project !== previous));
+    return;
+  }
+  if (edit.op === 'create' && typeof edit.name === 'string' && typeof edit.targetsText === 'string') {
+    if (previous) return 'This project already exists.';
+    const targets = parseTargets(edit.targetsText);
+    if (!targets.length) return 'Enter at least one valid target.';
+    store.setEnvironments([...projects, { id: edit.id, name: edit.name.trim() || 'Project', targets }]);
+    return;
+  }
+  if (edit.op !== 'edit' || typeof edit.value !== 'string') return 'Invalid Environment project edit.';
+  if (!previous) return 'This project was removed.';
+  const next = { ...previous };
+  if (edit.field === 'name') next.name = edit.value.trim() || 'Project';
+  else if (edit.field === 'targetsText') {
+    next.targets = parseTargets(edit.value);
+    if (!next.targets.length) return 'Enter at least one valid target, or use Remove project.';
+  } else return 'Invalid Environment project edit.';
+  store.setEnvironments(projects.map((project) => project === previous ? next : project));
+}
+
 /** Applies a change from the page. Resolves with a notice to show, if any. */
 export async function applySettings(store: Store, patch: SettingsPatch, effects: SettingsEffects): Promise<string | undefined> {
   let notice: string | undefined;
@@ -87,7 +113,7 @@ export async function applySettings(store: Store, patch: SettingsPatch, effects:
   if (patch.searchEngine && patch.searchEngine in SEARCH_ENGINES) {
     store.setSearchEngine(patch.searchEngine);
   }
-  if (patch.environments !== undefined) store.setEnvironments(sanitizeEnvironments(patch.environments));
+  if (patch.environment && typeof patch.environment === 'object') notice = editEnvironment(store, patch.environment) ?? notice;
   if (patch.askWhereToSave !== undefined) store.setDownloads({ askWhereToSave: patch.askWhereToSave });
   if (patch.theme || patch.peekPinnedLinks !== undefined) {
     store.setPreferences({ theme: patch.theme, peekPinnedLinks: patch.peekPinnedLinks });

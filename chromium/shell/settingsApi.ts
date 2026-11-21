@@ -5,7 +5,7 @@
  */
 import type { RecordedKey, SettingsApi, SettingsView, TabsMenuAction, TabsView } from '../shared/types';
 import type { AskOptions, TabsMenuItem } from './lib/tabManager';
-import { cmd, invoke, on } from './client';
+import { cmd, invoke, on, onDisconnect, onReconnect } from './client';
 import type { NotYet } from './settingsHandlers';
 import { askDialog, popupMenu, toast } from './settingsUi';
 import { isMac, primaryModifier } from './lib/platform';
@@ -20,6 +20,7 @@ function tellNotYet<T>(result: T): T {
 // ---- recording shortcuts: Electron catches keys in before-input-event; here the page does ----
 
 let recording = false;
+let recordingRevision = 0;
 const keyListeners: Array<(key: RecordedKey) => void> = [];
 const findListeners: Array<() => void> = [];
 
@@ -44,14 +45,23 @@ window.addEventListener(
   },
   true,
 );
-window.addEventListener('blur', () => setRecording(false));
-
 /** Recording also pauses Flecha's browser-wide shortcuts, so those keys reach this page. */
-function setRecording(on: boolean) {
-  if (recording === on) return;
-  recording = on;
-  cmd('settings:recording')(on);
+async function setRecording(on: boolean) {
+  const revision = ++recordingRevision;
+  if (!on) {
+    recording = false;
+    cmd('settings:recording')(false);
+    return;
+  }
+  const accepted = await invoke<boolean | undefined>('settings:recording', true);
+  if (recordingRevision !== revision) return;
+  if (accepted === false) throw new Error('Shortcut recording was canceled');
+  recording = true;
 }
+onDisconnect(() => {
+  recordingRevision++;
+  recording = false;
+});
 
 // The background (Flecha's ⌘F, say) can ask for the search field too.
 on('settings:find', () => {
@@ -83,7 +93,7 @@ const api: SettingsApi = {
   },
   onFind: (cb) => void findListeners.push(cb),
   onChange: (cb) => on('settings:changed', cb),
-  recordShortcut: async (on) => setRecording(!!on),
+  recordShortcut: setRecording,
   onKey: (cb) => void keyListeners.push(cb),
   tabs: () => invoke<TabsView>('settings:tabs'),
   editTabs: (edit) => invoke('settings:edit-tabs', edit),
@@ -94,7 +104,20 @@ const api: SettingsApi = {
     const picked = await popupMenu(items);
     return picked ? invoke<TabsMenuAction | undefined>('settings:tabs-menu-run', picked.run) : undefined;
   },
-  onTabs: (cb) => on('settings:tabs', cb),
+  onTabs: (cb, onError) => {
+    let generation = 0;
+    on('settings:tabs', (view: TabsView) => {
+      generation++;
+      cb(view);
+    });
+    onReconnect(() => {
+      const request = ++generation;
+      void api.tabs().then(
+        (view) => { if (request === generation) cb(view); },
+        () => { if (request === generation) onError?.(); },
+      );
+    });
+  },
   showTab: (tabId) => invoke('settings:show-tab', tabId).then(() => undefined),
   showEmojiPanel: () => invoke('settings:emoji-panel').then(tellNotYet).then(() => undefined),
 };

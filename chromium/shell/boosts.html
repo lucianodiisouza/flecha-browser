@@ -20,18 +20,26 @@
         <button class="button">Add</button>
       </form>
       <ul id="list"></ul>
+      <p id="list-error" class="hint error" role="status"></p>
+      <button id="retry-list" class="button" type="button" hidden>Retry list</button>
+      <p id="open-error" class="hint error" role="status"></p>
+      <button id="retry-open" class="button" type="button" hidden>Retry opening Boost</button>
+      <p id="delete-check-status" class="hint error" role="status"></p>
+      <button id="retry-delete-check" class="button" type="button" hidden>Check deletion again</button>
       <p id="empty" class="hint" hidden>No boosts yet. Press <kbd>⌥⌘B</kbd> on any site, or add one above.</p>
     </nav>
-    <main>
+    <main class="empty">
       <header>
         <strong id="name"></strong>
-        <span id="status" class="hint"></span>
+        <span id="status" class="hint" role="status"></span>
         <span class="spacer"></span>
         <button id="delete" class="button danger">Delete</button>
         <button id="save" class="button primary">Save <kbd>⌘S</kbd></button>
       </header>
       <textarea id="code" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
-      <p id="nothing" class="hint">Pick a boost on the left.</p>
+      <div id="nothing" class="hint">
+        <p>Pick a boost on the left.</p>
+      </div>
     </main>
     <script type="module" src="boostsPage.js"></script>
   </body>
