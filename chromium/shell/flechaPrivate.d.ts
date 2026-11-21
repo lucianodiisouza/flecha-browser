@@ -147,6 +147,11 @@ declare namespace chrome.flechaPrivate {
   }
   function createTab(options: CreateTabOptions): Promise<number>;
   function getTabPartition(tabId: number): Promise<string>;
+  /**
+   * Whether a tab has a page to go back to and one to go forward to (patch 0056): what the
+   * Back and Forward buttons show. tabs.goBack() and goForward() don't say.
+   */
+  function getTabHistory(tabId: number): Promise<{ canGoBack: boolean; canGoForward: boolean }>;
   function clearPartition(partition: string): Promise<void>;
 
   /**

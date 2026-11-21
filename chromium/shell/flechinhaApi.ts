@@ -6,6 +6,7 @@
 import type { FlechinhaApi, FlechinhaState, UiState } from '../shared/types';
 import { resolveInput } from './lib/url';
 import { spaceTint } from './lib/spaceTint';
+import { tabHistory, type TabHistory } from './lib/tabHistory';
 import { cmd, on } from './client';
 
 const windowId = chrome.flechaPrivate.getWindowId();
@@ -20,6 +21,9 @@ const editListeners: Array<() => void> = [];
 /** The new tab page shows as an empty Flechinha, as in Electron. */
 const isBlank = (url = '') => !url || /^chrome:\/\/(newtab|new-tab-page)\/?$/.test(url) || url === 'about:blank';
 
+let pageHistory: TabHistory = { canGoBack: false, canGoForward: false };
+let historyAsked = 0;
+
 function emit() {
   // Not before the page is known: an empty first state would open the address for editing.
   if (!ui || !tab) return;
@@ -29,9 +33,8 @@ function emit() {
     url: isBlank(url) ? '' : url,
     title: isBlank(url) ? '' : tab?.title || url,
     favicon: tab?.favIconUrl,
-    // Chromium doesn't tell extensions whether a tab can go back, so the buttons stay on.
-    canGoBack: !isBlank(url),
-    canGoForward: !isBlank(url),
+    canGoBack: !isBlank(url) && pageHistory.canGoBack,
+    canGoForward: !isBlank(url) && pageHistory.canGoForward,
     loading: tab?.status === 'loading',
     tint: spaceTint(ui.tint, systemDark.matches),
     space: { name: space.name, emoji: space.emoji },
@@ -40,9 +43,20 @@ function emit() {
   for (const cb of stateListeners) cb(state);
 }
 
+/** Asks the page where it is in its history; the last ask is the one that counts. */
+async function refreshHistory() {
+  const asked = ++historyAsked;
+  if (tab?.id === undefined) return;
+  const answer = await tabHistory(tab.id);
+  if (asked !== historyAsked) return;
+  pageHistory = answer;
+  emit();
+}
+
 async function refresh() {
   [tab] = await chrome.tabs.query({ windowId: await windowId, active: true });
   emit();
+  void refreshHistory();
 }
 
 on('state', (state: UiState) => {
@@ -50,10 +64,11 @@ on('state', (state: UiState) => {
   emit();
 });
 systemDark.addEventListener('change', emit);
-chrome.tabs.onUpdated.addListener(async (_id, _info, updated) => {
+chrome.tabs.onUpdated.addListener(async (_id, info, updated) => {
   if (updated.windowId === (await windowId) && updated.active) {
     tab = updated;
     emit();
+    if (info.status === 'complete' || info.url) void refreshHistory();
   }
 });
 chrome.tabs.onActivated.addListener(async (info) => info.windowId === (await windowId) && void refresh());
