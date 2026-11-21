@@ -52,6 +52,13 @@ body {
   -webkit-app-region: no-drag;
 }
 
+/* The address is the widest thing to grab the window by: dragging it moves the window, and
+   a click without moving still edits it. Only where the browser hands such clicks on
+   (setDragAreasClickable, patch 0047); elsewhere a drag area would swallow them. */
+.drag-address #toolbar #address-show {
+  -webkit-app-region: drag;
+}
+
 .traffic-lights {
   width: 72px;
   flex: none;

@@ -114,6 +114,14 @@ function stopEditing() {
 }
 
 show.addEventListener('click', startEditing);
+// The address also moves the window (see flechinha.css), where a click on a drag area can
+// still reach it.
+if (typeof chrome.flechaPrivate?.setDragAreasClickable === 'function') {
+  void chrome.flechaPrivate.setDragAreasClickable(true).then(
+    () => document.documentElement.classList.add('drag-address'),
+    () => undefined,
+  );
+}
 input.addEventListener('blur', stopEditing);
 form.addEventListener('submit', (e) => {
   e.preventDefault();
