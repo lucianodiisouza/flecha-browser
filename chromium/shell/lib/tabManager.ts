@@ -30,6 +30,7 @@ export interface TabManagerHost {
   ask(options: AskOptions): Promise<number>;
   /** Sends the pane a fresh view (when Settings is open). */
   push(view: TabsView): void;
+  hasView?(): boolean;
 }
 
 /** What a menu item does once picked: answer the page, make an edit, or open the tab. */
@@ -64,11 +65,15 @@ export class TabManager {
     private host: TabManagerHost,
   ) {
     // Titles and icons change while pages load; one redraw per burst is plenty.
-    store.onChange(() => this.refresh());
+    store.onChange((_change, detail) => {
+      if (detail?.kind === 'metadata' && !detail.keys.some(k => ['url', 'title', 'customTitle', 'favicon', 'homeUrl'].includes(k))) return;
+      this.refresh();
+    });
   }
 
   /** Sends the pane a fresh view soon; also for changes outside the Store, like newly fetched icons. */
   refresh() {
+    if (this.host.hasView?.() === false) return;
     clearTimeout(this.pushTimer);
     this.pushTimer = setTimeout(() => this.host.push(this.view()), 120);
   }

@@ -11,7 +11,8 @@ import { cmd, on } from './client';
 const windowId = chrome.flechaPrivate.getWindowId();
 const systemDark = matchMedia('(prefers-color-scheme: dark)');
 
-let ui: UiState | undefined;
+type ToolbarState = Pick<UiState, 'tint' | 'searchEngine' | 'searchEngineName'> & Pick<FlechinhaState, 'space'>;
+let ui: ToolbarState | undefined;
 let tab: chrome.tabs.Tab | undefined;
 const stateListeners: Array<(state: FlechinhaState) => void> = [];
 const flashListeners: Array<(message: string) => void> = [];
@@ -23,7 +24,6 @@ const isBlank = (url = '') => !url || /^chrome:\/\/(newtab|new-tab-page)\/?$/.te
 function emit() {
   // Not before the page is known: an empty first state would open the address for editing.
   if (!ui || !tab) return;
-  const space = ui.spaces.find((s) => s.id === ui!.activeSpaceId) ?? ui.spaces[0];
   const url = tab?.pendingUrl || tab?.url || '';
   const state: FlechinhaState = {
     url: isBlank(url) ? '' : url,
@@ -34,7 +34,7 @@ function emit() {
     canGoForward: !isBlank(url),
     loading: tab?.status === 'loading',
     tint: spaceTint(ui.tint, systemDark.matches),
-    space: { name: space.name, emoji: space.emoji },
+    space: ui.space,
     searchEngineName: ui.searchEngineName,
   };
   for (const cb of stateListeners) cb(state);
@@ -45,7 +45,7 @@ async function refresh() {
   emit();
 }
 
-on('state', (state: UiState) => {
+on('toolbar-state', (state: ToolbarState) => {
   ui = state;
   emit();
 });

@@ -32,7 +32,19 @@ export function asWindow<T>(windowId: number | undefined, fn: () => T): T {
 }
 
 /** The windows that have Flecha pages open, and undefined when some page has none. */
-export const pageWindows = () => new Set(ports.values());
+export function statePages() {
+  const windows = new Map<number | undefined, chrome.runtime.Port[]>();
+  for (const [port, id] of ports) {
+    if (port.name !== 'flecha' && port.name !== 'flecha-sidebar' && port.name !== 'flecha-toolbar') continue;
+    const list = windows.get(id);
+    if (list) list.push(port);
+    else windows.set(id, [port]);
+  }
+  return windows;
+}
+
+export const settingsOpen = () => [...ports.keys()].some(port => port.name === 'flecha-settings' || port.name === 'flecha');
+export const connected = (port: chrome.runtime.Port) => ports.has(port);
 
 function windowOf(port: chrome.runtime.Port): number | undefined {
   if (port.sender?.tab?.windowId !== undefined) return port.sender.tab.windowId;
@@ -74,7 +86,10 @@ export function run(name: string, ...args: unknown[]) {
 /** Sends an event to every open Flecha page. */
 export function broadcast(name: string, ...args: unknown[]) {
   const message: Message = { type: 'event', name, args };
-  for (const port of ports.keys()) port.postMessage(message);
+  for (const port of ports.keys()) {
+    if (name === 'settings:tabs' && port.name !== 'flecha-settings' && port.name !== 'flecha') continue;
+    port.postMessage(message);
+  }
 }
 
 /** Sends an event to the pages of one window (undefined: the pages that are in none). */
@@ -92,16 +107,21 @@ export function onConnect(fn: (port: chrome.runtime.Port, windowId: number | und
 /** Starts taking connections; messages wait until `ready` (handlers registered) resolves. */
 export function listen(ready: Promise<unknown>) {
   chrome.runtime.onConnect.addListener(async (port) => {
-    if (port.name !== 'flecha') return;
+    if (!['flecha', 'flecha-sidebar', 'flecha-toolbar', 'flecha-settings', 'flecha-page'].includes(port.name)) return;
     // Buffer what arrives while the background is still loading.
     const early: Message[] = [];
     const buffer = (m: Message) => void early.push(m);
     port.onMessage.addListener(buffer);
+    let disconnected = false;
+    port.onDisconnect.addListener(() => {
+      disconnected = true;
+      ports.delete(port);
+    });
     await ready;
+    if (disconnected) return;
     port.onMessage.removeListener(buffer);
     const windowId = windowOf(port);
     ports.set(port, windowId);
-    port.onDisconnect.addListener(() => ports.delete(port));
     const dispatch = async (message: Message) => {
       if (message.type === 'ping') return;
       if (message.type !== 'cmd' && message.type !== 'invoke') return;

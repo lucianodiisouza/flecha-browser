@@ -18,6 +18,19 @@ function response(body, headers = { 'content-length': String(Buffer.byteLength(b
   return Object.assign(Readable.from([Buffer.from(body)]), { statusCode: 200, headers });
 }
 
+test('cosmetic CSS keeps independent selectors, cross-list exceptions and site exclusions', async t => {
+  const out = await fs.mkdtemp(path.join(os.tmpdir(), 'flecha-cosmetic-'));
+  t.after(() => fs.rm(out, { recursive: true, force: true }));
+  const list = '/network\n##.ad\n## .ad\n##.unsupported:unknown()\n##.remove-me\nsite.example##.domain-only\n@@||site.example^$generichide';
+  const privacy = '/tracker\n##.ad\n##[data-text="two words"]\nsite.example#@#.remove-me';
+  await buildAdblock(out, { cache: path.join(out, 'cache'), download: url =>
+    response(subscription(url, url === LISTS.easylist ? list : privacy)) });
+  assert.equal(await fs.readFile(path.join(out, 'rules/cosmetic.css'), 'utf8'),
+    '.ad{display:none!important}.unsupported:unknown(){display:none!important}[data-text="two words"]{display:none!important}');
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(out, 'rules/cosmetic-exclude.json'))),
+    ['*://site.example/*', '*://*.site.example/*']);
+});
+
 test('reverse download completion preserves EasyList priority, rule IDs and the shared budget', async t => {
   const out = await fs.mkdtemp(path.join(os.tmpdir(), 'flecha-rules-'));
   t.after(() => fs.rm(out, { recursive: true, force: true }));

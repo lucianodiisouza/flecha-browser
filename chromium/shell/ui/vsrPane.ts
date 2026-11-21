@@ -85,11 +85,13 @@ export function setupVsrPane(api: SettingsApi) {
   const observer = new MutationObserver(schedule);
   observer.observe(pane, { attributes: true, attributeFilter: ['hidden'] });
   document.addEventListener('visibilitychange', schedule);
+  window.addEventListener('focus', schedule);
   window.addEventListener('pagehide', () => {
     stopped = true;
     observer.disconnect();
     if (idle !== undefined) cancelIdleCallback(idle);
     document.removeEventListener('visibilitychange', schedule);
+    window.removeEventListener('focus', schedule);
   }, { once: true });
   schedule();
 }

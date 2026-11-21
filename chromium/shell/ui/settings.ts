@@ -1,7 +1,5 @@
 import type { RecordedKey, SettingsApi, SettingsView } from '../../shared/types';
 import { ICONS, type IconName } from './icons.js';
-import { setupTabsPane } from './tabsPane.js';
-import { setupVsrPane } from './vsrPane.js';
 import { setupDebugPane } from './debugPane.js';
 import { isEnter } from '../lib/keys';
 
@@ -12,7 +10,6 @@ declare global {
 }
 
 const api = window.settings;
-setupVsrPane(api);
 setupDebugPane(api);
 
 function icon(name: IconName) {
@@ -22,19 +19,21 @@ function icon(name: IconName) {
   return el;
 }
 
-setupTabsPane(icon);
-
 for (const el of document.querySelectorAll<HTMLElement>('i[data-icon]')) el.replaceWith(icon(el.dataset.icon as IconName));
 
 // ---- navigation: one pane at a time, like System Settings ----------------------
 
 let lastShown = 'general';
+let tabsPane: Promise<void> | undefined;
+let videoPane: Promise<void> | undefined;
 
 function showPane(name: string) {
   closeSearch();
   const item = document.querySelector<HTMLElement>(`.nav-item[data-pane="${name}"]`) ?? document.querySelector<HTMLElement>('.nav-item')!;
   for (const el of document.querySelectorAll<HTMLElement>('.nav-item')) el.classList.toggle('selected', el === item);
   for (const pane of document.querySelectorAll<HTMLElement>('.pane')) pane.hidden = pane.dataset.pane !== item.dataset.pane;
+  if (item.dataset.pane === 'tabs-spaces') tabsPane ??= import('./tabsPane.js').then(m => m.setupTabsPane(icon));
+  if (item.dataset.pane === 'video') videoPane ??= import('./vsrPane.js').then(m => m.setupVsrPane(api));
   document.getElementById('pane-title')!.textContent = item.textContent!.trim();
   try {
     lastShown = item.dataset.pane!;

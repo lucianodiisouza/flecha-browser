@@ -4,7 +4,10 @@
  */
 import type { Message } from './protocol';
 
-const port = chrome.runtime.connect({ name: 'flecha' });
+// Only the sidebar and new-tab surfaces consume the tab collection.
+const page = location.pathname;
+const port = chrome.runtime.connect({ name: document.documentElement.dataset.surface && page !== '/flechinha.html'
+  ? 'flecha-sidebar' : page === '/flechinha.html' ? 'flecha-toolbar' : page === '/settings.html' ? 'flecha-settings' : 'flecha-page' });
 const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 const listeners = new Map<string, Array<(...args: any[]) => void>>();
 let nextId = 1;

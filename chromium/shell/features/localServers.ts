@@ -4,7 +4,7 @@
  * default and keeps the ones that answer HTTP. Each is named after its page's <title>
  * (Electron used the project folder, which only lsof knows), or `localhost:port`.
  *
- * Every few seconds while a Flecha window is in front, rarely otherwise, as in Electron.
+ * Scans while a Flecha window is in front and once as soon as focus returns.
  */
 import type { LocalServer } from '../../shared/types';
 
@@ -15,7 +15,6 @@ export const DEV_PORTS = [
 ];
 
 const FOCUSED_EVERY_MS = 4000;
-const BACKGROUND_EVERY_MS = 30000;
 
 async function probe(port: number): Promise<{ ok: boolean; airplay?: boolean }> {
   try {
@@ -55,8 +54,11 @@ async function nameOf(port: number) {
 export function watchLocalServers(onChange: (servers: LocalServer[]) => void) {
   let servers: LocalServer[] = [];
   const names = new Map<number, string>();
-  let focused = true;
-  let last = 0;
+  let focused = false;
+  let focusChanged = false;
+  let scanning = false;
+  let rescan = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
 
   async function scan() {
     const found = await Promise.all(DEV_PORTS.map(async (port) => ({ port, ...(await probe(port)) })));
@@ -74,26 +76,33 @@ export function watchLocalServers(onChange: (servers: LocalServer[]) => void) {
   }
 
   async function tick() {
-    const due = focused ? FOCUSED_EVERY_MS : BACKGROUND_EVERY_MS;
-    if (Date.now() - last >= due) {
-      last = Date.now();
-      await scan().catch((err) => console.warn('Flecha: looking for local servers failed', err));
-    }
-    setTimeout(tick, 2000);
+    if (!focused) return;
+    if (scanning) { rescan = true; return; }
+    scanning = true;
+    await scan().catch((err) => console.warn('Flecha: looking for local servers failed', err));
+    scanning = false;
+    if (!focused) return;
+    if (rescan) { rescan = false; void tick(); }
+    else timer = setTimeout(tick, FOCUSED_EVERY_MS);
+  }
+
+  function setFocus(next: boolean) {
+    if (focused === next) return;
+    focused = next;
+    clearTimeout(timer);
+    rescan = false;
+    if (focused) void tick();
   }
 
   // Flecha's windows are the only ones this browser has, so any focused window is Flecha's.
   chrome.windows.onFocusChanged.addListener((windowId) => {
-    const was = focused;
-    focused = windowId !== chrome.windows.WINDOW_ID_NONE;
-    // Coming back to Flecha: look again on the next tick.
-    if (focused && !was) last = 0;
+    focusChanged = true;
+    setFocus(windowId !== chrome.windows.WINDOW_ID_NONE);
   });
   void chrome.windows.getLastFocused().then(
-    (w) => (focused = !!w.focused),
-    () => undefined,
+    (w) => { if (!focusChanged) setFocus(!!w.focused); },
+    () => { /* The next focus event starts discovery. */ },
   );
-  void tick();
 
   return { servers: () => servers };
 }

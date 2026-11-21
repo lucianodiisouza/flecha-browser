@@ -249,7 +249,8 @@ function convertList(text) {
     // Element hiding: `##sel` everywhere, `site##sel` (skipped), `#@#sel` exceptions.
     const hide = line.match(/^([^#]*)#([@?$%]?)#(.+)$/);
     if (hide) {
-      const [, domains, kind, selector] = hide;
+      const [, domains, kind, rawSelector] = hide;
+      const selector = rawSelector.trimStart();
       if (kind === '@') hideExceptions.add(selector);
       else if (kind === '' && !domains && !/:-abp-|:has-text|:contains\(|:xpath|:matches-|:upward|:remove/.test(selector)) genericHide.add(selector);
       continue;
@@ -313,8 +314,9 @@ export async function buildAdblock(out, { refresh = false, cache = cacheDir, dow
   // files each rule under its id, class or tag. Inside :is() lists every selector was checked
   // against every element on each style recalc (perf findings, 2026-10-26).
   const selectors = [...hide].filter((s) => !hideExceptions.has(s) && !s.includes('{') && !s.includes('}'));
-  const rules = selectors.map((s) => `${s} { display: none !important; }`);
-  fs.writeFileSync(path.join(rulesDir, 'cosmetic.css'), `/* Generated from EasyList by build-adblock.mjs. */\n${rules.join('\n')}\n`);
+  // A trailing backslash must not escape the opening brace and consume the next rule.
+  const rules = selectors.map((s) => s + (s.endsWith('\\') ? ' ' : '') + '{display:none!important}');
+  fs.writeFileSync(path.join(rulesDir, 'cosmetic.css'), rules.join(''));
   const excludeMatches = [...exempt].sort().flatMap((d) => [`*://${d}/*`, `*://*.${d}/*`]);
   fs.writeFileSync(path.join(rulesDir, 'cosmetic-exclude.json'), JSON.stringify(excludeMatches));
 

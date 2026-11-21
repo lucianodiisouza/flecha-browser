@@ -7,7 +7,7 @@ import type { SettingsPatch, SettingsView, TabsEdit, VsrSettings, VsrState } fro
 import type { Store } from '../shared/store';
 import { applySettings, renewAgentToken, settingsView } from './lib/settingsCore';
 import { TabManager, type AskOptions, type TabsMenuRequest, type TabsMenuRun } from './lib/tabManager';
-import { broadcast, handle } from './hub';
+import { broadcast, handle, settingsOpen } from './hub';
 
 export interface SettingsContext {
   store: Store;
@@ -74,6 +74,7 @@ export function registerSettings(ctx: SettingsContext) {
     sessionOf: (space) => (space?.isolated ? space.id : 'default'),
     ask,
     push: (view) => broadcast('settings:tabs', view),
+    hasView: settingsOpen,
   });
 
   // The download folder and "ask where to save" are Chromium's prefs (patch 0058); the Store

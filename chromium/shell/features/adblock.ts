@@ -65,7 +65,7 @@ async function setCosmetic(enabled: boolean, allowed: readonly string[]) {
   listExemptions ??= fetch(chrome.runtime.getURL(COSMETIC_EXCLUDES))
     .then((r) => (r.ok ? (r.json() as Promise<string[]>) : []))
     .catch(() => [] as string[]);
-  const excludeMatches = [...(await listExemptions), ...allowed.flatMap((host) => [`*://${host}/*`, `*://*.${host}/*`])];
+  const excludeMatches = [...new Set([...(await listExemptions), ...allowed.flatMap((host) => [`*://${host}/*`, `*://*.${host}/*`])])];
   const script: chrome.scripting.RegisteredContentScript = {
     id: COSMETIC_ID,
     matches: ['http://*/*', 'https://*/*'],
