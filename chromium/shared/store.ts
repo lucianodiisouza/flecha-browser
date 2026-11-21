@@ -516,9 +516,10 @@ export class Store {
     this.changed();
   }
 
-  setPreferences(prefs: { theme?: 'system' | 'light' | 'dark'; peekPinnedLinks?: boolean }) {
+  setPreferences(prefs: { theme?: 'system' | 'light' | 'dark'; peekPinnedLinks?: boolean; monochromeIcons?: boolean }) {
     if (prefs.theme && ['system', 'light', 'dark'].includes(prefs.theme)) this.state.theme = prefs.theme;
     if (typeof prefs.peekPinnedLinks === 'boolean') this.state.peekPinnedLinks = prefs.peekPinnedLinks;
+    if (typeof prefs.monochromeIcons === 'boolean') this.state.monochromeIcons = prefs.monochromeIcons;
     this.changed();
   }
 
