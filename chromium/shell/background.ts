@@ -24,6 +24,7 @@ import { registerFeatures, type Features } from './features';
 // Also loaded on the first turn, for the shortcut event that may have woken the background.
 import { defaultBrowserState, isFlechinha, isFlechinhaWindow, registerNative } from './native';
 import { registerDownloads } from './downloads';
+import { nextWindowId } from './lib/windowCycle';
 import { registerExtensions } from './extensions';
 import { registerSiteControls } from './siteControls';
 import { Favicons } from './favicons';
@@ -1014,6 +1015,18 @@ async function start() {
     store.activate(ids[(i + step + ids.length) % ids.length]);
   }
 
+  /**
+   * Next window (lib/windowCycle.ts), from the window the keys were pressed in: main windows
+   * and Flechinhas, on any desktop. Minimized windows are left alone, as macOS leaves them.
+   */
+  async function cycleWindow(step: 1 | -1, from?: number) {
+    const windows = await chrome.windows.getAll({ windowTypes: ['normal'] });
+    const current = from ?? windows.find((w) => w.focused)?.id;
+    const ids = windows.flatMap((w) => (w.id !== undefined && (w.state !== 'minimized' || w.id === current) ? [w.id] : []));
+    const next = nextWindowId(ids, current, step);
+    if (next !== undefined) await chrome.windows.update(next, { focused: true });
+  }
+
   function cycleSpace(step: 1 | -1) {
     const spaces = store.state.spaces;
     const i = spaces.findIndex((sp) => sp.id === store.state.activeSpaceId);
@@ -1050,6 +1063,8 @@ async function start() {
     find: () => call('find'),
     toggleSidebar: () => call('toggleSidebar'),
     settings: () => showSettings(),
+    nextWindow: () => cycleWindow(1),
+    previousWindow: () => cycleWindow(-1),
     newFlechinha: () => call('newFlechinha'),
     closeTab: withTab((tab) => call('close', tab.id)),
     reopenTab: () => {
@@ -1161,6 +1176,8 @@ async function start() {
     chromeTabId: (id) => live.get(id),
     flechaTabId: (chromeId) => flechaIdFor(chromeId),
     run: (command, windowId) => {
+      // Next window is the same from any window, a Flechinha too.
+      if (command === 'nextWindow' || command === 'previousWindow') return void cycleWindow(command === 'nextWindow' ? 1 : -1, windowId !== undefined && windowId >= 0 ? windowId : undefined);
       // In a Flechinha, its own toolbar answers the few shortcuts it has.
       if (isFlechinha(windowId)) return broadcast('flechinha:command', windowId, command);
       // Settings on a pane, asked for by an incognito window (runInRegularProfile).
