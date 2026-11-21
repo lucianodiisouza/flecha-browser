@@ -41,6 +41,7 @@ export function settingsView(store: Store, env: SettingsEnvironment): SettingsVi
     theme: s.theme ?? 'system',
     archiveAfterHours: s.archiveAfterHours ?? 12,
     peekPinnedLinks: s.peekPinnedLinks !== false,
+    monochromeIcons: !!s.monochromeIcons,
     shortcuts: shortcutList(s),
     openLinksInFlechinha: s.openLinksInFlechinha !== false,
     showLocalServers: s.showLocalServers !== false,
@@ -99,8 +100,8 @@ export async function applySettings(store: Store, patch: SettingsPatch, effects:
   }
   if (patch.environments !== undefined) store.setEnvironments(sanitizeEnvironments(patch.environments));
   if (patch.askWhereToSave !== undefined) store.setDownloads({ askWhereToSave: patch.askWhereToSave });
-  if (patch.theme || patch.peekPinnedLinks !== undefined) {
-    store.setPreferences({ theme: patch.theme, peekPinnedLinks: patch.peekPinnedLinks });
+  if (patch.theme || patch.peekPinnedLinks !== undefined || patch.monochromeIcons !== undefined) {
+    store.setPreferences({ theme: patch.theme, peekPinnedLinks: patch.peekPinnedLinks, monochromeIcons: patch.monochromeIcons });
     effects.theme(store.state.theme ?? 'system');
   }
   if (patch.openLinksInFlechinha !== undefined) store.setOpenLinksInFlechinha(patch.openLinksInFlechinha);
