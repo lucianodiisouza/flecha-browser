@@ -3,11 +3,15 @@
  * kept and the colour is redrawn dark (a fixed lightness, about half the saturation), so that
  * two Spaces still tell apart: mixing the pastel into one dark base left them all the same navy.
  */
+/** The plain colour, first in the palette (ui/spaceChoices.ts), and the dark slate it wears in dark mode. */
+const PLAIN = '#d9dfe9';
+const PLAIN_DARK = '#2f3746';
 const DARK_LIGHTNESS = 0.19;
 const DARK_SATURATION = 0.55;
 
 export function spaceTint(color: string, dark: boolean) {
   if (!dark) return color;
+  if (color.toLowerCase() === PLAIN) return PLAIN_DARK;
   const [r, g, b] = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16) / 255);
   if ([r, g, b].some(Number.isNaN)) return color;
   const max = Math.max(r, g, b);

@@ -23,6 +23,12 @@ test('two Spaces still tell apart in dark mode', () => {
   assert.ok(distance(spaceTint('#d3ecd5', true), spaceTint('#f4cfdc', true)) > 30);
 });
 
+test('the plain colour wears the old dark slate', () => {
+  assert.equal(spaceTint('#d9dfe9', true), '#2f3746');
+  assert.equal(spaceTint('#D9DFE9', true), '#2f3746');
+  assert.equal(spaceTint('#d9dfe9', false), '#d9dfe9');
+});
+
 test('a grey stays grey, and a malformed colour is left alone', () => {
   const [r, g, b] = rgb(spaceTint('#808080', true));
   assert.ok(r === g && g === b);
