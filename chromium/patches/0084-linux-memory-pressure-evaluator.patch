@@ -1,0 +1,435 @@
+diff --git a/chrome/browser/chrome_browser_main_linux.cc b/chrome/browser/chrome_browser_main_linux.cc
+index 2eba856..0ac8d38 100644
+--- a/chrome/browser/chrome_browser_main_linux.cc
++++ b/chrome/browser/chrome_browser_main_linux.cc
+@@ -136,7 +136,7 @@ void ChromeBrowserMainPartsLinux::PostBrowserStart() {
+   auto* monitor = memory_pressure::MultiSourceMemoryPressureMonitor::Get();
+   if (monitor &&
+       base::FeatureList::IsEnabled(features::kLinuxLowMemoryMonitor)) {
+-    monitor->SetSystemEvaluator(
++    monitor->AddAuxiliaryEvaluator(
+         std::make_unique<DbusMemoryPressureEvaluatorLinux>(
+             monitor->CreateVoter()));
+   }
+diff --git a/components/memory_pressure/BUILD.gn b/components/memory_pressure/BUILD.gn
+index 7b64540..90d229f 100644
+--- a/components/memory_pressure/BUILD.gn
++++ b/components/memory_pressure/BUILD.gn
+@@ -23,6 +23,13 @@ source_set("memory_pressure") {
+ 
+   deps = [ "//base" ]
+ 
++  if (is_linux && !is_castos) {
++    sources += [
++      "system_memory_pressure_evaluator_linux.cc",
++      "system_memory_pressure_evaluator_linux.h",
++    ]
++  }
++
+   if (is_apple) {
+     sources += [
+       "disk_space_memory_pressure_evaluator_mac.cc",
+@@ -71,6 +78,10 @@ source_set("unit_tests") {
+     ]
+   }
+ 
++  if (is_linux && !is_castos) {
++    sources += [ "system_memory_pressure_evaluator_linux_unittest.cc" ]
++  }
++
+   if (is_fuchsia) {
+     deps += [ "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.memorypressure:fuchsia.memorypressure_hlcpp" ]
+     sources += [ "system_memory_pressure_evaluator_fuchsia_unittest.cc" ]
+diff --git a/components/memory_pressure/multi_source_memory_pressure_monitor.cc b/components/memory_pressure/multi_source_memory_pressure_monitor.cc
+index 209af4c..89a1377 100644
+--- a/components/memory_pressure/multi_source_memory_pressure_monitor.cc
++++ b/components/memory_pressure/multi_source_memory_pressure_monitor.cc
+@@ -113,6 +113,12 @@ void MultiSourceMemoryPressureMonitor::SetSystemEvaluator(
+   system_evaluator_ = std::move(evaluator);
+ }
+ 
++void MultiSourceMemoryPressureMonitor::AddAuxiliaryEvaluator(
++    std::unique_ptr<SystemMemoryPressureEvaluator> evaluator) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  auxiliary_evaluators_.push_back(std::move(evaluator));
++}
++
+ void MultiSourceMemoryPressureMonitor::SetDispatchCallbackForTesting(
+     const DispatchCallback& callback) {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+diff --git a/components/memory_pressure/multi_source_memory_pressure_monitor.h b/components/memory_pressure/multi_source_memory_pressure_monitor.h
+index a590dc2..11cfaa3 100644
+--- a/components/memory_pressure/multi_source_memory_pressure_monitor.h
++++ b/components/memory_pressure/multi_source_memory_pressure_monitor.h
+@@ -61,6 +61,10 @@ class MultiSourceMemoryPressureMonitor
+   void SetSystemEvaluator(
+       std::unique_ptr<SystemMemoryPressureEvaluator> evaluator);
+ 
++  // Adds a pressure source initialized by the embedder after platform startup.
++  void AddAuxiliaryEvaluator(
++      std::unique_ptr<SystemMemoryPressureEvaluator> evaluator);
++
+   // Allows tests to override the call to
+   // `base::MemoryPressureListener::NotifyMemoryPressure` that is done whenever
+   // `OnNotifyListenersRequested` is invoked.
+diff --git a/components/memory_pressure/system_memory_pressure_evaluator.cc b/components/memory_pressure/system_memory_pressure_evaluator.cc
+index c5ce044..f662f06 100644
+--- a/components/memory_pressure/system_memory_pressure_evaluator.cc
++++ b/components/memory_pressure/system_memory_pressure_evaluator.cc
+@@ -8,6 +8,7 @@
+ #include <utility>
+ 
+ #include "build/build_config.h"
++#include "build/chromecast_buildflags.h"
+ 
+ #if BUILDFLAG(IS_FUCHSIA)
+ #include "components/memory_pressure/system_memory_pressure_evaluator_fuchsia.h"
+@@ -16,6 +17,10 @@
+ #include "components/memory_pressure/system_memory_pressure_evaluator_mac.h"
+ #elif BUILDFLAG(IS_WIN)
+ #include "components/memory_pressure/threshold_memory_pressure_evaluator.h"
++#elif BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CASTOS)
++#include "base/feature_list.h"
++#include "base/files/file_path.h"
++#include "components/memory_pressure/system_memory_pressure_evaluator_linux.h"
+ #endif
+ 
+ namespace memory_pressure {
+@@ -34,6 +39,12 @@ SystemMemoryPressureEvaluator::CreateDefaultSystemEvaluator(
+ #elif BUILDFLAG(IS_WIN)
+   return ThresholdMemoryPressureEvaluator::CreateWithWinDefaults(
+       monitor->CreateVoter());
++#elif BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CASTOS)
++  if (base::FeatureList::IsEnabled(kFlechaLinuxMemoryPressureEvaluator)) {
++    return std::make_unique<SystemMemoryPressureEvaluatorLinux>(
++        monitor->CreateVoter(), base::FilePath("/proc"));
++  }
++  return nullptr;
+ #else
+   // Chrome OS and Chromecast evaluators are created in separate components.
+   return nullptr;
+diff --git a/components/memory_pressure/system_memory_pressure_evaluator_linux.cc b/components/memory_pressure/system_memory_pressure_evaluator_linux.cc
+new file mode 100644
+index 0000000..1552da0
+--- /dev/null
++++ b/components/memory_pressure/system_memory_pressure_evaluator_linux.cc
+@@ -0,0 +1,152 @@
++// Copyright 2026 The Flecha Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "components/memory_pressure/system_memory_pressure_evaluator_linux.h"
++
++#include <algorithm>
++#include <cstdint>
++#include <string>
++#include <utility>
++
++#include "base/byte_size.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/location.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_split.h"
++#include "base/strings/string_tokenizer.h"
++#include "base/strings/string_util.h"
++#include "base/task/task_traits.h"
++#include "base/task/thread_pool.h"
++#include "base/time/time.h"
++
++namespace memory_pressure {
++
++BASE_FEATURE(kFlechaLinuxMemoryPressureEvaluator,
++             base::FEATURE_ENABLED_BY_DEFAULT);
++
++namespace {
++
++constexpr auto kPollInterval = base::Seconds(5);
++// FlechaLowRamPolicy's default discard threshold and Chromium Cast's
++// absolute critical floor, both expressed here in /proc/meminfo's KiB.
++constexpr uint64_t kModerateAvailableKiB = base::MiB(200).InKiB();
++constexpr uint64_t kCriticalAvailableKiB = base::MiB(20).InKiB();
++// Stall fractions from AOSP lmkd's PSI medium/critical triggers (100 ms
++// partial / 70 ms full per second), applied to the kernel's 10-second mean.
++constexpr double kModerateSomePercent = 10;
++constexpr double kCriticalFullPercent = 7;
++
++std::string_view RowFields(std::string_view contents, std::string_view key) {
++  base::StringViewTokenizer lines(contents, "\n");
++  while (auto line = lines.GetNextTokenView()) {
++    auto row = base::SplitStringOnce(*line, " \t");
++    if (row && row->first == key) {
++      return row->second;
++    }
++  }
++  return {};
++}
++
++std::optional<double> Avg10(std::string_view row) {
++  base::StringViewTokenizer fields(row, " \t");
++  while (auto field = fields.GetNextTokenView()) {
++    constexpr std::string_view kPrefix = "avg10=";
++    if (field->starts_with(kPrefix)) {
++      double percent;
++      if (base::StringToDouble(field->substr(kPrefix.size()), &percent) &&
++          percent >= 0 && percent <= 100) {
++        return percent;
++      }
++      break;
++    }
++  }
++  return std::nullopt;
++}
++
++std::optional<uint64_t> ParseKiB(std::string_view row) {
++  base::StringViewTokenizer fields(row, " \t");
++  auto number = fields.GetNextTokenView();
++  uint64_t kib;
++  if (number && base::StringToUint64(*number, &kib) &&
++      fields.GetNextTokenView() == "kB" && !fields.GetNextTokenView()) {
++    return kib;
++  }
++  return std::nullopt;
++}
++
++std::optional<base::MemoryPressureLevel> ReadSample(base::FilePath proc_root) {
++  std::string psi;
++  std::string meminfo;
++  if (!base::ReadFileToString(proc_root.AppendASCII("pressure/memory"), &psi)) {
++    psi.clear();
++  }
++  if (!base::ReadFileToString(proc_root.AppendASCII("meminfo"), &meminfo)) {
++    meminfo.clear();
++  }
++  return SystemMemoryPressureEvaluatorLinux::ClassifySample(psi, meminfo);
++}
++
++}  // namespace
++
++SystemMemoryPressureEvaluatorLinux::SystemMemoryPressureEvaluatorLinux(
++    std::unique_ptr<MemoryPressureVoter> voter,
++    base::FilePath proc_root)
++    : SystemMemoryPressureEvaluator(std::move(voter)),
++      proc_root_(std::move(proc_root)) {
++  Poll();
++}
++
++SystemMemoryPressureEvaluatorLinux::~SystemMemoryPressureEvaluatorLinux() =
++    default;
++
++// static
++std::optional<base::MemoryPressureLevel>
++SystemMemoryPressureEvaluatorLinux::ClassifySample(std::string_view psi,
++                                                   std::string_view meminfo) {
++  const auto some = Avg10(RowFields(psi, "some"));
++  const auto full = Avg10(RowFields(psi, "full"));
++  const auto total = ParseKiB(RowFields(meminfo, "MemTotal:"));
++  const auto available = ParseKiB(RowFields(meminfo, "MemAvailable:"));
++  const bool has_psi = some && full;
++  const bool has_memory =
++      total && *total > 0 && available && *available <= *total;
++  if (!has_psi && !has_memory) {
++    return std::nullopt;
++  }
++  if ((has_psi && *full >= kCriticalFullPercent) ||
++      (has_memory && *available < kCriticalAvailableKiB)) {
++    return base::MEMORY_PRESSURE_LEVEL_CRITICAL;
++  }
++  if ((has_psi && *some >= kModerateSomePercent) ||
++      (has_memory && *available < kModerateAvailableKiB)) {
++    return base::MEMORY_PRESSURE_LEVEL_MODERATE;
++  }
++  return base::MEMORY_PRESSURE_LEVEL_NONE;
++}
++
++void SystemMemoryPressureEvaluatorLinux::Poll() {
++  base::ThreadPool::PostTaskAndReplyWithResult(
++      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
++      base::BindOnce(&ReadSample, proc_root_),
++      base::BindOnce(&SystemMemoryPressureEvaluatorLinux::OnSample,
++                     weak_factory_.GetWeakPtr()));
++}
++
++void SystemMemoryPressureEvaluatorLinux::OnSample(
++    std::optional<base::MemoryPressureLevel> sample) {
++  timer_.Start(FROM_HERE, kPollInterval, this,
++               &SystemMemoryPressureEvaluatorLinux::Poll);
++  // Escalate immediately. Require two lower readings to recover. If both
++  // files disappear, release our vote so stale pressure cannot re-notify.
++  const auto level = sample ? std::max(*sample, previous_sample_)
++                            : base::MEMORY_PRESSURE_LEVEL_NONE;
++  previous_sample_ = sample.value_or(base::MEMORY_PRESSURE_LEVEL_NONE);
++  if (level != current_vote()) {
++    SetCurrentVote(level);
++    SendCurrentVote();
++  }
++}
++
++}  // namespace memory_pressure
+diff --git a/components/memory_pressure/system_memory_pressure_evaluator_linux.h b/components/memory_pressure/system_memory_pressure_evaluator_linux.h
+new file mode 100644
+index 0000000..09bcf0c
+--- /dev/null
++++ b/components/memory_pressure/system_memory_pressure_evaluator_linux.h
+@@ -0,0 +1,47 @@
++// Copyright 2026 The Flecha Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef COMPONENTS_MEMORY_PRESSURE_SYSTEM_MEMORY_PRESSURE_EVALUATOR_LINUX_H_
++#define COMPONENTS_MEMORY_PRESSURE_SYSTEM_MEMORY_PRESSURE_EVALUATOR_LINUX_H_
++
++#include <memory>
++#include <optional>
++#include <string_view>
++
++#include "base/feature_list.h"
++#include "base/files/file_path.h"
++#include "base/memory/memory_pressure_level.h"
++#include "base/memory/weak_ptr.h"
++#include "base/timer/timer.h"
++#include "components/memory_pressure/system_memory_pressure_evaluator.h"
++
++namespace memory_pressure {
++
++BASE_DECLARE_FEATURE(kFlechaLinuxMemoryPressureEvaluator);
++
++class SystemMemoryPressureEvaluatorLinux final
++    : public SystemMemoryPressureEvaluator {
++ public:
++  SystemMemoryPressureEvaluatorLinux(std::unique_ptr<MemoryPressureVoter> voter,
++                                     base::FilePath proc_root);
++  ~SystemMemoryPressureEvaluatorLinux() override;
++
++  // Either proc file can supply a pressure signal on its own.
++  static std::optional<base::MemoryPressureLevel> ClassifySample(
++      std::string_view psi,
++      std::string_view meminfo);
++
++ private:
++  void Poll();
++  void OnSample(std::optional<base::MemoryPressureLevel> sample);
++
++  const base::FilePath proc_root_;
++  base::MemoryPressureLevel previous_sample_ = base::MEMORY_PRESSURE_LEVEL_NONE;
++  base::OneShotTimer timer_;
++  base::WeakPtrFactory<SystemMemoryPressureEvaluatorLinux> weak_factory_{this};
++};
++
++}  // namespace memory_pressure
++
++#endif  // COMPONENTS_MEMORY_PRESSURE_SYSTEM_MEMORY_PRESSURE_EVALUATOR_LINUX_H_
+diff --git a/components/memory_pressure/system_memory_pressure_evaluator_linux_unittest.cc b/components/memory_pressure/system_memory_pressure_evaluator_linux_unittest.cc
+new file mode 100644
+index 0000000..db94d0a
+--- /dev/null
++++ b/components/memory_pressure/system_memory_pressure_evaluator_linux_unittest.cc
+@@ -0,0 +1,108 @@
++// Copyright 2026 The Flecha Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "components/memory_pressure/system_memory_pressure_evaluator_linux.h"
++
++#include <optional>
++#include <vector>
++
++#include "base/files/file_util.h"
++#include "base/files/scoped_temp_dir.h"
++#include "base/test/bind.h"
++#include "base/test/scoped_feature_list.h"
++#include "base/test/task_environment.h"
++#include "base/time/time.h"
++#include "components/memory_pressure/multi_source_memory_pressure_monitor.h"
++#include "testing/gtest/include/gtest/gtest.h"
++
++namespace memory_pressure {
++namespace {
++
++using Evaluator = SystemMemoryPressureEvaluatorLinux;
++using base::MEMORY_PRESSURE_LEVEL_CRITICAL;
++using base::MEMORY_PRESSURE_LEVEL_MODERATE;
++using base::MEMORY_PRESSURE_LEVEL_NONE;
++
++constexpr char kPlenty[] = "MemTotal: 4194304 kB\nMemAvailable: 204800 kB\n";
++constexpr char kLow[] = "MemAvailable:\t204799 kB\nMemTotal: 4194304 kB\n";
++constexpr char kExhausted[] = "MemTotal: 4194304 kB\nMemAvailable: 0 kB\n";
++
++TEST(SystemMemoryPressureEvaluatorLinuxTest, KernelStallAverages) {
++  EXPECT_EQ(
++      Evaluator::ClassifySample(
++          "full avg10=6.99 avg60=99.0\nsome total=123 avg10=9.99\n", kPlenty),
++      MEMORY_PRESSURE_LEVEL_NONE);
++  EXPECT_EQ(
++      Evaluator::ClassifySample("some avg10=10.00\nfull avg10=0.00\n", ""),
++      MEMORY_PRESSURE_LEVEL_MODERATE);
++  EXPECT_EQ(
++      Evaluator::ClassifySample("full avg10=7.00\nsome avg10=10.00\n", kPlenty),
++      MEMORY_PRESSURE_LEVEL_CRITICAL);
++}
++
++TEST(SystemMemoryPressureEvaluatorLinuxTest, AvailableMemoryFallback) {
++  EXPECT_EQ(Evaluator::ClassifySample("", kPlenty), MEMORY_PRESSURE_LEVEL_NONE);
++  EXPECT_EQ(Evaluator::ClassifySample("", kLow),
++            MEMORY_PRESSURE_LEVEL_MODERATE);
++  EXPECT_EQ(Evaluator::ClassifySample("some avg10=99\nfull avg10=bad", kLow),
++            MEMORY_PRESSURE_LEVEL_MODERATE);
++  EXPECT_EQ(Evaluator::ClassifySample("some avg10=0\nfull avg10=0", kExhausted),
++            MEMORY_PRESSURE_LEVEL_CRITICAL);
++}
++
++TEST(SystemMemoryPressureEvaluatorLinuxTest, RejectsUnusableSamples) {
++  EXPECT_EQ(Evaluator::ClassifySample("full avg10=100", "MemTotal: 1024 kB"),
++            std::nullopt);
++  EXPECT_EQ(Evaluator::ClassifySample("some avg10=nan\nfull avg10=101",
++                                      "MemTotal: 1024 kB\nMemAvailable: 0 MB"),
++            std::nullopt);
++  EXPECT_EQ(Evaluator::ClassifySample("", "MemTotal: 1 kB\nMemAvailable: 2 kB"),
++            std::nullopt);
++}
++
++TEST(SystemMemoryPressureEvaluatorLinuxTest, VotesOnEscalationAndRecovery) {
++  base::test::TaskEnvironment tasks(
++      base::test::TaskEnvironment::TimeSource::MOCK_TIME);
++  base::ScopedTempDir proc;
++  ASSERT_TRUE(proc.CreateUniqueTempDir());
++  const auto meminfo = proc.GetPath().AppendASCII("meminfo");
++  ASSERT_TRUE(base::WriteFile(meminfo, kLow));
++
++  MultiSourceMemoryPressureMonitor monitor;
++  std::vector<base::MemoryPressureLevel> levels;
++  monitor.SetDispatchCallbackForTesting(base::BindLambdaForTesting(
++      [&](base::MemoryPressureLevel level) { levels.push_back(level); }));
++  Evaluator evaluator(monitor.CreateVoter(), proc.GetPath());
++  tasks.RunUntilIdle();
++  EXPECT_EQ(evaluator.current_vote(), MEMORY_PRESSURE_LEVEL_MODERATE);
++  ASSERT_TRUE(base::WriteFile(meminfo, kExhausted));
++  tasks.FastForwardBy(base::Seconds(5));
++  EXPECT_EQ(evaluator.current_vote(), MEMORY_PRESSURE_LEVEL_CRITICAL);
++  ASSERT_TRUE(base::WriteFile(meminfo, kPlenty));
++  tasks.FastForwardBy(base::Seconds(5));
++  EXPECT_EQ(evaluator.current_vote(), MEMORY_PRESSURE_LEVEL_CRITICAL);
++  ASSERT_TRUE(base::WriteFile(meminfo, kLow));
++  tasks.FastForwardBy(base::Seconds(5));
++  EXPECT_EQ(evaluator.current_vote(), MEMORY_PRESSURE_LEVEL_MODERATE);
++  // Losing both sources must stop periodic notifications of stale pressure.
++  ASSERT_TRUE(base::WriteFile(meminfo, ""));
++  tasks.FastForwardBy(base::Seconds(5));
++  ASSERT_FALSE(levels.empty());
++  EXPECT_EQ(levels.back(), MEMORY_PRESSURE_LEVEL_NONE);
++}
++
++TEST(SystemMemoryPressureEvaluatorLinuxTest, FactoryHonorsFeature) {
++  base::test::TaskEnvironment tasks;
++  MultiSourceMemoryPressureMonitor monitor;
++  for (bool enabled : {false, true}) {
++    base::test::ScopedFeatureList feature;
++    feature.InitWithFeatureState(kFlechaLinuxMemoryPressureEvaluator, enabled);
++    auto evaluator = Evaluator::CreateDefaultSystemEvaluator(&monitor);
++    EXPECT_EQ(evaluator != nullptr, enabled);
++  }
++  tasks.RunUntilIdle();
++}
++
++}  // namespace
++}  // namespace memory_pressure
