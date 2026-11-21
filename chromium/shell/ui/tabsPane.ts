@@ -183,7 +183,7 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
       el('button', { class: `tm-disclosure${open ? ' open' : ''}`, title: open ? 'Collapse' : 'Expand', onclick: () => toggle(space.id) }, icon('chevron')),
       el(
         'button',
-        { class: 'tm-space-badge', style: `--space: ${space.color}`, title: 'Icon and colour', onclick: (e: MouseEvent) => openSpaceEditor(space.id, e.currentTarget as HTMLElement) },
+        { class: 'tm-space-badge', style: `--space: ${shownSpaceColor(space.color)}`, title: 'Icon and colour', onclick: (e: MouseEvent) => openSpaceEditor(space.id, e.currentTarget as HTMLElement) },
         space.emoji || space.name[0]?.toUpperCase() || '•',
       ),
       name,

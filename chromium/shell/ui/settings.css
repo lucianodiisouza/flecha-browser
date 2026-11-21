@@ -37,6 +37,8 @@ body {
 /* ---- sidebar ------------------------------------------------------------ */
 
 #nav {
+  /* The active Space's colour (settings.ts); without one, the window shows through. */
+  background: var(--tint, transparent);
   width: var(--nav);
   flex: none;
   display: flex;

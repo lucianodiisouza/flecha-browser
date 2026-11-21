@@ -302,6 +302,8 @@ export interface SettingsView {
   /** Why Flecha's native host (imports, the agent bridge) last failed; undefined while it works. */
   hostError?: string;
   theme: 'system' | 'light' | 'dark';
+  /** The active Space's colour (the light one; the page darkens it in dark mode), for the sidebar. */
+  tint: string;
   archiveAfterHours: number;
   peekPinnedLinks: boolean;
   shortcuts: ShortcutInfo[];
@@ -317,7 +319,7 @@ export interface SettingsView {
 }
 
 /** The downloads folder is only changed through the folder picker, never set directly. */
-export type SettingsPatch = Partial<Omit<SettingsView, 'searchEngines' | 'downloadsFolder' | 'defaultBrowser' | 'agent' | 'shortcuts' | 'notice' | 'spaces'>> & {
+export type SettingsPatch = Partial<Omit<SettingsView, 'searchEngines' | 'downloadsFolder' | 'defaultBrowser' | 'agent' | 'shortcuts' | 'notice' | 'spaces' | 'tint'>> & {
   agentEnabled?: boolean;
   /** An accelerator, null for no shortcut, or 'default' to go back to Flecha's. */
   shortcut?: { id: string; keys: string | null };
