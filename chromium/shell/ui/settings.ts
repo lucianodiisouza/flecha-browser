@@ -3,6 +3,7 @@ import { browserDetail, importSummary } from './browserImport.js';
 import { ICONS, type IconName } from './icons.js';
 import { setupTabsPane } from './tabsPane.js';
 import { IS_MAC } from '../lib/shortcuts';
+import { spaceTint } from '../lib/spaceTint';
 import { askDialog } from '../settingsUi';
 
 /** Yes or no in Settings' own dialog: the destructive button first, Cancel the default. */
@@ -478,7 +479,17 @@ document.getElementById('copyClaudeCommand')!.addEventListener('click', (e) => c
 document.getElementById('copyAgentJson')!.addEventListener('click', (e) => copied(e.currentTarget as HTMLButtonElement, agentJson()));
 document.getElementById('newAgentToken')!.addEventListener('click', async () => render(await api.newAgentToken()));
 
+// The sidebar wears the active Space's colour, like the browser window's.
+const systemDark = matchMedia('(prefers-color-scheme: dark)');
+let tint: string | undefined;
+function applyTint() {
+  if (tint) document.documentElement.style.setProperty('--tint', spaceTint(tint, systemDark.matches));
+}
+systemDark.addEventListener('change', applyTint);
+
 function render(view: SettingsView) {
+  tint = view.tint;
+  applyTint();
   adBlock.checked = view.adBlock;
   if (searchEngine.options.length !== view.searchEngines.length) {
     searchEngine.replaceChildren(...view.searchEngines.map((e) => new Option(e.name, e.id)));

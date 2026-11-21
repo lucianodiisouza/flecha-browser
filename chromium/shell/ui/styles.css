@@ -1652,6 +1652,17 @@ footer {
   box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.12), 0 0 0 2px var(--surface), 0 0 0 3.5px var(--selection);
 }
 
+/* Dark swatches are the deep tints the window wears: a light edge sets them off the panel. */
+@media (prefers-color-scheme: dark) {
+  .swatch {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+  }
+
+  .swatch.selected {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2), 0 0 0 2px var(--surface), 0 0 0 3.5px var(--selection);
+  }
+}
+
 /* The custom swatch is a rainbow ring around the current colour, with the native picker inside. */
 .swatch.custom {
   background:
