@@ -4,7 +4,7 @@
  * default and keeps the ones that answer HTTP. Each is named after its page's <title>
  * (Electron used the project folder, which only lsof knows), or `localhost:port`.
  *
- * Scans while a Flecha window is in front and once as soon as focus returns.
+ * Scans while a Flecha window is in front. Focus resumes a missed poll immediately.
  */
 import type { LocalServer } from '../../shared/types';
 
@@ -57,7 +57,6 @@ export function watchLocalServers(onChange: (servers: LocalServer[]) => void) {
   let focused = false;
   let focusChanged = false;
   let scanning = false;
-  let rescan = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   async function scan() {
@@ -76,22 +75,20 @@ export function watchLocalServers(onChange: (servers: LocalServer[]) => void) {
   }
 
   async function tick() {
+    timer = undefined;
     if (!focused) return;
-    if (scanning) { rescan = true; return; }
     scanning = true;
     await scan().catch((err) => console.warn('Flecha: looking for local servers failed', err));
     scanning = false;
-    if (!focused) return;
-    if (rescan) { rescan = false; void tick(); }
-    else timer = setTimeout(tick, FOCUSED_EVERY_MS);
+    timer = setTimeout(tick, FOCUSED_EVERY_MS);
   }
 
   function setFocus(next: boolean) {
     if (focused === next) return;
     focused = next;
-    clearTimeout(timer);
-    rescan = false;
-    if (focused) void tick();
+    // Linux can report WINDOW_ID_NONE between Flecha windows. Keep the normal
+    // cadence until a scheduled tick actually finds the browser unfocused.
+    if (focused && !scanning && timer === undefined) void tick();
   }
 
   // Flecha's windows are the only ones this browser has, so any focused window is Flecha's.

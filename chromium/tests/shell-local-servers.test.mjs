@@ -29,8 +29,19 @@ test('discovery sleeps without focus, scans on return and never overlaps a pendi
   assert.equal(calls.mock.callCount(), DEV_PORTS.length);
   finish();
   await setImmediate();
+  assert.equal(calls.mock.callCount(), DEV_PORTS.length);
+  // Switching windows after the scan completes also preserves its next poll.
+  focus(-1);
+  focus(1);
+  assert.equal(calls.mock.callCount(), DEV_PORTS.length);
+  t.mock.timers.runAll();
   assert.equal(calls.mock.callCount(), DEV_PORTS.length * 2);
+  await setImmediate();
+  // Once a scheduled poll has missed focus, returning must wake it immediately.
   focus(-1);
   t.mock.timers.runAll();
   assert.equal(calls.mock.callCount(), DEV_PORTS.length * 2);
+  focus(2);
+  assert.equal(calls.mock.callCount(), DEV_PORTS.length * 3);
+  await setImmediate();
 });

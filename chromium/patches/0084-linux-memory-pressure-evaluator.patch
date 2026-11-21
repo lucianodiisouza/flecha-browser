@@ -12,10 +12,16 @@ index 2eba856..0ac8d38 100644
              monitor->CreateVoter()));
    }
 diff --git a/components/memory_pressure/BUILD.gn b/components/memory_pressure/BUILD.gn
-index 7b64540..90d229f 100644
+index 7b64540..6c6c476 100644
 --- a/components/memory_pressure/BUILD.gn
 +++ b/components/memory_pressure/BUILD.gn
-@@ -23,6 +23,13 @@ source_set("memory_pressure") {
+@@ -5,3 +5,5 @@
++import("//build/config/cast.gni")
++
+ source_set("memory_pressure") {
+   sources = [
+     "available_memory_monitor_evaluator.cc",
+@@ -23,6 +25,13 @@ source_set("memory_pressure") {
  
    deps = [ "//base" ]
  
@@ -29,7 +35,7 @@ index 7b64540..90d229f 100644
    if (is_apple) {
      sources += [
        "disk_space_memory_pressure_evaluator_mac.cc",
-@@ -71,6 +78,10 @@ source_set("unit_tests") {
+@@ -71,6 +80,10 @@ source_set("unit_tests") {
      ]
    }
  
@@ -110,7 +116,7 @@ index c5ce044..f662f06 100644
    return nullptr;
 diff --git a/components/memory_pressure/system_memory_pressure_evaluator_linux.cc b/components/memory_pressure/system_memory_pressure_evaluator_linux.cc
 new file mode 100644
-index 0000000..1552da0
+index 0000000..527a13a
 --- /dev/null
 +++ b/components/memory_pressure/system_memory_pressure_evaluator_linux.cc
 @@ -0,0 +1,152 @@
@@ -244,7 +250,7 @@ index 0000000..1552da0
 +
 +void SystemMemoryPressureEvaluatorLinux::Poll() {
 +  base::ThreadPool::PostTaskAndReplyWithResult(
-+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
++      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
 +      base::BindOnce(&ReadSample, proc_root_),
 +      base::BindOnce(&SystemMemoryPressureEvaluatorLinux::OnSample,
 +                     weak_factory_.GetWeakPtr()));
