@@ -24,6 +24,7 @@ import { registerFeatures, type Features } from './features';
 // Also loaded on the first turn, for the shortcut event that may have woken the background.
 import { defaultBrowserState, isFlechinha, isFlechinhaWindow, registerNative } from './native';
 import { registerDownloads } from './downloads';
+import { stepRecent, type RecentWalk } from './lib/recentTabs';
 import { registerExtensions } from './extensions';
 import { registerSiteControls } from './siteControls';
 import { Favicons } from './favicons';
@@ -1014,6 +1015,18 @@ async function start() {
     store.activate(ids[(i + step + ids.length) % ids.length]);
   }
 
+  /** Recent tab (lib/recentTabs.ts): back through the Space's tabs by last use. */
+  let recentWalk: RecentWalk | undefined;
+  function recentTab() {
+    const space = store.activeSpace;
+    const tabs = store.allTabIds(space).flatMap((id) => (store.state.tabs[id] ? [{ id, lastActive: store.state.tabs[id].lastActive }] : []));
+    const next = stepRecent(recentWalk, space.id, tabs, space.activeTabId, Date.now());
+    if (!next) return;
+    recentWalk = next.walk;
+    if (next.passed) store.updateTab(next.passed.tabId, { lastActive: next.passed.lastActive });
+    store.activate(next.tabId);
+  }
+
   function cycleSpace(step: 1 | -1) {
     const spaces = store.state.spaces;
     const i = spaces.findIndex((sp) => sp.id === store.state.activeSpaceId);
@@ -1058,6 +1071,7 @@ async function start() {
     },
     nextTab: () => cycleTab(1),
     previousTab: () => cycleTab(-1),
+    recentTab,
     pinTab: spacesOnly(withTab((tab) => store.togglePin(tab.id))),
     duplicateTab: withTab((tab) => openTab(tab.url)),
     muteTab: withTab((tab) => toggleMute(tab.id)),

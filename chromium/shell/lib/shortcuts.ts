@@ -20,6 +20,7 @@ export const SHORTCUTS = [
   { id: 'reopenTab', group: 'Tabs', label: 'Reopen closed tab', keys: 'CmdOrCtrl+Shift+T' },
   { id: 'nextTab', group: 'Tabs', label: 'Next tab', keys: 'Ctrl+Tab' },
   { id: 'previousTab', group: 'Tabs', label: 'Previous tab', keys: 'Ctrl+Shift+Tab' },
+  { id: 'recentTab', group: 'Tabs', label: 'Recent tab', keys: 'Ctrl+`' },
   { id: 'pinTab', group: 'Tabs', label: 'Pin or unpin tab', keys: 'CmdOrCtrl+D' },
   { id: 'duplicateTab', group: 'Tabs', label: 'Duplicate tab', keys: 'Alt+CmdOrCtrl+D' },
   { id: 'muteTab', group: 'Tabs', label: 'Mute or unmute tab', keys: 'Ctrl+M' },
