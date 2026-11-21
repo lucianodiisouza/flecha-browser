@@ -249,7 +249,8 @@ function convertList(text) {
     // Element hiding: `##sel` everywhere, `site##sel` (skipped), `#@#sel` exceptions.
     const hide = line.match(/^([^#]*)#([@?$%]?)#(.+)$/);
     if (hide) {
-      const [, domains, kind, selector] = hide;
+      const [, domains, kind, rawSelector] = hide;
+      const selector = rawSelector.trimStart();
       if (kind === '@') hideExceptions.add(selector);
       else if (kind === '' && !domains && !/:-abp-|:has-text|:contains\(|:xpath|:matches-|:upward|:remove/.test(selector)) genericHide.add(selector);
       continue;
@@ -282,6 +283,30 @@ function convertList(text) {
   return { rules, genericHide, hideExceptions, exemptSites };
 }
 
+function selectorHasBalancedSyntax(selector) {
+  let quote;
+  const closers = [];
+  for (let i = 0; i < selector.length; i++) {
+    const char = selector[i];
+    if (char === '\\') {
+      i++; // Escaped characters do not affect selector structure.
+    } else if (quote) {
+      if (char === quote) quote = undefined;
+    } else if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === '/' && selector[i + 1] === '*') {
+      const end = selector.indexOf('*/', i + 2);
+      if (end === -1) return false;
+      i = end + 1;
+    } else if (char === '[' || char === '(') {
+      closers.push(char === '[' ? ']' : ')');
+    } else if (char === ']' || char === ')') {
+      if (closers.pop() !== char) return false;
+    }
+  }
+  return quote === undefined && closers.length === 0;
+}
+
 /** Writes dist/rules. Exported for build.mjs; also runs on its own. */
 export async function buildAdblock(out, { refresh = false, cache = cacheDir, download = requestList } = {}) {
   const rulesDir = path.join(out, 'rules');
@@ -312,9 +337,12 @@ export async function buildAdblock(out, { refresh = false, cache = cacheDir, dow
   // One rule per selector: a selector Chromium doesn't know drops only its own rule, and Blink
   // files each rule under its id, class or tag. Inside :is() lists every selector was checked
   // against every element on each style recalc (perf findings, 2026-10-26).
-  const selectors = [...hide].filter((s) => !hideExceptions.has(s) && !s.includes('{') && !s.includes('}'));
-  const rules = selectors.map((s) => `${s} { display: none !important; }`);
-  fs.writeFileSync(path.join(rulesDir, 'cosmetic.css'), `/* Generated from EasyList by build-adblock.mjs. */\n${rules.join('\n')}\n`);
+  // Unclosed strings, comments, attributes or functions can consume later rules.
+  const selectors = [...hide].filter((s) =>
+    !hideExceptions.has(s) && !s.includes('{') && !s.includes('}') && selectorHasBalancedSyntax(s));
+  // A trailing backslash must not escape the opening brace and consume the next rule.
+  const rules = selectors.map((s) => s + (s.endsWith('\\') ? ' ' : '') + '{display:none!important}');
+  fs.writeFileSync(path.join(rulesDir, 'cosmetic.css'), rules.join('\n'));
   const excludeMatches = [...exempt].sort().flatMap((d) => [`*://${d}/*`, `*://*.${d}/*`]);
   fs.writeFileSync(path.join(rulesDir, 'cosmetic-exclude.json'), JSON.stringify(excludeMatches));
 

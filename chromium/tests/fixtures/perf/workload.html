@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Flecha benchmark</title>
+<style>
+  body { font: 16px system-ui; }
+  .row { padding: 2px 8px; border-bottom: 1px solid #ddd; }
+  iframe { width: 320px; height: 120px; }
+</style>
+<main></main>
+<script>
+  const mode = new URLSearchParams(location.search).get('mode');
+  const main = document.querySelector('main');
+  const rows = { heavy: 3000, frame: 375, tab: 300 }[mode] ?? 0;
+  document.title = `Flecha benchmark ${mode ?? 'blank'} ${location.pathname}`;
+  main.innerHTML = Array.from({ length: rows }, (_, i) =>
+    `<div class="row item-${i % 50}${i % 15 === 0 ? ' ad-banner-2' : ''}"${i === 0 ? ' id="AD_300"' : ''}>Row ${i}</div>`,
+  ).join('');
+  if (mode === 'heavy') {
+    for (let i = 0; i < 8; i++) {
+      const frame = document.createElement('iframe');
+      frame.src = `/embed/${i}?mode=frame`;
+      main.append(frame);
+    }
+  }
+  const now = () => performance.timeOrigin + performance.now();
+  window.nextVisibleFrame = () => new Promise((resolve) => {
+    document.addEventListener('visibilitychange', function visible() {
+      if (document.hidden) return;
+      document.removeEventListener('visibilitychange', visible);
+      const visibleAt = now();
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve({ visibleAt, frameAt: now() })));
+    });
+  });
+</script>

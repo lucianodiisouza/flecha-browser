@@ -61,9 +61,9 @@ export function registerFeatures(ctx: FeaturesContext): Features {
   // incognito copy's followed preferences can be out of date (incognito.ts).
   if (!incognito) void setAdBlocking(store.state);
 
-  store.onChange(() => {
-    phone.sync();
-    if (!incognito) void setAdBlocking(store.state);
+  store.onChange((_change, detail) => {
+    if (!detail || (detail.kind === 'metadata' && detail.keys.some(k => k === 'url' || k === 'device'))) phone.sync();
+    if (!detail && !incognito) void setAdBlocking(store.state);
   });
   // A mirror's Chromium tab can open without a Store change (the background opening it on show).
   chrome.tabs.onCreated.addListener(() => setTimeout(phone.sync, 0));

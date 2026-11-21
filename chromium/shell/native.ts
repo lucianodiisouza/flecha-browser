@@ -6,6 +6,7 @@
  * patch (stock Chromium, or a build older than the shell).
  */
 import type { Store } from '../shared/store';
+import { pinnedTabIds } from '../shared/store';
 import { SHORTCUTS, fixedShortcuts, keysFor } from './lib/shortcuts';
 import { broadcast, broadcastTo, callerWindow, handle } from './hub';
 import { incognito, sessionKey } from './incognito';
@@ -189,11 +190,7 @@ function registerPeek(ctx: NativeContext) {
     const ids =
       state.peekPinnedLinks === false
         ? []
-        : Object.keys(state.tabs)
-            .filter((id) => {
-              const zone = ctx.store.locate(id)?.zone;
-              return zone === 'pinned' || zone === 'favorites';
-            })
+        : [...state.favorites, ...state.spaces.flatMap(space => pinnedTabIds(space.pinned))]
             .map((id) => ctx.chromeTabId!(id))
             .filter((id): id is number => id !== undefined)
             .sort((a, b) => a - b);
@@ -203,7 +200,7 @@ function registerPeek(ctx: NativeContext) {
     void chrome.flechaPrivate.setPeekTabs(ids);
   };
   apply();
-  ctx.store.onChange(apply);
+  ctx.store.onChange((_change, detail) => { if (!detail) apply(); });
   // A pinned tab gets its Chromium tab when it's first opened.
   const soon = () => setTimeout(apply, 0);
   chrome.tabs.onCreated.addListener(soon);
@@ -250,7 +247,7 @@ function registerFlechinha(ctx: NativeContext) {
   // The regular shell's choice; links from other apps never go to an incognito window.
   if (!incognito) {
     applyLinks();
-    ctx.store.onChange(applyLinks);
+    ctx.store.onChange((_change, detail) => { if (!detail) applyLinks(); });
   }
   void chrome.flechaPrivate.getFlechinhas().then((ids) => ids.forEach((id) => flechinhas.add(id)));
   chrome.windows.onRemoved.addListener((id) => flechinhas.delete(id));
@@ -306,7 +303,7 @@ function registerSplitRatio(ctx: NativeContext) {
     }
   };
   apply();
-  ctx.store.onChange(apply);
+  ctx.store.onChange((change) => { if (change === 'structure') apply(); });
   chrome.tabs.onUpdated.addListener((_id, info) => {
     if ('splitViewId' in info) apply();
   });
@@ -326,7 +323,7 @@ function registerTheme(ctx: NativeContext) {
     void chrome.flechaPrivate.setTheme(theme);
   };
   apply();
-  ctx.store.onChange(apply);
+  ctx.store.onChange((_change, detail) => { if (!detail) apply(); });
 }
 
 // ---- keyboard shortcuts (patch 0016) ----------------------------------------------------
@@ -358,7 +355,7 @@ function registerShortcuts(ctx: NativeContext) {
     });
   };
   apply();
-  ctx.store.onChange(apply);
+  ctx.store.onChange((_change, detail) => { if (!detail) apply(); });
   handle({
     'settings:recording': (on: boolean) => {
       recording = !!on;

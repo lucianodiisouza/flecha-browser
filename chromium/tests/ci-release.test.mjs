@@ -183,6 +183,9 @@ test('native reuse ignores shell-only commits and invalidates native inputs and 
   await fs.mkdir(path.join(root, 'chromium/shell'));
   await fs.writeFile(path.join(root, 'chromium/patches/native.patch'), 'native input');
   await fs.writeFile(path.join(root, 'chromium/shell/app.ts'), 'old shell');
+  await fs.mkdir(path.join(root, 'chromium/build'));
+  const recipe = path.join(root, 'chromium/build/linux-release.gn');
+  await fs.copyFile(new URL('../build/linux-release.gn', import.meta.url), recipe);
   execFileSync('git', ['init', '--quiet', root]);
   const commit = () => {
     execFileSync('git', ['add', '.'], { cwd: root });
@@ -190,19 +193,27 @@ test('native reuse ignores shell-only commits and invalidates native inputs and 
       'commit', '--quiet', '-m', 'fixture'], { cwd: root });
   };
   commit();
-  const configuration = { platform: 'linux-x64', depot: 'toolchain', args: 'release flags', work: '/stable/work',
+  const release = await releaseConfiguration({ platform: 'linux-x64', version: '0.1.0', buildNumber: '0' });
+  const configuration = { ...release, platform: 'linux-x64', depot: 'toolchain', work: '/stable/work',
     image: { os: 'ubuntu24', version: 'runner-image-version' } };
   const original = nativeKey(root, configuration);
   await fs.writeFile(path.join(root, 'chromium/shell/app.ts'), 'new shell');
   commit();
   assert.equal(nativeKey(root, configuration), original);
-  for (const field of Object.keys(configuration)) {
-    assert.notEqual(nativeKey(root, { ...configuration, [field]: 'changed' }), original, field);
+  const changedInputs = { ...configuration, platform: 'windows-x64', depot: 'other-toolchain', work: '/other/work',
+    args: release.args.replace('chrome_pgo_phase = 2', 'chrome_pgo_phase = 0'),
+    gclient: release.gclient.replace('"checkout_pgo_profiles": True', '"checkout_pgo_profiles": False'),
+    image: { ...configuration.image, version: 'updated-image' } };
+  for (const [field, value] of Object.entries(changedInputs)) {
+    assert.notEqual(nativeKey(root, { ...configuration, [field]: value }), original, field);
   }
-  assert.notEqual(nativeKey(root, { ...configuration, image: { ...configuration.image, version: 'updated-image' } }), original);
+  await fs.appendFile(recipe, '\n# updated release recipe\n');
+  commit();
+  const updatedRecipe = nativeKey(root, configuration);
+  assert.notEqual(updatedRecipe, original);
   await fs.writeFile(path.join(root, 'chromium/patches/native.patch'), 'changed native input');
   commit();
-  assert.notEqual(nativeKey(root, configuration), original);
+  assert.notEqual(nativeKey(root, configuration), updatedRecipe);
 });
 
 test('optional reuse rejects unavailable or invalid trees and preserves unowned trees', async t => {
@@ -646,17 +657,74 @@ test('nightly preparation selects platform GN settings and the required PGO chec
     assert.ok(args.includes(`target_cpu = "${platform.startsWith('macos-') ? 'arm64' : 'x64'}"`));
     assert.match(args, /flecha_version = "0\.1\.0"/);
     assert.match(args, /flecha_build_number = "1"/);
-    if (platform === 'linux-x64') {
-      assert.match(args, /is_official_build = true/);
-      assert.match(args, /chrome_pgo_phase = 2/);
-      assert.match(gclient, /"checkout_pgo_profiles": True/);
-      assert.doesNotMatch(args, /ffmpeg_branding = "Chrome"/);
-    } else {
-      assert.match(args, /chrome_pgo_phase = 0/);
-      assert.match(gclient, /"checkout_pgo_profiles": False/);
+    assert.match(args, /^is_official_build = true$/m);
+    assert.match(args, /^chrome_pgo_phase = 2$/m);
+    assert.match(gclient, /"checkout_pgo_profiles": True/);
+    assert.doesNotMatch(args, /ffmpeg_branding = "Chrome"/);
+    for (const flag of ['v8_enable_builtins_gearbox', 'v8_enable_runtime_call_stats', 'enable_pdf_ink2',
+      'enable_pdf_save_to_drive', 'enable_hosted_apps', 'enable_vr', 'enable_openxr']) {
+      assert.match(args, new RegExp(`^${flag} = false$`, 'm'), `${platform}: ${flag}`);
     }
   }
 });
+
+test('local macOS release fetches the target and V8 profiles before GN unless PGO is disabled',
+  { skip: process.platform === 'win32' && 'POSIX release script fixture' }, async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'flecha-local-release-'));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    for (const dir of ['bin', 'src', 'sparkle/Sparkle.framework', 'node_modules/esbuild', 'chromium/build',
+      'chromium/scripts', 'chromium/shell/dist/rules', 'chromium/patches', 'chromium/branding/mac', 'chromium/branding/logo']) {
+      await fs.mkdir(path.join(root, dir), { recursive: true });
+    }
+    for (const file of ['scripts/build-release.sh', 'scripts/env.sh', 'build/release.gn']) {
+      await fs.copyFile(new URL(`../${file}`, import.meta.url), path.join(root, 'chromium', file));
+    }
+    for (const [file, contents] of Object.entries({
+      'package.json': '{"version":"0.1.0"}',
+      'chromium/shell/build.mjs': '',
+      'chromium/shell/dist/manifest.json': '{}',
+      'chromium/shell/dist/rules/easylist.json': '[]',
+      'chromium/patches/a.patch': '',
+      'chromium/branding/BRANDING': '',
+      'chromium/branding/mac/fixture': '',
+      'chromium/branding/logo/fixture.png': '',
+      '.gclient': 'fixture checkout configuration',
+    })) await fs.writeFile(path.join(root, file), contents);
+    for (const [file, body] of Object.entries({
+      'chromium/scripts/apply.sh': 'exit 0',
+      'chromium/scripts/fetch-sparkle.sh': 'printf "%s\\n" "$FIXTURE_SPARKLE"',
+      'bin/python3': 'printf "python3 %s\\n" "$*" >> "$FIXTURE_LOG"',
+      'bin/gn': 'printf "gn %s\\n" "$*" >> "$FIXTURE_LOG"',
+      'bin/caffeinate': 'printf "caffeinate %s\\n" "$*" >> "$FIXTURE_LOG"',
+    })) await fs.writeFile(path.join(root, file), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+
+    const log = path.join(root, 'commands');
+    const src = path.join(root, 'src');
+    for (const [arch, target, disablePgo] of [['arm64', 'mac-arm', false], ['x64', 'mac', false], ['x64', 'mac', true]]) {
+      await fs.writeFile(log, '');
+      execFileSync('bash', ['chromium/scripts/build-release.sh', '--no-package'], {
+        cwd: root, stdio: 'pipe', env: { ...process.env, CHROMIUM_SRC: src, FLECHA_ARCH: arch,
+          FLECHA_PGO: disablePgo ? '0' : '', FLECHA_BUILD_NUMBER: '1', FLECHA_REAPPLY: '1',
+          FIXTURE_LOG: log, FIXTURE_SPARKLE: path.join(root, 'sparkle'),
+          PATH: [path.join(root, 'bin'), path.dirname(process.execPath), process.env.PATH].join(path.delimiter) },
+      });
+      const out = path.join(src, 'out', arch === 'arm64' ? 'Release' : 'Release-x64');
+      const args = await fs.readFile(path.join(out, 'args.gn'), 'utf8');
+      assert.match(args, /^is_official_build = true$/m);
+      assert.deepEqual(args.match(/^chrome_pgo_phase = .*$/gm), [`chrome_pgo_phase = ${disablePgo ? 0 : 2}`]);
+      assert.match(args, new RegExp(`^target_cpu = "${arch}"$`, 'm'));
+      assert.match(args, new RegExp(`^flecha_sparkle_feed_url = "https://flecha\\.dev/appcast${arch === 'x64' ? '-x64' : ''}\\.xml"$`, 'm'));
+      assert.deepEqual((await fs.readFile(log, 'utf8')).trim().split('\n'), [
+        ...(!disablePgo ? [
+          `python3 tools/update_pgo_profiles.py --target=${target} update --gs-url-base=chromium-optimization-profiles/pgo_profiles`,
+          'python3 v8/tools/builtins-pgo/download_profiles.py download --depot-tools third_party/depot_tools --check-v8-revision --quiet',
+        ] : []),
+        `gn gen ${out}`,
+        `caffeinate -i autoninja -C ${out} chrome`,
+      ]);
+    }
+    assert.equal(await fs.readFile(path.join(root, '.gclient'), 'utf8'), 'fixture checkout configuration');
+  });
 
 test('compilation errors cannot become resumable success', async () => {
   await assert.rejects(compile(process.execPath, ['-e', 'process.exit(7)'],

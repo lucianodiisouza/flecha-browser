@@ -53,8 +53,15 @@ function copyStatic() {
   writeManifest(path.join(here, 'manifest.json'), out);
 }
 
+// These extension-page modules load on first use. Fixed names also work in watch
+// mode without leaving obsolete chunks in the versioned shell directory.
+const panes = ['tabsPane', 'vsrPane'];
 const options = {
-  entryPoints: { background: path.join(here, 'background.ts'), sidebar: path.join(here, 'sidebar.ts'), settings: path.join(here, 'settings.ts'), flechinha: path.join(here, 'flechinha.ts'), ...featureEntries },
+  entryPoints: { background: path.join(here, 'background.ts'), sidebar: path.join(here, 'sidebar.ts'), settings: path.join(here, 'settings.ts'), flechinha: path.join(here, 'flechinha.ts'), ...featureEntries,
+    ...Object.fromEntries(panes.map(name => [name, path.join(ui, name + '.ts')])) },
+  external: panes.map(name => './' + name + '.js'),
+  minify: true,
+  treeShaking: true,
   bundle: true,
   format: 'esm',
   target: 'chrome140',

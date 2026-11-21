@@ -4,7 +4,15 @@
  */
 import type { Message } from './protocol';
 
-const port = chrome.runtime.connect({ name: 'flecha' });
+export function portForPage(path: string, surface: string | undefined): string {
+  if (path === '/flechinha.html') return 'flecha-toolbar';
+  // The window, side panel and new-tab surfaces consume the tab collection.
+  if (surface) return 'flecha-sidebar';
+  if (path === '/settings.html') return 'flecha-settings';
+  return 'flecha-page';
+}
+
+const port = chrome.runtime.connect({ name: portForPage(location.pathname, document.documentElement.dataset.surface) });
 const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 const listeners = new Map<string, Array<(...args: any[]) => void>>();
 let nextId = 1;

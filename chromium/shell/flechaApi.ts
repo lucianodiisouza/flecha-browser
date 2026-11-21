@@ -6,6 +6,7 @@ import type { FlechaApi, PaletteMode, UiState } from '../shared/types';
 import { spaceTint } from './lib/spaceTint';
 import { SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth } from '../shared/sidebarWidth';
 import { cmd, invoke, on } from './client';
+import { applyStateUpdate, type StateUpdate } from './stateUpdates';
 import { confirmDeleteSpace, copy, setupWindowUi, showMenu } from './windowUi';
 import { incognito } from './incognito';
 import { fetchSuggestions, suggestable } from './lib/suggest';
@@ -35,11 +36,15 @@ function emitState(state: UiState) {
   applyFrame();
 }
 on('state', emitState);
+on('state-update', (update: StateUpdate) => {
+  if (lastState) emitState(applyStateUpdate(lastState, update));
+});
 
 /** Icons the background fetched from the sites themselves, by host; they arrive once each. */
-const siteIcons: Record<string, string> = {};
+let siteIcons: Record<string, string> = {};
 on('site-icons', (icons: Record<string, string>) => {
-  Object.assign(siteIcons, icons);
+  if (!Object.entries(icons).some(([host, url]) => siteIcons[host] !== url)) return;
+  siteIcons = { ...siteIcons, ...icons };
   if (lastState) emitState(lastState);
 });
 
@@ -47,18 +52,34 @@ on('site-icons', (icons: Record<string, string>) => {
 let frameState: { sidebar: chrome.flechaPrivate.SidebarMode; overlay: boolean; sidebarInPageFullscreen: boolean } | undefined;
 /** The width the sidebar is being dragged to, until the saved state has it. */
 let resizing: number | undefined;
-const windowId = surface === 'window' && framed ? chrome.flechaPrivate.getWindowId() : undefined;
+let windowId: Promise<number> | undefined;
+function getWindowId() {
+  return windowId ??= chrome.flechaPrivate.getWindowId().catch(error => {
+    windowId = undefined;
+    throw error;
+  });
+}
+let appliedFrame: { background: string; sidebarWidth: number; sidebar: chrome.flechaPrivate.SidebarMode; overlay: boolean } | undefined;
+let appliedFullscreen: { value: boolean } | undefined;
 function applyFrame() {
-  if (!windowId || !frameState || !lastState) return;
+  if (surface !== 'window' || !framed || !frameState || !lastState) return;
   const background = spaceTint(lastState.tint, systemDark.matches);
   const sidebarWidth = resizing ?? lastState.sidebarWidth ?? SIDEBAR_DEFAULT_WIDTH;
-  document.documentElement.style.setProperty('--sidebar', `${sidebarWidth}px`);
   const { sidebarInPageFullscreen, ...frame } = frameState;
-  void windowId.then((id) => {
-    void chrome.flechaPrivate.setFrame({ ...frame, background, sidebarWidth }, id);
-    // Patch 0072; a browser without it lays out a page's full screen as the sidebar's mode says.
-    if (typeof chrome.flechaPrivate.setSidebarInPageFullscreen === 'function') void chrome.flechaPrivate.setSidebarInPageFullscreen(sidebarInPageFullscreen, id);
-  });
+  if (appliedFrame?.sidebarWidth !== sidebarWidth) document.documentElement.style.setProperty('--sidebar', `${sidebarWidth}px`);
+  if (!appliedFrame || appliedFrame.background !== background || appliedFrame.sidebarWidth !== sidebarWidth ||
+      appliedFrame.sidebar !== frame.sidebar || appliedFrame.overlay !== frame.overlay) {
+    const next = appliedFrame = { ...frame, background, sidebarWidth };
+    void getWindowId().then(id => chrome.flechaPrivate.setFrame(next, id)).catch(() => {
+      if (appliedFrame === next) appliedFrame = undefined;
+    });
+  }
+  if (appliedFullscreen?.value !== sidebarInPageFullscreen && typeof chrome.flechaPrivate.setSidebarInPageFullscreen === 'function') {
+    const next = appliedFullscreen = { value: sidebarInPageFullscreen };
+    void getWindowId().then(id => chrome.flechaPrivate.setSidebarInPageFullscreen(next.value, id)).catch(() => {
+      if (appliedFullscreen === next) appliedFullscreen = undefined;
+    });
+  }
 }
 on('frame', (state) => {
   frameState = state;
