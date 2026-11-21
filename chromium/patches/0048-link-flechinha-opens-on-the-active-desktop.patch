@@ -1,0 +1,108 @@
+--- a/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
++++ b/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
+@@ -334,6 +334,12 @@
+   }
+   BrowserWindowInterface* browser = CreateFlechinhaWindow(profile);
+   chrome::AddTabAt(browser, url, -1, /*foreground=*/true);
++  // On the desktop of the app the link came from, not wherever Flecha's
++  // other windows are.
++  if (FlechaFrameHost* host =
++          FlechaFrameHost::ForWindow(browser->GetSessionID().id())) {
++    host->StayOnActiveDesktop();
++  }
+   browser->GetWindow()->Show();
+   browser->GetWindow()->Activate();
+   return true;
+--- a/chrome/browser/flecha/flecha_frame_host.h
++++ b/chrome/browser/flecha/flecha_frame_host.h
+@@ -203,6 +203,10 @@
+   virtual void SetFrameState(const FlechaFrameState& state) = 0;
+   virtual void FocusFrame() = 0;
+   virtual void FocusPage() = 0;
++  // For a window about to be shown and activated from another app: it comes
++  // to the desktop (macOS Space) that is active now, rather than macOS
++  // switching to a desktop where Flecha already has windows.
++  virtual void StayOnActiveDesktop() = 0;
+   // Where extension popups open, in the frame page's coordinates.
+   virtual void SetPopupAnchor(const gfx::Rect& rect) = 0;
+   // Takes the keys in Shortcuts() from now on, and lets go of any others.
+--- a/chrome/browser/ui/views/frame/flecha_frame_view_mac.mm
++++ b/chrome/browser/ui/views/frame/flecha_frame_view_mac.mm
+@@ -9,6 +9,35 @@
+ #import "components/remote_cocoa/app_shim/browser_native_widget_window_mac.h"
+ #include "ui/views/widget/widget.h"
+ 
++// A link from another app activates Flecha. When all of Flecha's windows are
++// on other desktops (Spaces), macOS answers the new window becoming key by
++// switching to the desktop of the others and taking the new window along,
++// away from the app the link was clicked in. A window that moves to the
++// active Space keeps the desktop where it is. Only while it opens: afterwards
++// the window belongs to that desktop like any other, and going back to it
++// switches desktops as usual.
++void KeepFlechaWindowOnActiveDesktop(views::Widget* widget) {
++  if (!widget) {
++    return;
++  }
++  NSWindow* window = widget->GetNativeWindow().GetNativeNSWindow();
++  if (window.collectionBehavior &
++      (NSWindowCollectionBehaviorMoveToActiveSpace |
++       NSWindowCollectionBehaviorCanJoinAllSpaces)) {
++    return;
++  }
++  window.collectionBehavior |= NSWindowCollectionBehaviorMoveToActiveSpace;
++  // The switch macOS would make comes after the activation, not with it.
++  constexpr int64_t kSettledMs = 1000;
++  __weak NSWindow* weak_window = window;
++  dispatch_after(
++      dispatch_time(DISPATCH_TIME_NOW, kSettledMs * NSEC_PER_MSEC),
++      dispatch_get_main_queue(), ^{
++        weak_window.collectionBehavior &=
++            ~NSWindowCollectionBehaviorMoveToActiveSpace;
++      });
++}
++
+ void SetFlechaTrafficLights(views::Widget* widget,
+                             const FlechaFrameState* state) {
+   if (!widget) {
+--- a/chrome/browser/ui/views/frame/flecha_frame_view.cc
++++ b/chrome/browser/ui/views/frame/flecha_frame_view.cc
+@@ -247,6 +247,7 @@
+ };
+ 
+ #if !BUILDFLAG(IS_MAC)
++void KeepFlechaWindowOnActiveDesktop(views::Widget* widget) {}
+ void SetFlechaTrafficLights(views::Widget* widget,
+                             const FlechaFrameState* state) {}
+ #endif
+@@ -553,6 +554,10 @@
+   }
+ }
+ 
++void FlechaFrameView::StayOnActiveDesktop() {
++  KeepFlechaWindowOnActiveDesktop(GetWidget());
++}
++
+ void FlechaFrameView::FocusPage() {
+   if (views::WebView* page = browser_view_->GetActiveContentsWebView()) {
+     page->RequestFocus();
+--- a/chrome/browser/ui/views/frame/flecha_frame_view.h
++++ b/chrome/browser/ui/views/frame/flecha_frame_view.h
+@@ -27,6 +27,10 @@
+ class Widget;
+ }
+ 
++// Lets `widget`'s window, about to be shown and activated, come to the active
++// desktop (FlechaFrameHost::StayOnActiveDesktop). A no-op off macOS.
++void KeepFlechaWindowOnActiveDesktop(views::Widget* widget);
++
+ // Puts the window controls (the macOS traffic lights) of `widget` where
+ // `state` wants them, or gives them back to the platform when `state` is null.
+ // A no-op off macOS.
+@@ -98,6 +102,7 @@
+   void SetFrameState(const FlechaFrameState& state) override;
+   void FocusFrame() override;
+   void FocusPage() override;
++  void StayOnActiveDesktop() override;
+   void SetPopupAnchor(const gfx::Rect& rect) override;
+   void UpdateShortcuts() override;
+   void OpenPeek(const GURL& url, content::WebContents* source) override;
