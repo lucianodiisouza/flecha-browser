@@ -77,7 +77,12 @@ export function resolveInput(raw: string, engine?: SearchEngineId): string {
 /** What was typed as a URL, completed (`github.com` → `https://github.com`); undefined when it reads as a search. */
 export function webAddress(raw: string, { allowBareHost = false } = {}): string | undefined {
   const input = raw.trim();
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input) || /^(about|data|file):/i.test(input)) {
+  const explicitAuthority = /^[a-z][a-z0-9+.-]*:\/\/[^/?#\\]*/i.exec(input)?.[0];
+  if (explicitAuthority) {
+    return explicitAuthority.replace(/[\t\n\r]/g, '') +
+      input.slice(explicitAuthority.length).replace(/[\t\n\r]/g, encodeURIComponent);
+  }
+  if (/^(about|data|file):/i.test(input)) {
     return input.replace(/[\t\n\r]/g, encodeURIComponent);
   }
   if (/^mailto:/i.test(input)) return /\s/.test(input.slice(7).split('?', 1)[0]) ? undefined : input;

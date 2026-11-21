@@ -120,6 +120,7 @@ on('frame', (state) => {
 });
 
 const paletteListeners: Array<(mode: PaletteMode) => void> = [];
+const closePaletteListeners: Array<() => void> = [];
 let paletteId: string | undefined;
 let dismissedPalette: string | undefined;
 on('palette', (mode: PaletteMode, id: string) => {
@@ -127,7 +128,12 @@ on('palette', (mode: PaletteMode, id: string) => {
   paletteId = id;
   for (const listen of paletteListeners) listen(mode);
 });
-on('close-palette', () => { paletteId = undefined; });
+function hideWorkerPalette() {
+  paletteId = undefined;
+  for (const listen of closePaletteListeners) listen();
+}
+on('close-palette', hideWorkerPalette);
+on('palette-closed', () => { if (paletteId !== undefined) hideWorkerPalette(); });
 onReconnect(() => {
   if (!windowFrame) return;
   if (dismissedPalette) cmd('closePalette')(dismissedPalette);
@@ -150,7 +156,7 @@ const api: FlechaApi = {
     paletteListeners.push(cb);
   },
   onClosePalette: (cb) => {
-    if (surface === 'panel' || surface === 'window') on('close-palette', cb);
+    if (surface === 'panel' || surface === 'window') closePaletteListeners.push(cb);
   },
   onEditSpace: (cb) => on('edit-space', cb),
   onRenameTab: (cb) => {
@@ -220,9 +226,15 @@ const api: FlechaApi = {
     if (confirm('Replace your Spaces and tabs with those you had before your last import?')) cmd('restoreBeforeImport')();
   },
   // The frame grows over the page first, as in Electron; the side panel just opens it.
-  openPalette: surface === 'window' ? cmd('openPalette') : (mode) => paletteListeners.forEach((cb) => cb(mode)),
+  openPalette: surface === 'window' ? cmd('openPalette') : (mode) => {
+    paletteId = undefined;
+    paletteListeners.forEach((cb) => cb(mode));
+  },
   closePalette: () => {
-    if (surface !== 'window') return;
+    if (surface !== 'window') {
+      paletteId = undefined;
+      return;
+    }
     dismissedPalette = paletteId;
     cmd('closePalette')(paletteId);
   },

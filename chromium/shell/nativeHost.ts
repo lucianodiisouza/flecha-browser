@@ -15,7 +15,7 @@ import type { AgentResult, AgentTab, AgentToolName } from '../shared/agentTools'
 import { applyBrowserImport, importOptions, previewBrowserImport, type BrowserImportData } from '../shared/importApply';
 import { HOST_NAME, TOOL_TIMEOUT, toolTimeout, type HostMethods, type ToHost, type ToShell } from '../native-host/protocol';
 import { broadcast, handle } from './hub';
-import { acquire, isHeld, onDebuggerDetach, release, resetDebugger, send } from './features/debuggee';
+import { acquire, captureDebuggerReset, isHeld, onDebuggerDetach, release, send } from './features/debuggee';
 
 export interface NativeHostContext {
   store: Store;
@@ -689,10 +689,24 @@ export function registerNativeHost(ctx: NativeHostContext) {
     } catch (error) {
       if (!(error instanceof AgentTimeout)) throw error;
       const previous = pendingDebuggerResets.get(chromeId);
-      const reset = previous ?? resetDebugger(chromeId, DEBUG_HOLDER).catch(async () => {
-        await (pendingReplies ? Promise.allSettled(pendingReplies) : command);
-        if (pendingDebuggerResets.get(chromeId) === reset) forget(chromeId);
-      }).then(() => {
+      const detach = captureDebuggerReset(chromeId, DEBUG_HOLDER);
+      const reset: Promise<void> = previous ?? Promise.resolve().then(async () => {
+        const replies = pendingReplies ? Promise.allSettled(pendingReplies) : command;
+        let retryDelay = RETRY_FIRST;
+        while (pendingDebuggerResets.get(chromeId) === reset) {
+          try {
+            await detach();
+            return;
+          } catch {
+            try {
+              await withDeadline(retryDelay, () => replies);
+              return;
+            } catch {
+              retryDelay = Math.min(retryDelay * 2, RETRY_MAX);
+            }
+          }
+        }
+      }).finally(() => {
         if (pendingDebuggerResets.get(chromeId) === reset) pendingDebuggerResets.delete(chromeId);
       });
       pendingDebuggerResets.set(chromeId, reset);

@@ -85,3 +85,21 @@ test('a reconnect can only see a sidebar width that storage has accepted', async
   assert.equal(writes.at(-1).sidebarWidth, 320);
   assert.deepEqual(seen, [320]);
 });
+
+test('saving a sidebar width waits for an older full-state write', async () => {
+  const slowSave = Promise.withResolvers();
+  const snapshots = [];
+  const store = new Store({ load: () => undefined, async save(json) {
+    if (snapshots.length === 0) await slowSave.promise;
+    snapshots.push(JSON.parse(json));
+  } });
+  const oldSave = store.saveNow();
+  const width = store.setSidebarWidth(320);
+  await Promise.resolve();
+  assert.equal(store.state.sidebarWidth, undefined);
+  assert.deepEqual(snapshots, []);
+  slowSave.resolve();
+  await oldSave;
+  assert.equal(await width, 320);
+  assert.deepEqual(snapshots.map((state) => state.sidebarWidth), [undefined, 320]);
+});

@@ -123,7 +123,10 @@ export function repairState(raw: Record<string, unknown>): BrowserState | undefi
   function pinnedIds(nodes: PinnedNode[]): string[] {
     return nodes.flatMap((node) => node.kind === 'tab' ? [node.tabId] : pinnedIds(node.children));
   }
-  const pinnedBySpace = new Map(spaces.map((space) => [space.id, new Set(pinnedIds(space.pinned))]));
+  const pinnedBySpace = new Map<string, Set<string>>();
+  for (const space of spaces) {
+    if (!pinnedBySpace.has(space.id)) pinnedBySpace.set(space.id, new Set(pinnedIds(space.pinned)));
+  }
   const favoriteIds = new Set(favorites);
   const belongs = (id: string, spaceId: string, ws: WindowSpace) =>
     favoriteIds.has(id) || pinnedBySpace.get(spaceId)?.has(id) || ws.today.includes(id);

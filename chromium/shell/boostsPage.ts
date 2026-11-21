@@ -140,7 +140,7 @@ async function open(name: string, reload = false) {
   if (editorSession === previousEditor && code.value !== oldCode) return restoreHash();
   if (writeRevisions.get(name) !== revision) return open(name, reload);
   discard = undefined;
-  clearOpenFailure();
+  if (failedOpen?.name === name || !reload) clearOpenFailure();
   if (!reload || current?.name !== file?.name) editorSession = Symbol();
   current = file;
   highlightListSelection();
@@ -235,11 +235,9 @@ function verifyDeletes() {
         }
       }
       updateEditorActions();
-      return true;
-    }, () => false),
-  )).then((results) => {
-    const failed = results.includes(false);
-    showUnconfirmedDelete(failed ? 'Couldn’t check deletion. Try again or copy your draft and reopen Boosts.' : '');
+    }, () => undefined),
+  )).then(() => {
+    showUnconfirmedDelete(unconfirmedDeletes.size ? 'Couldn’t check deletion. Try again or copy your draft and reopen Boosts.' : '');
   }).finally(() => {
     checkingDeletes = undefined;
     retryDeleteCheck.disabled = false;

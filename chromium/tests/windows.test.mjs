@@ -431,13 +431,18 @@ test('loading a moved legacy phone tab preserves its history and its destination
 test('the saved-state decoder drops a responsive mirror whose source no longer exists', () => {
   const { store, first, second, personal, work } = twoWindows();
   const desktop = store.addTab('https://example.com/desktop', { windowId: first });
+  store.togglePin(desktop.id, first);
   const phone = store.openResponsive(first);
   store.activate(phone, { windowId: first });
   const survivor = store.addTab('https://example.com/survivor', { windowId: second });
   const snapshot = JSON.parse(store.serialize());
+  snapshot.spaces.push({ ...snapshot.spaces.find((space) => space.id === personal), pinned: [] });
   snapshot.windows = [second, first].map((id) => snapshot.windows.find((win) => win.id === id));
   snapshot.windows[0].spaces[work] = { today: [survivor.id], activeTabId: phone, split: [phone, survivor.id] };
-  const withDesktop = decodeState(JSON.stringify(snapshot)).windows[0].spaces[work];
+  const valid = decodeState(JSON.stringify(snapshot));
+  assert.equal(valid.tabs[phone]?.device, 'mobile');
+  assert.deepEqual(valid.windows.find((win) => win.id === first).spaces[personal].split, [desktop.id, phone]);
+  const withDesktop = valid.windows[0].spaces[work];
   assert.equal(withDesktop.activeTabId, undefined);
   assert.equal(withDesktop.split, undefined);
   delete snapshot.tabs[desktop.id];

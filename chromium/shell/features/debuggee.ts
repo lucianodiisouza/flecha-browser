@@ -10,6 +10,8 @@ type Holder = string | symbol;
 const holders = new Map<number, Map<Holder, symbol>>();
 const attaching = new Map<number, Promise<void>>();
 const detaching = new Map<number, Promise<void>>();
+type AttachmentReset = { done: Promise<void>; confirmDetach(): void; canceled?: boolean };
+const attachmentResets = new Map<number, AttachmentReset>();
 type SharedReset = { done: Promise<void>; canceled?: boolean };
 const resetting = new Map<number, Map<symbol, SharedReset>>();
 const detachListeners: Array<(tabId: number, reason: string) => void> = [];
@@ -21,6 +23,11 @@ function retireAttachment(tabId: number) {
 
 chrome.debugger.onDetach.addListener((source, reason) => {
   if (source.tabId === undefined) return;
+  const reset = attachmentResets.get(source.tabId);
+  if (reset) {
+    reset.canceled = true;
+    reset.confirmDetach();
+  }
   retireAttachment(source.tabId);
   for (const fn of detachListeners) fn(source.tabId, reason);
 });
@@ -32,6 +39,12 @@ export function onDebuggerDetach(fn: (tabId: number, reason: string) => void) {
 
 /** Shares the attachment and preserves Chromium's error for callers that explain refusals. */
 export async function acquire(tabId: number, holder: Holder): Promise<void> {
+  const reset = attachmentResets.get(tabId);
+  if (reset) {
+    await reset.done;
+    if (reset.canceled) throw new Error('Debugger attachment was released');
+    return acquire(tabId, holder);
+  }
   let owners = holders.get(tabId);
   const existing = owners?.get(holder);
   const cleanup = existing && resetting.get(tabId)?.get(existing);
@@ -85,7 +98,7 @@ export async function release(tabId: number, holder: Holder, resetShared?: () =>
     const cleanup = Promise.resolve().then(async () => {
       const attachment = attaching.get(tabId);
       if (attachment) await attachment.catch(() => undefined);
-      if (holders.get(tabId) === set && set.get(holder) === claim) await resetShared();
+      if (!attachmentResets.has(tabId) && holders.get(tabId) === set && set.get(holder) === claim) await resetShared();
     }).finally(async () => {
       try {
         if (holders.get(tabId) === set && set.get(holder) === claim) await release(tabId, holder);
@@ -99,6 +112,8 @@ export async function release(tabId: number, holder: Holder, resetShared?: () =>
     return cleanup;
   }
   if (!set?.delete(holder) || set.size) return;
+  const reset = attachmentResets.get(tabId);
+  if (reset) await reset.done.catch(() => undefined);
   const attach = attaching.get(tabId);
   if (attach) await attach.catch(() => undefined);
   if (holders.get(tabId) !== set || set.size) return;
@@ -106,23 +121,49 @@ export async function release(tabId: number, holder: Holder, resetShared?: () =>
   await detach(tabId);
 }
 
-/** Ends a stalled command's session before any holder can attach again. */
-export async function resetDebugger(tabId: number, holder: Holder) {
-  const set = holders.get(tabId);
-  const claim = set?.get(holder);
-  if (!set || !claim) return;
-  const pending = attaching.get(tabId);
-  if (pending) await pending.catch(() => undefined);
-  if (holders.get(tabId) !== set || set.get(holder) !== claim) return;
-  retireAttachment(tabId);
-  await detach(tabId, () => {
-    for (const fn of detachListeners) fn(tabId, 'reset');
-  });
+/** Captures the session a stalled command used, so a retry cannot detach its replacement. */
+export function captureDebuggerReset(tabId: number, holder: Holder): () => Promise<void> {
+  const owners = holders.get(tabId);
+  if (!owners?.has(holder)) return async () => {};
+  return () => resetAttachment(tabId, owners);
 }
 
-async function detach(tabId: number, confirmReset?: () => void) {
-  const operation = chrome.debugger.detach({ tabId }).then(confirmReset);
-  const pending = confirmReset ? operation : operation.catch(() => undefined);
+async function resetAttachment(tabId: number, set: Map<Holder, symbol>) {
+  if (holders.get(tabId) !== set) return;
+  const inProgress = attachmentResets.get(tabId);
+  if (inProgress) return inProgress.done;
+  const pending = attaching.get(tabId);
+  if (pending) await pending.catch(() => undefined);
+  if (holders.get(tabId) !== set) return;
+  const existing = attachmentResets.get(tabId);
+  if (existing) return existing.done;
+  for (const cleanup of resetting.get(tabId)?.values() ?? []) cleanup.canceled = true;
+  let confirmDetach!: () => void;
+  const confirmation = new Promise<void>((resolve) => { confirmDetach = resolve; });
+  const detach = Promise.resolve().then(async () => {
+    if (holders.get(tabId) !== set) return;
+    try {
+      await chrome.debugger.detach({ tabId });
+    } catch (error) {
+      if (holders.get(tabId) === set) throw error;
+      return;
+    }
+    if (holders.get(tabId) !== set) return;
+    retireAttachment(tabId);
+    for (const fn of detachListeners) fn(tabId, 'reset');
+  });
+  const reset: AttachmentReset = {
+    confirmDetach,
+    done: Promise.race([detach, confirmation]).finally(() => {
+      if (attachmentResets.get(tabId) === reset) attachmentResets.delete(tabId);
+    }),
+  };
+  attachmentResets.set(tabId, reset);
+  await reset.done;
+}
+
+async function detach(tabId: number) {
+  const pending = chrome.debugger.detach({ tabId }).catch(() => undefined);
   detaching.set(tabId, pending);
   try {
     await pending;

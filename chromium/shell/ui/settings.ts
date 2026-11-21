@@ -413,6 +413,8 @@ const shortcutGroups = document.getElementById('shortcut-groups')!;
 const shortcutNotice = document.getElementById('shortcut-notice')!;
 let shortcuts: SettingsView['shortcuts'] = [];
 let recordingId: string | undefined;
+let recordingReady = false;
+let recordingRequest = 0;
 
 /** e.code names the physical key, so ⌥ combinations don't turn into "å" or "∂". */
 const CODE_KEYS: Record<string, string> = {
@@ -457,7 +459,7 @@ function renderShortcuts() {
           const recording = recordingId === item.id;
           cap.classList.toggle('recording', recording);
           cap.classList.toggle('empty', !item.keys);
-          cap.textContent = recording ? 'Press keys…' : item.keys || 'None';
+          cap.textContent = recording ? (recordingReady ? 'Press keys…' : 'Preparing…') : item.keys || 'None';
           cap.title = recording ? 'Esc cancels · ⌫ removes the shortcut' : 'Click to record a new shortcut';
           cap.addEventListener('click', () => void startRecording(recording ? undefined : item.id));
           actions.append(cap);
@@ -472,13 +474,26 @@ function renderShortcuts() {
 }
 
 async function startRecording(id: string | undefined) {
+  const request = ++recordingRequest;
   recordingId = id;
-  await api.recordShortcut(!!id);
+  recordingReady = false;
   renderShortcuts();
+  try {
+    await api.recordShortcut(!!id);
+    if (request !== recordingRequest) return;
+    recordingReady = !!id;
+  } catch {
+    if (request !== recordingRequest) return;
+    recordingId = undefined;
+    await api.recordShortcut(false);
+    showNotice('Couldn’t start recording. Try again.');
+  }
+  if (request === recordingRequest) renderShortcuts();
 }
 
+window.addEventListener('blur', () => { if (recordingId) void startRecording(undefined); });
 api.onKey(async (key) => {
-  if (!recordingId) return;
+  if (!recordingId || !recordingReady) return;
   if (['Shift', 'Control', 'Alt', 'Meta'].includes(key.key)) return;
   const id = recordingId;
   if (key.code === 'Escape' && !key.shift && !key.control && !key.alt && !key.meta) return startRecording(undefined);
@@ -615,7 +630,8 @@ const loadError = document.getElementById('settings-load-error')!;
 const loadStatus = document.getElementById('settings-load-status')!;
 const preferencePanes = document.querySelectorAll<HTMLElement>('[data-preferences]');
 let lastPreferences: SettingsView | undefined;
-function showLoadError() {
+function showLoadError(error: unknown) {
+  console.error('Flecha could not load preferences', error);
   if (lastPreferences) {
     try { render(lastPreferences); } catch (error) { console.error(error); }
   }

@@ -487,6 +487,9 @@ async function start() {
     try {
       if ((await chrome.tabs.query({ windowId: from })).length === 1 && !placeholders.has(from)) await makePlaceholder(from);
       await chrome.tabs.move(chromeId, { windowId: chromeWindowId, index: -1 });
+    } catch (error) {
+      if (source) sync(source);
+      throw error;
     } finally {
       movingFrom.delete(from);
     }
@@ -1657,7 +1660,7 @@ async function start() {
     if (port.name === 'flecha-toolbar') return;
     const palette = frameOf(chromeWindowId).palette;
     if (palette) sendTo(port, 'palette', palette.mode, palette.id);
-    else sendTo(port, 'close-palette');
+    else sendTo(port, 'palette-closed');
     if (chromeWindowId !== undefined) {
       currentPeek(chromeWindowId, (peek) => sendTo(port, 'peek', peek, chromeWindowId));
     }

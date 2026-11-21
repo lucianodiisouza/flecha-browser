@@ -73,6 +73,7 @@ function loadBoosts() {
 
 let commits = Promise.resolve();
 let effects = Promise.resolve();
+const revisions = new Map<string, symbol>();
 
 function writeBoosts(
   name: string,
@@ -90,17 +91,19 @@ function writeBoosts(
       files = nextFiles;
       compiled = nextCompiled;
     }
-    return { changed, saved: get(name) };
+    const saved = get(name);
+    const revision = changed && saved ? Symbol() : undefined;
+    if (revision) revisions.set(name, revision);
+    else if (changed) revisions.delete(name);
+    return { changed, saved, revision };
   });
   commits = commit.then(() => undefined, () => undefined);
-  return commit.then(async ({ changed, saved }) => {
+  return commit.then(async ({ changed, saved, revision }) => {
     if (changed) {
+      const registration = parsed.kind === 'script' ? registered = registered.then(registerUserScripts) : undefined;
       const apply = effects.then(async () => {
-        if (parsed.kind === 'script') {
-          registered = registered.then(registerUserScripts);
-          await registered;
-        }
-        await refreshPages(parsed, reload);
+        await registration;
+        await refreshPages(parsed, () => reload && revision !== undefined && revisions.get(name) === revision);
       });
       effects = apply.catch((error) => console.warn('Flecha boosts: couldn’t refresh pages', error));
       await effects;
@@ -139,6 +142,7 @@ async function registerUserScripts(): Promise<void> {
   const api = userScripts();
   if (!api) return;
   try {
+    await api.unregister();
     const scripts = Object.keys(files)
       .map((name) => ({ name, parsed: parseBoostName(name), code: compiled[name]?.code }))
       .filter((s) => s.parsed?.kind === 'script' && s.code)
@@ -149,7 +153,6 @@ async function registerUserScripts(): Promise<void> {
         world: 'MAIN' as chrome.userScripts.ExecutionWorld,
         runAt: 'document_end' as chrome.extensionTypes.RunAt,
       }));
-    await api.unregister();
     if (scripts.length) await api.register(scripts);
   } catch (err) {
     console.warn('Flecha boosts: could not register user scripts for future navigations', err);
@@ -355,11 +358,12 @@ export async function remove(name: string) {
   });
 }
 
-async function refreshPages({ host, kind }: { host: string; kind: BoostKind }, reload: boolean) {
+async function refreshPages({ host, kind }: { host: string; kind: BoostKind }, reload: () => boolean) {
+  if (kind === 'script' && !reload()) return;
   for (const tab of await chrome.tabs.query({})) {
     if (tab.id === undefined || !tab.url || !boostMatches(tab.url, host)) continue;
     if (kind === 'styles') await applyStyles(tab.id, tab.url);
-    else if (reload) await chrome.tabs.reload(tab.id).catch(() => undefined);
+    else if (reload()) await chrome.tabs.reload(tab.id).catch(() => undefined);
   }
 }
 

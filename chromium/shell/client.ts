@@ -17,6 +17,7 @@ export function portForPage(path: string, surface: string | undefined): string {
 
 const listeners = new Map<string, Array<(...args: any[]) => void>>();
 const reconnectListeners = new Set<() => void>();
+const disconnectListeners = new Set<() => void>();
 let nextId = 1;
 let current: Connection | undefined;
 let retryDelay = 0;
@@ -45,6 +46,7 @@ function disconnected(connection: Connection, terminal = false) {
     reply.reject(new ConnectionError(!startupFailure, startupFailure ?? 'Flecha’s background restarted'));
   }
   connection.replies.clear();
+  for (const cb of disconnectListeners) cb();
   if (terminal) stop();
   else scheduleRetry(Date.now() - connection.openedAt >= STABLE_MS);
 }
@@ -121,6 +123,10 @@ connect();
 /** A new connection can refresh reads. Mutations may already have run before a port closed. */
 export function onReconnect(listener: () => void) {
   reconnectListeners.add(listener);
+}
+
+export function onDisconnect(listener: () => void) {
+  disconnectListeners.add(listener);
 }
 
 export const cmd =

@@ -423,25 +423,33 @@ export function shortcutMap(state: Store['state']): Record<string, string> {
 
 function registerShortcuts(ctx: NativeContext) {
   if (!has('setShortcuts')) return;
-  let sent = '';
+  let sent: string | undefined;
   let applying = false;
   let retry: ReturnType<typeof setTimeout> | undefined;
   // Use the shell port's recovery cadence for another transient Chromium connection failure.
   let retryDelay = 100;
   // While Settings records a shortcut the keys go to its page, not to Flecha's commands.
-  let recorder: chrome.runtime.Port | undefined;
-  const apply = () => {
+  let recorder: { port: chrome.runtime.Port; paused: Promise<boolean>; confirm(ready: boolean): void } | undefined;
+  const apply = (recordingChanged = false) => {
+    if (recordingChanged && retry !== undefined) {
+      clearTimeout(retry);
+      retry = undefined;
+    }
     // The browser keeps one map for every window; the regular shell sets it.
     if (incognito || applying || retry !== undefined) return;
     const map = recorder ? {} : shortcutMap(ctx.store.state);
     const json = JSON.stringify(map);
-    if (json === sent) return;
+    if (json === sent) {
+      recorder?.confirm(true);
+      return;
+    }
     applying = true;
     void Promise.resolve().then(() => chrome.flechaPrivate.setShortcuts(map)).then((rejected) => {
       sent = json;
       retryDelay = 100;
       if (rejected.length) console.warn('Flecha shell: the browser could not read these shortcuts', rejected);
     }, (error: unknown) => {
+      sent = undefined;
       console.warn('Flecha shell: could not apply shortcuts', error);
       retry = setTimeout(() => {
         retry = undefined;
@@ -454,21 +462,30 @@ function registerShortcuts(ctx: NativeContext) {
     });
   };
   const stopRecording = () => {
-    recorder?.onDisconnect.removeListener(stopRecording);
+    recorder?.port.onDisconnect.removeListener(stopRecording);
+    recorder?.confirm(false);
     recorder = undefined;
-    apply();
+    apply(true);
   };
   apply();
   ctx.store.onChange((_change, detail) => { if (!detail) apply(); });
   handle({
     'settings:recording': (on: boolean) => {
       const port = callerPort();
-      if (!port || (on ? recorder === port : recorder !== port)) return;
-      if (!on) return stopRecording();
-      recorder?.onDisconnect.removeListener(stopRecording);
-      recorder = port;
+      if (!port || incognito) return;
+      if (!on) {
+        if (recorder?.port === port) stopRecording();
+        return;
+      }
+      if (recorder?.port === port) return recorder.paused;
+      recorder?.port.onDisconnect.removeListener(stopRecording);
+      recorder?.confirm(false);
+      let confirm!: (ready: boolean) => void;
+      const paused = new Promise<boolean>((resolve) => { confirm = resolve; });
+      recorder = { port, paused, confirm };
       port.onDisconnect.addListener(stopRecording);
-      apply();
+      apply(true);
+      return paused;
     },
   });
 }

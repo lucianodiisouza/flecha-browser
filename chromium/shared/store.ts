@@ -117,6 +117,7 @@ type ChangeListener = (change: StoreChange, detail?: ChangeDetail) => void;
 export class Store {
   state: BrowserState;
   private saveTimer?: ReturnType<typeof setTimeout>;
+  private stateWrite?: Promise<void>;
   private listeners: ChangeListener[] = [];
   /** In memory only: a restart starts without undo. */
   private undoSteps: UndoStep[] = [];
@@ -908,22 +909,15 @@ export class Store {
     return this.window(windowId).sidebarVisible ?? this.state.sidebarVisible;
   }
 
-  private sidebarWidthWrite: Promise<number> | undefined;
-
   /** Publish the shared sidebar width once it can be recovered from storage. */
   setSidebarWidth(width: number): Promise<number> {
     const saved = clampSidebarWidth(width);
-    const previous = this.sidebarWidthWrite;
-    const write = Promise.resolve(previous).catch(() => undefined).then(async () => {
+    const write = this.persistState(async () => {
       await this.persistence.save(this.serialize(saved));
       this.state.sidebarWidth = saved;
       this.changed('structure', false);
-      return saved;
-    }).finally(() => {
-      if (this.sidebarWidthWrite === write) this.sidebarWidthWrite = undefined;
     });
-    this.sidebarWidthWrite = write;
-    return write;
+    return Promise.resolve(write).then(() => saved);
   }
 
   // ---- imports --------------------------------------------------------------------
@@ -1220,10 +1214,17 @@ export class Store {
 
   saveNow(): ReturnType<StatePersistence['save']> {
     clearTimeout(this.saveTimer);
-    if (this.sidebarWidthWrite) {
-      return this.sidebarWidthWrite.catch(() => undefined).then(() => this.saveNow());
-    }
-    return this.persistence.save(this.serialize());
+    return this.persistState(() => this.persistence.save(this.serialize()));
+  }
+
+  private persistState(write: () => void | Promise<void>): void | Promise<void> {
+    const done = this.stateWrite ? this.stateWrite.then(write, write) : write();
+    if (!done || typeof done.then !== 'function') return done;
+    const pending = done.finally(() => {
+      if (this.stateWrite === pending) this.stateWrite = undefined;
+    });
+    this.stateWrite = pending;
+    return pending;
   }
 
   /** The state as it is saved, without what only a live page has (loading, audible). */
@@ -1355,7 +1356,14 @@ export class Store {
 
   private scheduleSave() {
     clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => this.saveNow(), 500);
+    this.saveTimer = setTimeout(() => {
+      try {
+        const save = this.saveNow();
+        if (save && typeof save.catch === 'function') void save.catch((error) => console.error('Flecha could not save its state', error));
+      } catch (error) {
+        console.error('Flecha could not save its state', error);
+      }
+    }, 500);
   }
 
   /** A folder in any Space, with the list it sits in. */
