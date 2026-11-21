@@ -194,6 +194,7 @@ export async function removeNativeTree(directory, { deadline, signal } = {}) {
 }
 
 // Packaging and shell inputs are refreshed after restoration. Native inputs must match.
+// The configuration includes the effective GN args and .gclient profile checkout setting.
 export function nativeKey(root, configuration) {
   const tree = execFileSync('git', ['ls-tree', '-r', '-z', 'HEAD', '--',
     'chromium/CHROMIUM_VERSION', 'chromium/patches', 'chromium/branding',

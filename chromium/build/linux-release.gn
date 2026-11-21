@@ -17,3 +17,11 @@ use_remoteexec = false
 treat_warnings_as_errors = false
 v8_enable_builtins_gearbox = false
 v8_enable_runtime_call_stats = false
+
+# Keep PDF viewing and extensions while omitting annotation, Drive, hosted
+# Chrome Apps and WebXR support.
+enable_pdf_ink2 = false
+enable_pdf_save_to_drive = false
+enable_hosted_apps = false
+enable_vr = false
+enable_openxr = false

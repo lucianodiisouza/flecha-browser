@@ -27,11 +27,11 @@ function releaseArgs(template, { platform, version, buildNumber }) {
   return `${args}\nuse_siso = false\nflecha_version = "${version}"\nflecha_build_number = "${buildNumber}"\n`;
 }
 
-// Keep profile checkout aligned with the GN arguments written for this platform.
+// Chromium's DEPS hooks fetch the native platform and V8 builtins profiles.
 export async function releaseConfiguration(options) {
   const template = options.platform === 'linux-x64' ? 'linux-release.gn' : 'release.gn';
   const args = releaseArgs(await fs.readFile(path.join(root, 'chromium/build', template), 'utf8'), options);
-  const checkoutPgoProfiles = /^\s*chrome_pgo_phase\s*=\s*2\b/m.test(args);
+  const checkoutPgoProfiles = /^[ \t]*chrome_pgo_phase[ \t]*=[ \t]*2[ \t]*(?:#[^\r\n]*)?$/m.test(args);
   const gclient = `solutions = [{"name": "src", "url": "https://chromium.googlesource.com/chromium/src.git", "managed": False, "custom_deps": {}, "custom_vars": {"checkout_configuration": "small", "checkout_pgo_profiles": ${checkoutPgoProfiles ? 'True' : 'False'}}}]\n`;
   return { args, gclient };
 }
