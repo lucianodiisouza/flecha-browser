@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 import { loadModule } from './load-module.mjs';
 
 const { applyStateUpdate, changedFields, OpenTabSnapshot } = await loadModule('chromium/shell/stateUpdates.ts');
@@ -95,7 +96,7 @@ test('saving a sidebar width waits for an older full-state write', async () => {
   } });
   const oldSave = store.saveNow();
   const width = store.setSidebarWidth(320);
-  await Promise.resolve();
+  await setImmediate();
   assert.equal(store.state.sidebarWidth, undefined);
   assert.deepEqual(snapshots.map((state) => state.sidebarWidth), [undefined]);
   slowSave.resolve();
