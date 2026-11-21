@@ -1,0 +1,161 @@
+--- a/chrome/browser/ui/views/frame/BUILD.gn
++++ b/chrome/browser/ui/views/frame/BUILD.gn
+@@ -754,6 +754,7 @@
+   sources = [
+     "flecha_frame_view.cc",
+     "flecha_frame_view.h",
++    "flecha_window_close.h",
+   ]
+   public_deps = [
+     "//base",
+@@ -775,7 +776,10 @@
+     "//ui/gfx",
+   ]
+   if (is_mac) {
+-    sources += [ "flecha_frame_view_mac.mm" ]
++    sources += [
++      "flecha_frame_view_mac.mm",
++      "flecha_window_close_mac.mm",
++    ]
+     deps += [ "//components/remote_cocoa/app_shim" ]
+   }
+ }
+--- a/chrome/browser/ui/views/frame/flecha_frame_view.cc
++++ b/chrome/browser/ui/views/frame/flecha_frame_view.cc
+@@ -16,6 +16,7 @@
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "chrome/browser/ui/views/frame/flecha_top_chrome.h"
++#include "chrome/browser/ui/views/frame/flecha_window_close.h"
+ #include "chrome/browser/flecha/flecha_spaces.h"
+ #include "base/task/sequenced_task_runner.h"
+ #include "chrome/browser/flecha/flecha_shell_events.h"
+@@ -431,6 +432,10 @@
+   views::WebView::AddedToWidget();
+   ApplyState();
+   UpdateShortcuts();
++  // A Flechinha comes and goes on the desktop of the app its link was in.
++  if (state_.flechinha) {
++    LeaveFlechaWhenLastWindowOnDesktopCloses(GetWidget());
++  }
+ }
+ 
+ void FlechaFrameView::RemovedFromWidget() {
+--- /dev/null
++++ b/chrome/browser/ui/views/frame/flecha_window_close.h
+@@ -0,0 +1,22 @@
++// Copyright 2026 The Flecha Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_FRAME_FLECHA_WINDOW_CLOSE_H_
++#define CHROME_BROWSER_UI_VIEWS_FRAME_FLECHA_WINDOW_CLOSE_H_
++
++#include "build/build_config.h"
++
++namespace views {
++class Widget;
++}
++
++// When `widget`'s window closes as the last Flecha window on its desktop, the
++// app behind it becomes the active one. A no-op off macOS.
++#if BUILDFLAG(IS_MAC)
++void LeaveFlechaWhenLastWindowOnDesktopCloses(views::Widget* widget);
++#else
++inline void LeaveFlechaWhenLastWindowOnDesktopCloses(views::Widget* widget) {}
++#endif
++
++#endif  // CHROME_BROWSER_UI_VIEWS_FRAME_FLECHA_WINDOW_CLOSE_H_
+--- /dev/null
++++ b/chrome/browser/ui/views/frame/flecha_window_close_mac.mm
+@@ -0,0 +1,90 @@
++// Copyright 2026 The Flecha Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/views/frame/flecha_window_close.h"
++
++#import <AppKit/AppKit.h>
++#import <CoreGraphics/CoreGraphics.h>
++
++#include "ui/views/widget/widget.h"
++
++namespace {
++
++// The app whose window is in front of the others on `screen`, Flecha's own
++// aside, or Finder for a bare desktop.
++NSRunningApplication* FlechaAppBehind(NSScreen* screen) {
++  const CGRect screen_bounds = CGDisplayBounds(
++      [screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue]);
++  const pid_t own_pid = NSProcessInfo.processInfo.processIdentifier;
++  // On screen means on the active desktops, front to back.
++  NSArray* windows = CFBridgingRelease(CGWindowListCopyWindowInfo(
++      kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
++      kCGNullWindowID));
++  for (NSDictionary* info in windows) {
++    const pid_t pid = [info[(__bridge id)kCGWindowOwnerPID] intValue];
++    CGRect bounds = CGRectZero;
++    if (pid == own_pid || [info[(__bridge id)kCGWindowLayer] intValue] != 0 ||
++        [info[(__bridge id)kCGWindowAlpha] doubleValue] <= 0 ||
++        !CGRectMakeWithDictionaryRepresentation(
++            (__bridge CFDictionaryRef)info[(__bridge id)kCGWindowBounds],
++            &bounds) ||
++        !CGRectIntersectsRect(bounds, screen_bounds)) {
++      continue;
++    }
++    NSRunningApplication* app =
++        [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
++    if (app.activationPolicy == NSApplicationActivationPolicyRegular) {
++      return app;
++    }
++  }
++  return [NSRunningApplication
++             runningApplicationsWithBundleIdentifier:@"com.apple.finder"]
++      .firstObject;
++}
++
++// Closing Flecha's only window on a desktop (Space) leaves Flecha active with
++// nothing to show there, and macOS goes to the desktop of its other windows
++// as soon as one of them becomes key. The app that was behind the window
++// takes over instead, as if Flecha had been hidden.
++void LeaveFlechaForAppBehind(NSWindow* closing) {
++  if (!NSApp.active || !closing.onActiveSpace) {
++    return;
++  }
++  // Flecha went on to another of its windows (Open in Flecha): follow it.
++  NSWindow* key = NSApp.keyWindow;
++  if (key && key != closing) {
++    return;
++  }
++  for (NSWindow* window in NSApp.windows) {
++    if (window != closing && window.visible && window.onActiveSpace &&
++        !window.parentWindow && window.canBecomeMainWindow) {
++      return;
++    }
++  }
++  NSRunningApplication* app = FlechaAppBehind(closing.screen);
++  if (!app) {
++    return;
++  }
++  if (@available(macOS 14.0, *)) {
++    [NSApp yieldActivationToApplication:app];
++  }
++  [app activateWithOptions:0];
++}
++
++}  // namespace
++
++void LeaveFlechaWhenLastWindowOnDesktopCloses(views::Widget* widget) {
++  if (!widget) {
++    return;
++  }
++  __block id observer = [NSNotificationCenter.defaultCenter
++      addObserverForName:NSWindowWillCloseNotification
++                  object:widget->GetNativeWindow().GetNativeNSWindow()
++                   queue:nil
++              usingBlock:^(NSNotification* notification) {
++                [NSNotificationCenter.defaultCenter removeObserver:observer];
++                observer = nil;
++                LeaveFlechaForAppBehind(notification.object);
++              }];
++}
