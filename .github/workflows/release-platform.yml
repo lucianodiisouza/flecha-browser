@@ -1,7 +1,7 @@
 name: Release platform
 
-# Builds and publishes one platform. Each platform runs its own stage chain,
-# so a finished platform publishes without waiting for slower ones.
+# A platform continues while it has a checkpoint. A finished stage hands off
+# its package to the publisher and the remaining stages are skipped.
 on:
   workflow_call:
     inputs:
@@ -23,6 +23,7 @@ jobs:
 
   build-1:
     needs: source
+    if: needs.source.outputs.incomplete == 'true'
     uses: ./.github/workflows/release-stage.yml
     permissions:
       contents: read
@@ -34,6 +35,7 @@ jobs:
 
   build-2:
     needs: build-1
+    if: needs.build-1.outputs.incomplete == 'true'
     uses: ./.github/workflows/release-stage.yml
     permissions:
       contents: read
@@ -45,6 +47,7 @@ jobs:
 
   build-3:
     needs: build-2
+    if: needs.build-2.outputs.incomplete == 'true'
     uses: ./.github/workflows/release-stage.yml
     permissions:
       contents: read
@@ -56,6 +59,7 @@ jobs:
 
   build-4:
     needs: build-3
+    if: needs.build-3.outputs.incomplete == 'true'
     uses: ./.github/workflows/release-stage.yml
     permissions:
       contents: read
@@ -67,6 +71,7 @@ jobs:
 
   build-5:
     needs: build-4
+    if: needs.build-4.outputs.incomplete == 'true'
     uses: ./.github/workflows/release-stage.yml
     permissions:
       contents: read
@@ -78,6 +83,7 @@ jobs:
 
   build-6:
     needs: build-5
+    if: needs.build-5.outputs.incomplete == 'true'
     uses: ./.github/workflows/release-stage.yml
     permissions:
       contents: read
@@ -89,6 +95,7 @@ jobs:
 
   build-7:
     needs: build-6
+    if: needs.build-6.outputs.incomplete == 'true'
     uses: ./.github/workflows/release-stage.yml
     permissions:
       contents: read
@@ -100,6 +107,7 @@ jobs:
 
   build-8:
     needs: build-7
+    if: needs.build-7.outputs.incomplete == 'true'
     uses: ./.github/workflows/release-stage.yml
     permissions:
       contents: read
@@ -111,6 +119,7 @@ jobs:
 
   build-9:
     needs: build-8
+    if: needs.build-8.outputs.incomplete == 'true'
     uses: ./.github/workflows/release-stage.yml
     permissions:
       contents: read
@@ -122,6 +131,7 @@ jobs:
 
   build-10:
     needs: build-9
+    if: needs.build-9.outputs.incomplete == 'true'
     uses: ./.github/workflows/release-stage.yml
     permissions:
       contents: read
@@ -130,26 +140,14 @@ jobs:
       stage: 10
       previous: 9
       platforms: ${{ inputs.platforms }}
+      last: true
 
-  publish:
-    needs: build-10
+  missing-publication:
+    needs: [source, build-1, build-2, build-3, build-4, build-5, build-6, build-7, build-8, build-9, build-10]
+    if: ${{ !cancelled() && !contains(needs.*.outputs.published, 'true') }}
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    env:
-      FLECHA_PLATFORM: ${{ fromJSON(inputs.platforms)[0].platform }}
+    permissions: {}
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 26
-      - uses: actions/download-artifact@v8
-        with:
-          name: release-${{ env.FLECHA_PLATFORM }}
-          path: release
-      - name: Verify this platform and add it to the nightly prerelease
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node chromium/scripts/ci-publish.mjs
+      - name: Fail if the stage chain stopped without a confirmed publication
+        run: exit 1

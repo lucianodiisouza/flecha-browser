@@ -2,7 +2,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const exec = promisify(execFile);
+const removeTool = dir => exec('sudo', ['rm', '-rf', dir]);
 
 export async function cleanupXcodes(applications, selected, remove) {
   const selectedPath = await fs.realpath(selected);
@@ -12,11 +16,11 @@ export async function cleanupXcodes(applications, selected, remove) {
     const app = path.join(applications, name);
     return { app, real: await fs.realpath(app) };
   }));
-  for (const { app, real } of apps) {
+  await Promise.all(apps.map(async ({ app, real }) => {
     const relative = path.relative(real, selectedPath);
-    if (relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))) continue;
+    if (relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))) return;
     await remove(app);
-  }
+  }));
 }
 
 async function main() {
@@ -32,18 +36,15 @@ async function main() {
   report();
   if (process.platform === 'linux') {
     // Matches the successful portablelinux runner cleanup recorded in docs.
-    execFileSync('sudo', ['rm', '-rf', '/usr/local/lib/android', '/usr/local/.ghcup',
-      '/usr/lib/jvm', '/usr/lib/google-cloud-sdk', '/usr/share/dotnet', '/usr/share/swift'], { stdio: 'inherit' });
+    await Promise.all(['/usr/local/lib/android', '/usr/local/.ghcup', '/usr/lib/jvm',
+      '/usr/lib/google-cloud-sdk', '/usr/share/dotnet', '/usr/share/swift'].map(removeTool));
   } else if (process.platform === 'darwin') {
     const selected = execFileSync('xcode-select', ['-p'], { encoding: 'utf8' }).trim();
-    await cleanupXcodes('/Applications', selected,
-      app => execFileSync('sudo', ['rm', '-rf', app], { stdio: 'inherit' }));
-    execFileSync('sudo', ['rm', '-rf', '/Users/runner/Library/Android/sdk'], { stdio: 'inherit' });
+    await Promise.all([cleanupXcodes('/Applications', selected, removeTool), removeTool('/Users/runner/Library/Android/sdk')]);
   } else if (process.platform === 'win32') {
     // Keep Visual Studio, Windows SDKs, Python and Node.
-    for (const dir of ['C:\\Android', 'C:\\Program Files\\Java', 'C:\\Program Files\\dotnet']) {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
+    await Promise.all(['C:\\Android', 'C:\\Program Files\\Java', 'C:\\Program Files\\dotnet']
+      .map(dir => fs.rm(dir, { recursive: true, force: true })));
   }
   report();
 }

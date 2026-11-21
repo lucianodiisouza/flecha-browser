@@ -3,8 +3,8 @@
 // stylesheet (cosmetic.css) and the sites exempt from it (cosmetic-exclude.json).
 //
 // The lists are downloaded once and kept in chromium/shell/.cache for a few days, so most builds
-// are offline and quick. Without a network and a cache the rulesets come out empty (and the
-// shell still loads). `node build-adblock.mjs --refresh` downloads them again.
+// are offline and quick. A failed download requires a usable cached copy of that list.
+// `node build-adblock.mjs --refresh` downloads them again.
 //
 // The converter covers the Adblock Plus syntax the lists actually use for network filters:
 // `||host^`, `|` anchors, `*` and `^`, `@@` exceptions, and the options DNR has an equivalent
@@ -13,13 +13,21 @@
 // approximated. Plain `||host^` filters are merged into requestDomains lists, which keeps the
 // rule count far under Chromium's guaranteed 30,000 static rules.
 import fs from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { get } from 'node:https';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import { brotliDecompress, gunzip, inflate } from 'node:zlib';
 import { writeManifest } from './build-version.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cacheDir = path.join(here, '.cache', 'adblock');
 const MAX_AGE_MS = 4 * 24 * 60 * 60 * 1000;
+
+export function adblockCacheBucket() {
+  return Math.floor(Date.now() / MAX_AGE_MS);
+}
 
 export const LISTS = {
   easylist: 'https://easylist.to/easylist/easylist.txt',
@@ -51,26 +59,114 @@ const TYPES = {
 /** Options that don't change what's matched here. */
 const IGNORED = new Set(['important', 'all', 'webrtc']);
 
-async function fetchList(id, url, refresh) {
-  const file = path.join(cacheDir, `${id}.txt`);
+const decompress = new Map([
+  ['gzip', promisify(gunzip)],
+  ['deflate', promisify(inflate)],
+  ['br', promisify(brotliDecompress)],
+]);
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+// https://fetch.spec.whatwg.org/#http-redirect-fetch
+const MAX_REDIRECTS = 20;
+
+function requestList(url, options) {
+  return new Promise((resolve, reject) => get(url, options, resolve).once('error', reject));
+}
+
+async function downloadList(url, download, options) {
+  for (let redirects = 0; ; redirects++) {
+    options.signal.throwIfAborted();
+    const res = await download(url, options);
+    if (!REDIRECT_STATUSES.has(res.statusCode) || res.headers.location === undefined) return res;
+    res.destroy();
+    if (redirects === MAX_REDIRECTS) throw new Error('too many HTTP redirects');
+    const target = new URL(res.headers.location, url);
+    if (target.protocol !== 'https:') throw new Error('filter list redirect requires HTTPS');
+    url = target.href;
+  }
+}
+
+async function readWireBytes(res, length) {
+  if (length !== undefined && !/^\d+$/.test(length)) {
+    res.destroy();
+    throw new Error('could not verify Content-Length');
+  }
+  const expected = length === undefined ? undefined : BigInt(length);
+  const chunks = [];
+  let received = 0;
+  for await (const chunk of res) {
+    received += chunk.byteLength;
+    if (expected !== undefined && BigInt(received) > expected) {
+      throw new Error('response exceeded Content-Length');
+    }
+    chunks.push(chunk);
+  }
+  if (expected !== undefined && BigInt(received) !== expected) throw new Error('could not verify Content-Length');
+  return Buffer.concat(chunks, received);
+}
+
+function checkedText(id, bytes, requireChecksum = false) {
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  if (!/^\[Adblock Plus(?: \d+(?:\.\d+)*)?\]\r?\n/.test(text)) throw new Error('not a filter list');
+  if (!new RegExp('^! Title: ' + id + '\\r?$', 'mi').test(text)) throw new Error('wrong filter list title');
+  const checksumLine = /^![ \t]*checksum[ \t]*:[^\r\n]*/im.exec(text);
+  if (checksumLine) {
+    // ABP addChecksum normalizes CR and blank lines and omits the checksum line.
+    const normalized = text.replaceAll('\r', '').replace(/\n+/g, '\n').replace(/^![ \t]*checksum[ \t]*:[^\n]*\n?/im, '');
+    const checksum = createHash('md5').update(normalized).digest('base64').replace(/=+$/, '');
+    if (checksum !== checksumLine[0].split(':')[1].trim()) throw new Error('ABP checksum mismatch');
+  } else if (requireChecksum) {
+    throw new Error('filter list has no verifiable length, compression framing or ABP checksum');
+  }
+  for (const [line] of text.matchAll(/[^\r\n]+/g)) {
+    if (convertList(line).rules.length) return text;
+  }
+  throw new Error('filter list contains no supported network rules');
+}
+
+async function fetchList(id, url, refresh, cache, download) {
+  const file = path.join(cache, `${id}.txt`);
   const stat = fs.statSync(file, { throwIfNoEntry: false });
-  if (stat && !refresh && Date.now() - stat.mtimeMs < MAX_AGE_MS) return fs.readFileSync(file, 'utf8');
+  const cached = () => checkedText(id, fs.readFileSync(file));
+  if (stat && !refresh && Date.now() - stat.mtimeMs < MAX_AGE_MS) {
+    try { return cached(); } catch (error) { console.warn(`adblock: invalid cached ${id}: ${error.message}`); }
+  }
+  let text;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const text = await res.text();
-    if (!text.includes('[Adblock Plus')) throw new Error('not a filter list');
-    fs.mkdirSync(cacheDir, { recursive: true });
-    fs.writeFileSync(file, text);
-    return text;
+    const res = await downloadList(url, download, { headers: { 'Accept-Encoding': 'gzip' }, signal: AbortSignal.timeout(30000) });
+    if (res.statusCode !== 200) {
+      res.destroy();
+      throw new Error(`HTTP ${res.statusCode}`);
+    }
+    // Read the wire bytes. Strict zlib defaults require complete compression framing.
+    const encoding = res.headers['content-encoding']?.trim().toLowerCase() ?? 'identity';
+    const decode = decompress.get(encoding);
+    if (encoding !== 'identity' && !decode) {
+      res.destroy();
+      throw new Error(`unsupported Content-Encoding: ${encoding}`);
+    }
+    const length = res.headers['content-length'];
+    const bytes = await readWireBytes(res, length);
+    text = checkedText(id, decode ? await decode(bytes) : bytes, !decode && length === undefined);
   } catch (err) {
     if (stat) {
+      let fallback;
+      try { fallback = cached(); } catch (cacheError) {
+        throw new AggregateError([err, cacheError], `adblock: could not refresh ${id} (${err.message}); invalid cache (${cacheError.message})`);
+      }
       console.warn(`adblock: couldn't refresh ${id} (${err.message}); using the cached copy`);
-      return fs.readFileSync(file, 'utf8');
+      return fallback;
     }
-    console.warn(`adblock: couldn't download ${id} (${err.message}); its ruleset is empty`);
-    return '';
+    throw new Error(`adblock: could not download ${id} and no cache exists`, { cause: err });
   }
+  fs.mkdirSync(cache, { recursive: true });
+  const temp = file + '.' + randomUUID();
+  try {
+    fs.writeFileSync(temp, text, { flag: 'wx' });
+    fs.renameSync(temp, file);
+  } finally {
+    fs.rmSync(temp, { force: true });
+  }
+  return text;
 }
 
 const isAscii = (s) => /^[\x20-\x7e]*$/.test(s);
@@ -187,7 +283,7 @@ function convertList(text) {
 }
 
 /** Writes dist/rules. Exported for build.mjs; also runs on its own. */
-export async function buildAdblock(out, { refresh = false } = {}) {
+export async function buildAdblock(out, { refresh = false, cache = cacheDir, download = requestList } = {}) {
   const rulesDir = path.join(out, 'rules');
   fs.mkdirSync(rulesDir, { recursive: true });
   const hide = new Set();
@@ -196,8 +292,10 @@ export async function buildAdblock(out, { refresh = false } = {}) {
   let budget = RULE_BUDGET;
   const counts = {};
 
-  for (const [id, url] of Object.entries(LISTS)) {
-    const converted = convertList(await fetchList(id, url, refresh));
+  const lists = await Promise.all(Object.entries(LISTS).map(async ([id, url]) =>
+    [id, await fetchList(id, url, refresh, cache, download)]));
+  for (const [id, text] of lists) {
+    const converted = convertList(text);
     // Exceptions first, so a list cut short for the budget never blocks what it meant to allow.
     const rules = converted.rules.sort((a, b) => b.priority - a.priority).slice(0, Math.max(0, budget));
     if (rules.length < converted.rules.length) console.warn(`adblock: ${id} cut to ${rules.length} of ${converted.rules.length} rules`);

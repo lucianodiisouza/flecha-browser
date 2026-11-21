@@ -28,6 +28,14 @@ jobs:
           node-version: 26
           cache: npm
       - run: npm ci
+      - name: Compute the adblock cache bucket
+        id: adblock-cache
+        run: node --input-type=module -e "import { adblockCacheBucket } from './chromium/shell/build-adblock.mjs'; console.log('bucket=' + adblockCacheBucket())" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: chromium/shell/.cache/adblock
+          key: adblock-nightly-${{ runner.os }}-${{ steps.adblock-cache.outputs.bucket }}
+          restore-keys: adblock-nightly-${{ runner.os }}-
       - run: npm run shell:build
       - run: npm run host:build
       - id: platforms
@@ -52,7 +60,7 @@ jobs:
         include: ${{ fromJSON(needs.prepare.outputs.platforms) }}
     uses: ./.github/workflows/release-platform.yml
     permissions:
-      contents: write
+      contents: read
       actions: write
     with:
       platforms: ${{ format('[{0}]', toJSON(matrix)) }}

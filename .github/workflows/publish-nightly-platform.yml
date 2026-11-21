@@ -1,0 +1,109 @@
+name: Publish nightly platform
+run-name: Publish ${{ inputs.platform }} from nightly ${{ inputs.build_run }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run:
+        description: Nightly build run ID
+        type: string
+        required: true
+      build_attempt:
+        description: Nightly build attempt number
+        type: string
+        required: true
+      build_id:
+        description: Job ID that uploaded the package
+        type: string
+        required: true
+      monitor_attempt:
+        description: Current nightly attempt running the monitor
+        type: string
+        required: true
+      platform:
+        description: Packaged platform
+        type: string
+        required: true
+      artifact:
+        description: Attempt- and job-scoped name of the package and checksum artifact
+        type: string
+        required: true
+      artifact_id:
+        description: ID of the uploaded artifact
+        type: string
+        required: true
+      monitor_id:
+        description: Job ID of the nightly monitor dispatching this publisher
+        type: string
+        required: true
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: nightly-publish-${{ inputs.build_run }}-${{ inputs.platform }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    # Reserve the last ten minutes for reconciliation.
+    timeout-minutes: 60
+    env:
+      FLECHA_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      FLECHA_BUILD_RUN: ${{ inputs.build_run }}
+      FLECHA_BUILD_ATTEMPT: ${{ inputs.build_attempt }}
+      FLECHA_BUILD_ID: ${{ inputs.build_id }}
+      FLECHA_MONITOR_ATTEMPT: ${{ inputs.monitor_attempt }}
+      FLECHA_PLATFORM: ${{ inputs.platform }}
+      FLECHA_PACKAGE_ARTIFACT: ${{ inputs.artifact }}
+      FLECHA_PACKAGE_ARTIFACT_ID: ${{ inputs.artifact_id }}
+      FLECHA_MONITOR_ID: ${{ inputs.monitor_id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Execute the publisher from its dispatched default-branch revision.
+          # ci-publish reads the catalog and Chromium pin at the verified build SHA.
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - name: Verify the nightly, monitor, producing job and artifact before download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node chromium/scripts/ci-publish.mjs preflight
+      - uses: actions/download-artifact@v8
+        timeout-minutes: 50
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.build_run }}
+          artifact-ids: ${{ inputs.artifact_id }}
+          merge-multiple: true
+          path: release
+      - name: Reserve reconciliation time before publishing
+        id: publication-window
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISHER_JOB: ${{ job.check_run_id }}
+        run: |
+          started=$(gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$PUBLISHER_JOB" --jq '.started_at')
+          started_at=$(date -d "$started" +%s)
+          minutes=$(( (started_at + 50 * 60 - $(date +%s)) / 60 ))
+          if (( minutes <= 0 )); then
+            echo '::error::Preflight and download exhausted the publication window.'
+            exit 1
+          fi
+          echo "minutes=$minutes" >> "$GITHUB_OUTPUT"
+      - name: Verify this platform and add it to the nightly prerelease
+        id: publish
+        timeout-minutes: ${{ fromJSON(steps.publication-window.outputs.minutes) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node chromium/scripts/ci-publish.mjs
+      - name: Reconcile this publisher's release assets after cancellation or failure
+        if: ${{ (cancelled() || failure()) && steps.publish.outcome != 'skipped' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node chromium/scripts/ci-publish.mjs reconcile
