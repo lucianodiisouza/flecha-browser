@@ -2,6 +2,7 @@ import { devSuggestions } from './devCommands.js';
 import { ICONS, type IconName } from './icons.js';
 import { setupOnboarding } from './onboarding.js';
 import { SPACE_COLORS, SPACE_EMOJIS } from './spaceChoices.js';
+import { shownSpaceColor } from '../lib/spaceTint';
 import { SpaceSwipe } from './spaceSwipe.js';
 import { webAddress } from '../lib/url';
 import { SIDEBAR_SLIDE_MS } from '../lib/sidebarSlide';
@@ -1055,12 +1056,12 @@ function renderSpaceEditor() {
     ...SPACE_COLORS.map((color) =>
       h('button', {
         class: `swatch${space.color === color ? ' selected' : ''}`,
-        style: `--swatch: ${color}`,
+        style: `--swatch: ${shownSpaceColor(color)}`,
         title: color,
         onclick: () => api.updateSpace(space.id, { color }),
       }),
     ),
-    h('label', { class: `swatch custom${SPACE_COLORS.includes(space.color) ? '' : ' selected'}`, style: `--swatch: ${space.color}`, title: 'Custom colour' }, custom),
+    h('label', { class: `swatch custom${SPACE_COLORS.includes(space.color) ? '' : ' selected'}`, style: `--swatch: ${shownSpaceColor(space.color)}`, title: 'Custom colour' }, custom),
   );
   $<HTMLInputElement>('space-isolated-toggle').checked = !!space.isolated;
   $<HTMLButtonElement>('space-delete').disabled = state!.spaces.length < 2;

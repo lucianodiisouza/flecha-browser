@@ -1311,6 +1311,12 @@ code {
   box-shadow: 0 0 0 2px var(--card), 0 0 0 4px var(--selection);
 }
 
+@media (prefers-color-scheme: dark) {
+  .tm-swatch {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+  }
+}
+
 .tm-swatch.custom {
   background: conic-gradient(#f6d6cc, #f5e7c4, #d3ecd5, #cfe8ec, #cdd9f7, #e8d6f3, #f4cfdc, #f6d6cc);
 }

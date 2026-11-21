@@ -1,6 +1,7 @@
 import type { PinnedNode, TabPlacement, TabsEdit, TabsView } from '../../shared/types';
 import type { IconName } from './icons.js';
 import { SPACE_COLORS, SPACE_EMOJIS } from './spaceChoices.js';
+import { shownSpaceColor } from '../lib/spaceTint';
 
 /**
  * Settings → Tabs & Spaces: favorites and every Space's pinned tree and Today tabs in one
@@ -862,9 +863,9 @@ export function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
     custom.addEventListener('input', () => update({ color: custom.value }));
     node.querySelector('.tm-pop-swatches')!.replaceChildren(
       ...SPACE_COLORS.map((color) =>
-        el('button', { class: `tm-swatch${space.color === color ? ' selected' : ''}`, style: `--swatch: ${color}`, title: color, onclick: () => update({ color }) }),
+        el('button', { class: `tm-swatch${space.color === color ? ' selected' : ''}`, style: `--swatch: ${shownSpaceColor(color)}`, title: color, onclick: () => update({ color }) }),
       ),
-      el('label', { class: `tm-swatch custom${SPACE_COLORS.includes(space.color) ? '' : ' selected'}`, style: `--swatch: ${space.color}`, title: 'Custom colour' }, custom),
+      el('label', { class: `tm-swatch custom${SPACE_COLORS.includes(space.color) ? '' : ' selected'}`, style: `--swatch: ${shownSpaceColor(space.color)}`, title: 'Custom colour' }, custom),
     );
     (node.querySelector('.tm-pop-delete') as HTMLButtonElement).disabled = view!.spaces.length < 2;
     placeSpaceEditor();
