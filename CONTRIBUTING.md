@@ -17,7 +17,7 @@ npm run check
 
 `npm run check` runs `check:source` and `check:build`. CI uses those same commands, with Node 24 for source checks and Node 26 for bundles. Use the split if building with a cold ad-block cache fails under Node 24.
 
-The hook formats staged configuration and tooling files, then runs lint, typechecking and tests. `npm run lint:all` shows the full Oxlint report. `npm run lint` rejects increases over the checked-in counts by file and rule. When fixing an existing finding, reduce its count or remove the entry from `tools/checks/lint-baseline.json`.
+The hook formats staged configuration and tooling files, then checks an isolated copy of the Git index. `npm run lint:all` shows the full Oxlint report. `npm run lint` requires the checked-in counts by file and rule to match the current findings. When fixing an existing finding, reduce its count or remove the entry from `tools/checks/lint-baseline.json`.
 
 The CI scripts job also runs ShellCheck, pinned actionlint, and `chromium/scripts/check-patches.sh`. See [the workflow](.github/workflows/ci.yml) for the exact commands. The patch check fetches the files needed from `chromium/CHROMIUM_VERSION` and applies the series in order.
 

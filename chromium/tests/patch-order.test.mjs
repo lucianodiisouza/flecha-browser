@@ -6,10 +6,12 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 test('Chromium patch filenames have unique sequence numbers', async () => {
-  const names = await readdir(new URL('../patches/', import.meta.url));
+  const patches = (await readdir(new URL('../patches/', import.meta.url))).filter(name => name.endsWith('.patch')).sort();
   const patchesByNumber = new Map();
 
-  for (const name of names.filter(name => name.endsWith('.patch')).sort()) {
+  assert.ok(patches.length, 'The Chromium patch series is empty');
+
+  for (const name of patches) {
     const match = /^(\d{4})-.+\.patch$/.exec(name);
     assert.ok(match, `Use NNNN-description.patch for ${name}`);
     const [, number] = match;
@@ -49,15 +51,18 @@ test('applying the series twice works from a checkout path with spaces', { skip:
   execFileSync('git', ['init', '-q'], { cwd: upstream });
   execFileSync('git', ['add', theme], { cwd: upstream });
 
+  const apply = () => execFileSync('bash', [join(scripts, 'apply.sh')], {
+    env: { ...process.env, CHROMIUM_SRC: upstream },
+  });
+
+  assert.throws(apply, /no patches in/);
+  assert.equal(await readFile(join(upstream, theme, 'BRANDING'), 'utf8'), 'before');
+
   for (const [number, before, after] of [['0001', 'before', 'intermediate'], ['0002', 'intermediate', 'after']]) {
     const patch = `--- a/target\n+++ b/target\n@@ -1 +1 @@\n-${before}\n+${after}\n`;
 
     await writeFile(join(patchDir, `${number}-fixture.patch`), patch);
   }
-
-  const apply = () => execFileSync('bash', [join(scripts, 'apply.sh')], {
-    env: { ...process.env, CHROMIUM_SRC: upstream },
-  });
 
   apply();
   assert.equal(await readFile(target, 'utf8'), 'after\n');

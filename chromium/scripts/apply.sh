@@ -3,10 +3,15 @@
 # Safe to run again: it first resets every file it touches.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
+patches=("$here"/patches/*.patch)
+if [[ ! -f ${patches[0]-} ]]; then
+  echo "error: no patches in $here/patches" >&2
+  exit 1
+fi
+
 # shellcheck source=env.sh
 . "$here/scripts/env.sh"
 theme="$src/chrome/app/theme/chromium"
-patches=("$here"/patches/*.patch)
 cd "$src"
 
 # Undo a previous run, last patch first.

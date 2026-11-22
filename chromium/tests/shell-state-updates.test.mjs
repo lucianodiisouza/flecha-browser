@@ -81,9 +81,10 @@ test('interleaved full and sidebar width saves publish only durable state', asyn
         const completions = order.map(kind => {
           const save = Promise.resolve(kind === 'full' ? store.saveNow() : store.setSidebarWidth(width));
 
-          return failures.includes(kind)
-            ? assert.rejects(save, failure)
-            : save.then(value => assert.equal(value, kind === 'width' ? width : undefined));
+          return save.then(
+            value => ({ status: 'fulfilled', value }),
+            reason => ({ status: 'rejected', reason }),
+          );
         });
 
         for (const [index, kind] of order.entries()) {
@@ -101,7 +102,13 @@ test('interleaved full and sidebar width saves publish only durable state', asyn
             write.resolve();
           }
 
-          await completions[index];
+          const outcome = await completions[index];
+
+          if (failures.includes(kind)) {
+            assert.deepEqual(outcome, { status: 'rejected', reason: failure });
+          } else {
+            assert.deepEqual(outcome, { status: 'fulfilled', value: kind === 'width' ? width : undefined });
+          }
           assert.equal(store.state.sidebarWidth, durableWidth);
         }
 

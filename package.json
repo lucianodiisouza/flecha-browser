@@ -9,6 +9,7 @@
     "check": "npm run check:source && npm run check:build",
     "check:source": "npm run format:check && npm run check:code",
     "check:code": "npm run lint && npm run typecheck && npm run typecheck:tsrs && npm test",
+    "check:staged": "node tools/checks/staged.mjs",
     "check:build": "npm run shell:build && npm run host:build",
     "format:check": "prettier --check package.json .oxlintrc.json .prettierrc.json .lintstagedrc.json \"chromium/**/*.json\" \"tools/checks/*.mjs\" .husky/install.mjs",
     "format:staged": "lint-staged",

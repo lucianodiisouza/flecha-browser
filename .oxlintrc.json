@@ -61,15 +61,31 @@
       }
     },
     {
-      "files": ["chromium/native-host/**/*.ts", "chromium/shell/**/*.ts"],
+      "files": ["chromium/shell/**/*.ts"],
       "rules": {
         "eslint/no-restricted-imports": [
           "error",
           {
             "patterns": [
               {
-                "regex": "(^|/)(shell|native-host)(/|$)",
-                "message": "Use chromium/shared for imports between the two runtimes."
+                "regex": "(^|/)native-host(/|$)",
+                "message": "Use chromium/shared for contracts from the native host."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["chromium/native-host/**/*.ts"],
+      "rules": {
+        "eslint/no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "(^|/)shell(/|$)",
+                "message": "Use chromium/shared for contracts from the shell."
               }
             ]
           }

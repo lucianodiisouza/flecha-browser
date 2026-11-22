@@ -21,12 +21,31 @@ const child = spawn(
   },
 );
 
-const completion = once(child, 'exit');
-const { diagnostics } = await new Response(child.stdout).json();
-const [status] = await completion;
+const [output, [status, signal]] = await Promise.all([
+  new Response(child.stdout).text(),
+  once(child, 'close'),
+]);
 
-if (status !== 0 && (status !== 1 || !diagnostics?.length)) {
-  throw new Error(`Oxlint exited with ${status} without a lint report`);
+const termination = signal ? `signal ${signal}` : `status ${status}`;
+let report;
+
+try {
+  report = JSON.parse(output);
+} catch {
+  throw new Error(
+    `Oxlint exited with ${termination} without a valid JSON report`,
+  );
+}
+
+const { diagnostics } = report ?? {};
+
+if (
+  !Array.isArray(diagnostics) ||
+  (status !== 0 && (status !== 1 || !diagnostics.length))
+) {
+  throw new Error(
+    `Oxlint exited with ${termination} without a usable lint report`,
+  );
 }
 
 const baseline = JSON.parse(await readFile(baselineFile, 'utf8'));
@@ -49,6 +68,20 @@ for (const diagnostic of diagnostics) {
   added++;
 }
 
-console.log(`Oxlint: ${added} above baseline, ${existing} existing`);
+let stale = 0;
 
-if (added) process.exitCode = 1;
+for (const [path, allowances] of Object.entries(baseline)) {
+  for (const [code, remaining] of Object.entries(allowances)) {
+    if (remaining === 0) continue;
+    console.error(
+      `${path} ${code}: remove ${remaining} unused allowances from lint-baseline.json`,
+    );
+    stale += remaining;
+  }
+}
+
+console.log(
+  `Oxlint: ${added} above baseline, ${existing} existing, ${stale} stale allowances`,
+);
+
+if (added || stale) process.exitCode = 1;

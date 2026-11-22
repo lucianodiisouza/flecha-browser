@@ -116,7 +116,7 @@
   "chromium/tests/shell-connections.test.mjs": {"anti-slop(require-readable-spacing)":72},
   "chromium/tests/shell-keyed-rows.test.mjs": {"anti-slop(require-readable-spacing)":4},
   "chromium/tests/shell-local-servers.test.mjs": {"anti-slop(require-readable-spacing)":2},
-  "chromium/tests/shell-state-updates.test.mjs": {"anti-slop(require-readable-spacing)":7},
+  "chromium/tests/shell-state-updates.test.mjs": {"anti-slop(require-readable-spacing)":5},
   "chromium/tests/shell-version.test.mjs": {"anti-slop(require-readable-spacing)":3},
   "chromium/tests/shortcuts.test.mjs": {"anti-slop(require-readable-spacing)":5},
   "chromium/tests/site-ad-block-entry.ts": {"anti-slop(require-readable-spacing)":2},
