@@ -15,12 +15,18 @@ test('the pre-commit hook formats before checking the complete index in isolatio
   const modules = join(committing, 'node_modules');
   const hooks = join(root, 'hooks');
   const report = join(root, 'report.json');
+  const env = { ...process.env };
+  const gitVariables = execFileSync('git', ['rev-parse', '--local-env-vars'], { encoding: 'utf8' });
+
+  for (const name of gitVariables.trim().split(/\s+/)) delete env[name];
+
+  const git = (dir, args) => execFileSync('git', ['-C', dir, ...args], { env, encoding: 'utf8', stdio: 'pipe' });
 
   await mkdir(modules, { recursive: true });
   await mkdir(fixture);
   await mkdir(hooks);
 
-  for (const dir of [committing, fixture]) execFileSync('git', ['-C', dir, 'init', '-q']);
+  for (const dir of [committing, fixture]) git(dir, ['init', '-q']);
 
   const hook = await readFile(new URL('../../.husky/pre-commit', import.meta.url), 'utf8');
 
@@ -53,8 +59,8 @@ throw new Error('check rejected the staged snapshot');
 `);
   await writeFile(join(committing, 'value.txt'), 'staged');
   await writeFile(join(committing, 'sparse.txt'), 'outside the sparse checkout');
-  execFileSync('git', ['-C', committing, 'add', 'package.json', 'format.mjs', 'staged.mjs', 'check.mjs', 'value.txt', 'sparse.txt']);
-  execFileSync('git', ['-C', committing, 'update-index', '--skip-worktree', 'sparse.txt']);
+  git(committing, ['add', 'package.json', 'format.mjs', 'staged.mjs', 'check.mjs', 'value.txt', 'sparse.txt']);
+  git(committing, ['update-index', '--skip-worktree', 'sparse.txt']);
   await rm(join(committing, 'sparse.txt'));
   await writeFile(join(committing, 'value.txt'), 'unstaged');
   await writeFile(join(committing, 'untracked.txt'), 'untracked');
@@ -69,7 +75,7 @@ throw new Error('check rejected the staged snapshot');
     cwd: committing,
     stdio: 'pipe',
     env: {
-      ...process.env,
+      ...env,
       GIT_DIR: join(committing, '.git'),
       GIT_WORK_TREE: committing,
       GIT_INDEX_FILE: join(committing, '.git', 'index'),
@@ -79,7 +85,7 @@ throw new Error('check rejected the staged snapshot');
   });
 
   assert.throws(commit, /check rejected the staged snapshot/);
-  assert.throws(() => execFileSync('git', ['-C', committing, 'rev-parse', '--verify', 'HEAD'], { stdio: 'pipe' }));
+  assert.throws(() => git(committing, ['rev-parse', '--verify', 'HEAD']));
   assert.deepEqual(JSON.parse(await readFile(report, 'utf8')), {
     value: 'staged',
     formatted: 'formatted by the hook',
@@ -89,5 +95,5 @@ throw new Error('check rejected the staged snapshot');
     fixture,
   });
   assert.equal(await readFile(join(committing, 'value.txt'), 'utf8'), 'unstaged');
-  assert.equal(execFileSync('git', ['-C', committing, 'show', ':value.txt'], { encoding: 'utf8' }), 'staged');
+  assert.equal(git(committing, ['show', ':value.txt']), 'staged');
 });
