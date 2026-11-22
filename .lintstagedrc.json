@@ -1,0 +1,3 @@
+{
+  "{package.json,.oxlintrc.json,.prettierrc.json,.lintstagedrc.json,chromium/**/*.json,tools/checks/*.mjs,.husky/install.mjs}": "prettier --write"
+}

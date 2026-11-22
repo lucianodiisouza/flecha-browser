@@ -1,0 +1,6 @@
+npm run format:staged
+
+# The tests create and commit in fixture repositories.
+git_variables=$(git rev-parse --local-env-vars)
+unset $git_variables
+npm run check:code

@@ -56,51 +56,57 @@ test('Today activation belongs to its owning window and a shared tab claim reque
   store.saveNow();
 });
 
-test('a reconnect can only see a sidebar width that storage has accepted', async () => {
-  const writing = Promise.withResolvers();
-  const pending = Promise.withResolvers();
-  const writes = [];
-  const store = new Store({ load: () => undefined, save(json) {
-    writes.push(JSON.parse(json));
-    if (writes.length === 1) {
-      writing.resolve();
-      return pending.promise;
-    }
-  } });
-  const previous = store.state.sidebarWidth;
-  const seen = [];
-  store.onChange(() => seen.push(store.state.sidebarWidth));
-  const write = store.setSidebarWidth(300);
-  const rejected = assert.rejects(write, /Storage failed/);
-  await writing.promise;
-  assert.equal(writes[0].sidebarWidth, 300);
-  assert.equal(store.state.sidebarWidth, previous);
-  assert.deepEqual(seen, []);
-  const otherSave = store.saveNow();
-  pending.reject(new Error('Storage failed'));
-  await rejected;
-  await otherSave;
-  assert.equal(writes[1].sidebarWidth, previous);
-  assert.equal(store.state.sidebarWidth, previous);
-  assert.equal(await store.setSidebarWidth(320), 320);
-  assert.equal(writes.at(-1).sidebarWidth, 320);
-  assert.deepEqual(seen, [320]);
-});
+test('interleaved full and sidebar width saves publish only durable state', async t => {
+  const width = 320;
+  const failure = new Error('Storage failed');
 
-test('saving a sidebar width waits for an older full-state write', async () => {
-  const slowSave = Promise.withResolvers();
-  const snapshots = [];
-  const store = new Store({ load: () => undefined, async save(json) {
-    snapshots.push(JSON.parse(json));
-    if (snapshots.length === 1) await slowSave.promise;
-  } });
-  const oldSave = store.saveNow();
-  const width = store.setSidebarWidth(320);
-  await setImmediate();
-  assert.equal(store.state.sidebarWidth, undefined);
-  assert.deepEqual(snapshots.map((state) => state.sidebarWidth), [undefined]);
-  slowSave.resolve();
-  await oldSave;
-  assert.equal(await width, 320);
-  assert.deepEqual(snapshots.map((state) => state.sidebarWidth), [undefined, 320]);
+  for (const order of [['full', 'width'], ['width', 'full']]) {
+    for (const failures of [[], ['full'], ['width'], ['full', 'width']]) {
+      await t.test(`${order.join(' then ')}; rejects: ${failures.join(', ') || 'none'}`, async () => {
+        const writes = [];
+        const published = [];
+        const store = new Store({
+          load: () => undefined,
+          save(json) {
+            const write = Promise.withResolvers();
+
+            writes.push({ width: JSON.parse(json).sidebarWidth, ...write });
+            return write.promise;
+          },
+        });
+        let durableWidth = store.state.sidebarWidth;
+
+        store.onChange(() => published.push(store.state.sidebarWidth));
+
+        const completions = order.map(kind => {
+          const save = Promise.resolve(kind === 'full' ? store.saveNow() : store.setSidebarWidth(width));
+
+          return failures.includes(kind)
+            ? assert.rejects(save, failure)
+            : save.then(value => assert.equal(value, kind === 'width' ? width : undefined));
+        });
+
+        for (const [index, kind] of order.entries()) {
+          await setImmediate();
+          assert.equal(writes.length, index + 1, 'only one write can be in flight');
+          assert.equal(store.state.sidebarWidth, durableWidth);
+
+          const write = writes[index];
+
+          assert.equal(write.width, kind === 'width' ? width : durableWidth);
+          if (failures.includes(kind)) {
+            write.reject(failure);
+          } else {
+            durableWidth = write.width;
+            write.resolve();
+          }
+
+          await completions[index];
+          assert.equal(store.state.sidebarWidth, durableWidth);
+        }
+
+        assert.deepEqual(published, failures.includes('width') ? [] : [width]);
+      });
+    }
+  }
 });

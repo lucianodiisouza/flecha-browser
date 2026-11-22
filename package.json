@@ -6,6 +6,15 @@
   "license": "MIT",
   "description": "An Arc-style browser built on a Chromium fork.",
   "scripts": {
+    "check": "npm run check:source && npm run check:build",
+    "check:source": "npm run format:check && npm run check:code",
+    "check:code": "npm run lint && npm run typecheck && npm run typecheck:tsrs && npm test",
+    "check:build": "npm run shell:build && npm run host:build",
+    "format:check": "prettier --check package.json .oxlintrc.json .prettierrc.json .lintstagedrc.json \"chromium/**/*.json\" \"tools/checks/*.mjs\" .husky/install.mjs",
+    "format:staged": "lint-staged",
+    "lint": "node tools/checks/lint.mjs",
+    "lint:all": "oxlint --deny-warnings .",
+    "prepare": "node .husky/install.mjs",
     "shell:build": "node chromium/shell/build.mjs",
     "shell:watch": "node chromium/shell/build.mjs --watch",
     "shell:typecheck": "tsc -p chromium/shell",
@@ -14,11 +23,16 @@
     "browser:linux": "node chromium/scripts/run-linux.mjs",
     "test": "node --test chromium/tests/*.test.mjs",
     "typecheck": "tsc -p chromium/shell && tsc -p chromium/native-host",
-    "typecheck:tsrs": "tsrs -p chromium/shell && tsrs -p chromium/native-host"
+    "typecheck:tsrs": "node tools/checks/typecheck-tsrs.mjs"
   },
   "devDependencies": {
+    "@oxlint/plugins": "1.94.0",
     "@types/chrome": "^0.3.6",
     "@types/node": "^26.6.5",
+    "husky": "9.1.7",
+    "lint-staged": "17.6.2",
+    "oxlint": "1.94.0",
+    "prettier": "3.10.1",
     "sucrase": "^3.35.1",
     "tsrs": "0.18.0-ts7.1.0-dev.20260929",
     "typescript": "^7.0.2"
