@@ -250,7 +250,7 @@ test('a reconnect reads the committed Boost when deletion is delayed or rejected
 
 test('agent wait validation leaves room for the transport watchdog', async () => {
   const { AGENT_TOOLS } = await loadModule('chromium/shared/agentTools.ts');
-  const { MAX_TOOL_WAIT, toolTimeout, toolWatchdog } = await loadModule('chromium/native-host/protocol.ts');
+  const { MAX_TOOL_WAIT, toolTimeout, toolWatchdog } = await loadModule('chromium/shared/nativeMessaging.ts');
   const value = AGENT_TOOLS.wait_for.inputSchema.timeoutMs;
   for (const invalid of [-1, 1.5, 2_147_483_647]) assert.equal(value.safeParse(invalid).success, false);
   assert.equal(value.safeParse(MAX_TOOL_WAIT).success, true);

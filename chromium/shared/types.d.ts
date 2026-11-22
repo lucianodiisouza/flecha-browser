@@ -413,8 +413,6 @@ export interface TabsView {
   spaces: Array<Pick<Space, 'id' | 'name' | 'emoji' | 'color' | 'pinned' | 'today' | 'isolated'>>;
   activeSpaceId: string;
   tabs: Record<string, Pick<TabInfo, 'id' | 'url' | 'title' | 'customTitle' | 'favicon' | 'homeUrl'> & { open: boolean }>;
-  /** Hosts whose icon is cached and served as `favicon://<host>`. */
-  faviconHosts: string[];
 }
 
 /** Where a folder can go: the pinned tabs of a Space, optionally inside another folder. */

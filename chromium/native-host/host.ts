@@ -16,8 +16,9 @@ import os from 'node:os';
 import path from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { detectBrowsers, readBookmarksHtml, readBrowser } from './browserImport';
-import { AGENT_TOOLS, McpBridge, fail, type AgentResult } from './agentServer';
-import { toolWatchdog, type HostMethods, type ToHost, type ToShell } from './protocol';
+import { AGENT_TOOLS, fail, type AgentResult } from '../shared/agentTools';
+import { toolWatchdog, type HostMethods, type ToHost, type ToShell } from '../shared/nativeMessaging';
+import { McpBridge } from './agentServer';
 
 const SHELL_ORIGIN = 'chrome-extension://abdiaepfgbbhdjaecjipmaailijaaide/';
 /** Chromium refuses messages from a host over 1 MB; leave room for the chunk's own fields. */

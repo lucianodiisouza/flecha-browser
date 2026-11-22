@@ -5,17 +5,67 @@
   "version": "0.1.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA9emn2yaklQs6XFSayFO7A5Z/isGHzvL5vhaS8k+SNCT6mLBtBq0sq2uyLZ6dCU9AMZvhPh/orvZBczDRztTXWTVUToZPCJRXf6J9x9PNHbU3hsEMYGGFx/nFmrx2v3O/l4W+cARKu1WaAgViouWk5Z0oDXSo0hHKN+fQO0CbvbVbvssoB9RUrB5PnpaNsRdGadkLQRdudPwKT4gXzS1oI4sABoCwODcWGCCoAAe9VJ0OBK49hwgp/eLZ8PGyneJ6lIXAFfRn1jXXgyAWEaFGAlzNVgKiCODwvI/7+rLCEqOPD8g9yy/ikhSSw5nYEV8NkZMAA9jAa5lK2EYJGc3GwwIDAQAB",
   "minimum_chrome_version": "158",
-  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
   "incognito": "split",
-  "permissions": ["tabs", "storage", "unlimitedStorage", "sidePanel", "history", "topSites", "favicon", "clipboardWrite", "flechaPrivate", "nativeMessaging", "debugger", "downloads", "downloads.open", "downloads.ui", "browsingData", "contentSettings", "contextMenus", "alarms", "idle", "scripting", "userScripts", "webNavigation", "declarativeNetRequest", "privacy"],
+  "permissions": [
+    "tabs",
+    "storage",
+    "unlimitedStorage",
+    "sidePanel",
+    "history",
+    "topSites",
+    "favicon",
+    "clipboardWrite",
+    "flechaPrivate",
+    "nativeMessaging",
+    "debugger",
+    "downloads",
+    "downloads.open",
+    "downloads.ui",
+    "browsingData",
+    "contentSettings",
+    "contextMenus",
+    "alarms",
+    "idle",
+    "scripting",
+    "userScripts",
+    "webNavigation",
+    "declarativeNetRequest",
+    "privacy"
+  ],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js", "type": "module" },
   "side_panel": { "default_path": "sidebar.html" },
   "chrome_url_overrides": { "newtab": "newtab.html" },
   "action": { "default_title": "Flecha" },
   "content_scripts": [
-    { "matches": ["*://*.localhost/*", "*://127.0.0.1/*", "*://[::1]/*", "*://*.local/*", "*://*.test/*"], "js": ["consoleHook.js"], "world": "MAIN", "run_at": "document_start" },
-    { "matches": ["*://*.localhost/*", "*://127.0.0.1/*", "*://[::1]/*", "*://*.local/*", "*://*.test/*"], "js": ["consoleBridge.js"], "run_at": "document_start" }
+    {
+      "matches": [
+        "*://*.localhost/*",
+        "*://127.0.0.1/*",
+        "*://[::1]/*",
+        "*://*.local/*",
+        "*://*.test/*"
+      ],
+      "js": ["consoleHook.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "*://*.localhost/*",
+        "*://127.0.0.1/*",
+        "*://[::1]/*",
+        "*://*.local/*",
+        "*://*.test/*"
+      ],
+      "js": ["consoleBridge.js"],
+      "run_at": "document_start"
+    }
   ],
   "declarative_net_request": {
     "rule_resources": [
@@ -24,6 +74,8 @@
     ]
   },
   "commands": {
-    "flecha-open-location": { "description": "Open the location field (sent by the browser for Cmd+L)" }
+    "flecha-open-location": {
+      "description": "Open the location field (sent by the browser for Cmd+L)"
+    }
   }
 }

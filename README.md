@@ -90,7 +90,7 @@ You need:
 - macOS on Apple Silicon, with Xcode (and its command line tools)
 - [depot_tools](https://commondatastorage.googleapis.com/chrome-infra-docs/flat/depot_tools/docs/html/depot_tools_tutorial.html) on your `PATH`
 - a Chromium checkout at the version Flecha targets (158), with plenty of disk (100 GB or more) and several hours for a first build
-- Node 22.5 or newer (the native host uses `node:sqlite`) and `npm ci` at the repo root
+- Node 24 for development checks and `npm ci` at the repo root. The native host runtime requires Node 22.5 or newer for `node:sqlite`.
 
 Fetching the Chromium checkout isn't scripted here; follow Chromium's [macOS build instructions](https://chromium.googlesource.com/chromium/src/+/main/docs/mac_build_instructions.md). Build on an APFS volume: `env.sh` expects the checkout on APFS because siso treats every output as stale on HFS+ (one-second file times) and rebuilds everything.
 
@@ -110,7 +110,7 @@ npm run typecheck
 
 ### Pull request checks
 
-CI tests the pull request's merge commit with locked npm dependencies. Node 24 runs both typecheckers and the tests. Node 26 bundles the shell and native host. The Ubuntu lint job checks workflows with pinned actionlint, runs ShellCheck and applies the patches to pinned Chromium. Windows also checks patch application. macOS probes the selected Xcode and SDK and exercises cleanup against test directories. Nightlies perform the physical runner cleanup. Every required job must succeed for `CI passed`.
+CI tests the pull request's merge commit with locked npm dependencies. Node 24 runs formatting, lint, both typecheckers and the tests. Node 26 bundles the shell and native host. The Ubuntu lint job checks workflows with pinned actionlint, runs ShellCheck and applies the patches to pinned Chromium. Windows also checks patch application. macOS probes the selected Xcode and SDK and exercises cleanup against test directories. Nightlies perform the physical runner cleanup. Every required job must succeed for `CI passed`.
 
 ### Release
 

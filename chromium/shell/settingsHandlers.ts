@@ -68,8 +68,6 @@ export function registerSettings(ctx: SettingsContext) {
       store.activate(tabId, { windowId: ctx.windowId?.() });
       ctx.broadcastState();
     },
-    // TODO(chromium): site icons come from chrome://favicon2 / _favicon, not a favicon:// cache; tabs use their own favicon URL for now.
-    faviconHosts: () => [],
     // A Space with separate cookies and logins has its own storage partition, named after it
     // (background.ts partitionFor, patch 0034): tabs moving across it reopen in the other one.
     sessionOf: (space) => (space?.isolated ? space.id : 'default'),
@@ -116,14 +114,7 @@ export function registerSettings(ctx: SettingsContext) {
     'settings:get': view,
     'settings:set': async (patch: SettingsPatch) => {
       if (downloadPrefs && typeof patch?.askWhereToSave === 'boolean') mirrorDownloads(await chrome.flechaPrivate.setAskWhereToSave(patch.askWhereToSave));
-      const notice = await applySettings(store, patch && typeof patch === 'object' ? patch : {}, {
-        // TODO(chromium): Chromium's own light/dark mode isn't settable from an extension; Flecha's pages follow the system.
-        theme: () => {},
-        // TODO(chromium): no agent bridge yet; the choice is kept for when there is one.
-        agent: async () => {},
-        // features/adblock.ts follows state.adBlock itself, whoever sets it.
-        adBlock: async () => {},
-      });
+      const notice = applySettings(store, patch && typeof patch === 'object' ? patch : {});
       ctx.broadcastState();
       return { ...view(), notice };
     },
@@ -153,8 +144,6 @@ export function registerSettings(ctx: SettingsContext) {
     'settings:show-tab': (tabId: string) => tabs.show(tabId),
     'settings:answer': (id: number, response: number) => questions.get(id)?.(Number(response)),
   });
-
-  return { tabs, view };
 }
 
 /** The Settings page's address; a hash picks the pane (`#shortcuts`). */

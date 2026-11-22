@@ -24,7 +24,6 @@ export interface TabManagerHost {
   destroyView(tabId: string): void;
   /** Activates the tab and brings the browser window forward. */
   show(tabId: string): void;
-  faviconHosts(): string[];
   /** The cookie jar a Space's tabs use; a tab that lands in another one has to reopen. */
   sessionOf(space: SavedSpace | undefined): unknown;
   ask(options: AskOptions): Promise<number>;
@@ -90,7 +89,6 @@ export class TabManager {
       spaces: spaces.map(({ id, name, emoji, color, pinned, today, isolated }) => ({ id, name, emoji, color, pinned, today, isolated })),
       activeSpaceId,
       tabs,
-      faviconHosts: this.host.faviconHosts(),
     };
   }
 

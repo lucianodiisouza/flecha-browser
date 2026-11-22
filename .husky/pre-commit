@@ -1,0 +1,2 @@
+npm run format:staged
+npm run check:staged

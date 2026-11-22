@@ -34,9 +34,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm run typecheck:tsrs
-      - run: npm test
+      - run: npm run check:source
       - uses: actions/setup-node@v7
         with:
           node-version: 26
@@ -48,8 +46,7 @@ jobs:
           path: chromium/shell/.cache/adblock
           key: adblock-ci-${{ runner.os }}-${{ steps.adblock-cache.outputs.bucket }}
           restore-keys: adblock-ci-${{ runner.os }}-
-      - run: npm run shell:build
-      - run: npm run host:build
+      - run: npm run check:build
       # Patches are left out: their context lines keep Chromium's own trailing spaces.
       - name: No whitespace errors in the change
         if: github.event_name == 'pull_request'
@@ -98,8 +95,7 @@ jobs:
           path: chromium/shell/.cache/adblock
           key: adblock-ci-${{ runner.os }}-${{ steps.adblock-cache.outputs.bucket }}
           restore-keys: adblock-ci-${{ runner.os }}-
-      - run: npm run shell:build
-      - run: npm run host:build
+      - run: npm run check:build
 
   scripts:
     name: Workflows, shell scripts and Chromium patches

@@ -2,13 +2,6 @@ import http from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
-/**
- * The agent bridge's HTTP side, for the native messaging host, as the Electron version
- * ran it in its main process.
- */
-
-export * from '../shared/agentTools';
-
 export const DEFAULT_AGENT_PORT = 7390;
 
 /**
@@ -25,10 +18,6 @@ export class McpBridge {
     private register: (mcp: McpServer) => void,
     private token: () => string,
   ) {}
-
-  get running() {
-    return !!this.server;
-  }
 
   async start(preferredPort = DEFAULT_AGENT_PORT) {
     if (this.server) return;

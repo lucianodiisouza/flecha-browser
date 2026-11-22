@@ -13,7 +13,7 @@ import type { DetectedBrowser, HistoryEntry, ImportOptions, ImportPreview, Impor
 import { pinnedTabIds, type Store } from '../shared/store';
 import type { AgentResult, AgentTab, AgentToolName } from '../shared/agentTools';
 import { applyBrowserImport, importOptions, previewBrowserImport, type BrowserImportData } from '../shared/importApply';
-import { HOST_NAME, TOOL_TIMEOUT, toolTimeout, type HostMethods, type ToHost, type ToShell } from '../native-host/protocol';
+import { HOST_NAME, TOOL_TIMEOUT, toolTimeout, type HostMethods, type ToHost, type ToShell } from '../shared/nativeMessaging';
 import { broadcast, handle } from './hub';
 import { acquire, captureDebuggerReset, isHeld, onDebuggerDetach, release, send } from './features/debuggee';
 

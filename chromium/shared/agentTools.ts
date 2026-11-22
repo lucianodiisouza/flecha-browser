@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MAX_TOOL_WAIT } from '../native-host/protocol';
+import { MAX_TOOL_WAIT } from './nativeMessaging';
 
 /**
  * The agent bridge's tools: names, descriptions and inputs, as the Electron version had

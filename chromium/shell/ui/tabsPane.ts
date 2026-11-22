@@ -124,16 +124,8 @@ export async function setupTabsPane(icon: (name: IconName) => SVGSVGElement) {
   function favicon(tab: Tab) {
     const site = host(tab.homeUrl ?? tab.url);
     const letter = () => el('span', { class: 'tm-favicon letter', style: `--hue: ${hueFor(site)}` }, (site.replace(/^[^a-z0-9]+/i, '')[0] ?? '•').toUpperCase());
-    let hostname = '';
-    try {
-      hostname = new URL(tab.url).hostname;
-    } catch {
-      // Not a web page.
-    }
-    // The page's own icon once it has loaded, else the icon Flecha fetched for the site.
-    const src = tab.favicon || (view?.faviconHosts.includes(hostname) ? `favicon://${hostname}` : undefined);
-    if (!src) return letter();
-    const img = el('img', { class: 'tm-favicon', src, draggable: 'false', alt: '' });
+    if (!tab.favicon) return letter();
+    const img = el('img', { class: 'tm-favicon', src: tab.favicon, draggable: 'false', alt: '' });
     img.onerror = () => img.replaceWith(letter());
     return img;
   }
