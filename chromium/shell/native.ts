@@ -8,7 +8,7 @@
 import type { Store } from '../shared/store';
 import { pinnedTabIds } from '../shared/store';
 import { SHORTCUTS, fixedShortcuts, keysFor } from './lib/shortcuts';
-import { broadcast, broadcastTo, callerPort, callerWindow, handle } from './hub';
+import { broadcastTo, callerPort, callerWindow, handle } from './hub';
 import { incognito, sessionKey } from './incognito';
 import { phoneSplitRatio } from './lib/responsiveViewport';
 

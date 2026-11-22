@@ -1,7 +1,3 @@
-/**
- * What Settings shows and how it changes the Store, without Node, as the Electron
- * version's Settings window had them, for the Chromium shell's background.
- */
 import type { SettingsPatch, SettingsView } from '../../shared/types';
 import type { Store } from '../../shared/store';
 import { SEARCH_ENGINES } from './url';
@@ -19,13 +15,6 @@ export interface SettingsEnvironment {
   agentEndpoint?: string;
   /** Why Flecha's native host last failed to start or stopped. */
   hostError?: string;
-}
-
-/** What a change does outside the Store; each browser does these its own way. */
-export interface SettingsEffects {
-  theme(theme: NonNullable<SettingsView['theme']>): void;
-  agent(enabled: boolean): Promise<void>;
-  adBlock(enabled: boolean): Promise<void>;
 }
 
 export function settingsView(store: Store, env: SettingsEnvironment): SettingsView {
@@ -104,8 +93,8 @@ function editEnvironment(store: Store, edit: NonNullable<SettingsPatch['environm
   store.setEnvironments(projects.map((project) => project === previous ? next : project));
 }
 
-/** Applies a change from the page. Resolves with a notice to show, if any. */
-export async function applySettings(store: Store, patch: SettingsPatch, effects: SettingsEffects): Promise<string | undefined> {
+/** Returns the notice to show for a rejected or adjusted setting. */
+export function applySettings(store: Store, patch: SettingsPatch): string | undefined {
   let notice: string | undefined;
   if (patch.resetShortcuts) store.resetKeybindings();
   if (patch.shortcut) notice = setShortcut(store, String(patch.shortcut.id), patch.shortcut.keys === null ? null : String(patch.shortcut.keys));
@@ -117,19 +106,14 @@ export async function applySettings(store: Store, patch: SettingsPatch, effects:
   if (patch.askWhereToSave !== undefined) store.setDownloads({ askWhereToSave: patch.askWhereToSave });
   if (patch.theme || patch.peekPinnedLinks !== undefined) {
     store.setPreferences({ theme: patch.theme, peekPinnedLinks: patch.peekPinnedLinks });
-    effects.theme(store.state.theme ?? 'system');
   }
   if (patch.openLinksInFlechinha !== undefined) store.setOpenLinksInFlechinha(patch.openLinksInFlechinha);
   if (patch.sidebarInPageFullscreen !== undefined) store.setSidebarInPageFullscreen(patch.sidebarInPageFullscreen);
   if (typeof patch.archiveAfterHours === 'number') store.setArchiveAfter(patch.archiveAfterHours);
   if (patch.agentEnabled !== undefined) {
     store.setAgent({ enabled: patch.agentEnabled, token: store.state.agent?.token || newToken() });
-    await effects.agent(patch.agentEnabled).catch((err) => console.error('Agent bridge failed', err));
   }
-  if (patch.adBlock !== undefined) {
-    store.setAdBlock(patch.adBlock);
-    await effects.adBlock(patch.adBlock).catch((err) => console.error('Ad blocker failed', err));
-  }
+  if (patch.adBlock !== undefined) store.setAdBlock(patch.adBlock);
   return notice;
 }
 

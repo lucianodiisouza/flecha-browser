@@ -63,11 +63,6 @@ onDisconnect(() => {
   recording = false;
 });
 
-// The background (Flecha's ⌘F, say) can ask for the search field too.
-on('settings:find', () => {
-  for (const fn of findListeners) fn();
-});
-
 // "Delete …?" questions from the tab manager, answered with the button's index.
 on('settings:ask', async (id: number, options: AskOptions) => {
   cmd('settings:answer')(id, await askDialog(options));
