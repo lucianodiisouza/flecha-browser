@@ -1,6 +1,14 @@
 # Flecha on CEF and GPUI: rewrite plan
 
-Status: proposed 2026-11-23. Phase 0 needs approval. Later phases depend on Phase 0 results.
+Status: approved 2026-11-23.
+
+## Owner decisions, 2026-11-23
+
+- All phases are approved. The spikes and Phase 1 start together.
+- v1 supports Linux, macOS and Windows.
+- If Gmail sign-in fails in Alloy OSR, all work stops and comes back to the owner. No user-agent spoofing.
+- The owner cannot run the manual checks yet. The spikes get built now. Spike 0's sign-in answer and Spike 1's real-Wayland check wait for the owner. Until then, test windows run only on Xvfb or a headless compositor.
+- Work that is the same with or without the sign-in result (`flecha-core`, the compositor, the event loop) proceeds now. Phase 2 feature work waits for the Spike 0 verdict.
 
 ## Decision and what it implies
 
@@ -120,7 +128,9 @@ The owner's workflows pass on installed packages: signed and notarized macOS hel
 
 ## What I need from the owner
 
-1. Approval for Phase 0 only.
+Items 1 to 3 were answered on 2026-11-23 (see "Owner decisions").
+
+1. Approval for Phase 0.
 2. v1 platform scope.
 3. The outcome if Alloy OSR sign-in fails in Spike 0.
 4. Someone to run Spike 0's manual checks with a purpose-made Google account.

@@ -1,0 +1,16 @@
+# Engine and toolkit pins for the CEF + GPUI rewrite.
+# Change these together, and only after the Phase 0 checks pass on the new build.
+# Rules: docs/cef-gpui-rewrite-plan.md, "Beta channel rule".
+
+[cef]
+channel = "beta"
+version = "158.0.3+g8c29be2+chromium-158.0.8127.18"
+
+[cef-rs]
+git = "https://github.com/tauri-apps/cef-rs"
+# Open PR tauri-apps/cef-rs#520, binds CEF 158.0.3.
+rev = "32d6bc558545933eb1b4620aac4bc4799299c129"
+
+[gpui]
+git = "https://github.com/zed-industries/zed"
+rev = "f126950f9d3b62666f97437ae5d4ccac2272c4db"
