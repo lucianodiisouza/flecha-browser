@@ -1,0 +1,22 @@
+# Flecha: keep the PDF viewer building with enable_pdf_ink2 = false.
+diff --git a/chrome/browser/resources/pdf/pdf_viewer.ts b/chrome/browser/resources/pdf/pdf_viewer.ts
+index 0057b07..56787bd 100644
+--- a/chrome/browser/resources/pdf/pdf_viewer.ts
++++ b/chrome/browser/resources/pdf/pdf_viewer.ts
+@@ -154,6 +154,8 @@ function hasFixedCtrlModifierOnly(e: KeyboardEvent): boolean {
+   return e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey;
+ }
+ 
++// Flecha: only the ink2 undo/redo shortcut uses this helper.
++// <if expr="enable_pdf_ink2">
+ // Like hasCtrlModifierOnly(), but allow the shift modifier.
+ function hasCtrlModifierMaybeWithShift(e: KeyboardEvent): boolean {
+   let metaModifier = e.metaKey;
+@@ -162,6 +164,7 @@ function hasCtrlModifierMaybeWithShift(e: KeyboardEvent): boolean {
+   // </if>
+   return hasCtrlModifier(e) && !e.altKey && !metaModifier;
+ }
++// </if>  enable_pdf_ink2
+ 
+ const LOCAL_STORAGE_SIDENAV_COLLAPSED_KEY: string = 'sidenavCollapsed';
+ 
