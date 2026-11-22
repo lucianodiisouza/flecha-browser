@@ -7,7 +7,7 @@
  * (links to a new tab, window.open) become Flecha tabs.
  */
 import { Store, findFolder, linkRuleSpace, pinnedTabIds, type StatePersistence } from '../shared/store';
-import { resolveInput, searchEngine } from './lib/url';
+import { isBrowserPage, resolveInput, searchEngine } from './lib/url';
 import { shortcutHints, type ShortcutId } from './lib/shortcuts';
 import { describe as describeEnvironment } from './lib/environments';
 import type { BrowserState, DropTarget, PinnedNode, SearchEngineId, TabInfo, UiState } from '../shared/types';
@@ -221,7 +221,8 @@ async function start() {
 
   async function openChromeTab(id: string, active: boolean) {
     const tab = store.state.tabs[id];
-    const partition = partitionFor(id);
+    // The browser's own pages stay in the profile's partition, as Chromium opens them itself.
+    const partition = isBrowserPage(tab.url) ? '' : partitionFor(id);
     creating++;
     try {
       const options = { windowId: await mainWindow(), url: tab.url === 'about:blank' ? undefined : tab.url, active };
@@ -258,9 +259,16 @@ async function start() {
     const partition = await chrome.flechaPrivate.getTabPartition(chromeId).catch(() => undefined);
     if (partition !== undefined && live.get(id) === chromeId) livePartition.set(id, partition);
   }
-  /** Open tabs in another partition than their Space's. */
+  /**
+   * Open tabs in another partition than their Space's. Never one showing a page of the browser
+   * (Settings and the like): it has no place in a Space's partition, and Chromium opens it in
+   * the profile's, so it stays in the tab it is in until it goes to a site.
+   */
   const inWrongPartition = () =>
-    [...live.keys()].filter((id) => store.state.tabs[id] && livePartition.has(id) && livePartition.get(id) !== partitionFor(id));
+    [...live.keys()].filter((id) => {
+      const tab = store.state.tabs[id];
+      return tab && !isBrowserPage(tab.url) && livePartition.has(id) && livePartition.get(id) !== partitionFor(id);
+    });
   /**
    * A tab a page opened is in that page's partition, which may not be its Space's (a favorite's
    * link, with an isolated Space showing): it then reopens there, at the address it was going to.
