@@ -3,11 +3,19 @@
 # Safe to run again: it first resets every file it touches.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
+shopt -s nullglob
 patches=("$here"/patches/*.patch)
-if [[ ! -f ${patches[0]-} ]]; then
+shopt -u nullglob
+if [[ -z ${patches[0]-} ]]; then
   echo "error: no patches in $here/patches" >&2
   exit 1
 fi
+for p in "${patches[@]}"; do
+  if [[ ! -f $p ]]; then
+    echo "error: not a regular patch file: $p" >&2
+    exit 1
+  fi
+done
 
 # shellcheck source=env.sh
 . "$here/scripts/env.sh"

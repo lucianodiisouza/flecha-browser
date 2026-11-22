@@ -51,12 +51,15 @@ test('applying the series twice works from a checkout path with spaces', { skip:
   execFileSync('git', ['init', '-q'], { cwd: upstream });
   execFileSync('git', ['add', theme], { cwd: upstream });
 
+  const upstreamBranding = join(upstream, theme, 'BRANDING');
+
   const apply = () => execFileSync('bash', [join(scripts, 'apply.sh')], {
     env: { ...process.env, CHROMIUM_SRC: upstream },
   });
 
+  await writeFile(upstreamBranding, 'local branding');
   assert.throws(apply, /no patches in/);
-  assert.equal(await readFile(join(upstream, theme, 'BRANDING'), 'utf8'), 'before');
+  assert.equal(await readFile(upstreamBranding, 'utf8'), 'local branding');
 
   for (const [number, before, after] of [['0001', 'before', 'intermediate'], ['0002', 'intermediate', 'after']]) {
     const patch = `--- a/target\n+++ b/target\n@@ -1 +1 @@\n-${before}\n+${after}\n`;
@@ -67,5 +70,10 @@ test('applying the series twice works from a checkout path with spaces', { skip:
   apply();
   assert.equal(await readFile(target, 'utf8'), 'after\n');
   apply();
+  assert.equal(await readFile(target, 'utf8'), 'after\n');
+  await mkdir(join(patchDir, '0003-directory.patch'));
+  await writeFile(upstreamBranding, 'local branding after applying');
+  assert.throws(apply, /not a regular patch file/);
+  assert.equal(await readFile(upstreamBranding, 'utf8'), 'local branding after applying');
   assert.equal(await readFile(target, 'utf8'), 'after\n');
 });

@@ -6,9 +6,16 @@ import { join } from 'node:path';
 const snapshot = await mkdtemp(join(tmpdir(), 'flecha-staged-'));
 
 try {
-  execFileSync('git', ['checkout-index', '--all', `--prefix=${snapshot}/`], {
-    stdio: 'inherit',
-  });
+  execFileSync(
+    'git',
+    [
+      'checkout-index',
+      '--all',
+      '--ignore-skip-worktree-bits',
+      `--prefix=${snapshot}/`,
+    ],
+    { stdio: 'inherit' },
+  );
   await symlink(
     join(process.cwd(), 'node_modules'),
     join(snapshot, 'node_modules'),
