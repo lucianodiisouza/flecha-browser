@@ -1164,11 +1164,12 @@ async function start() {
     store,
     chromeTabId: (id) => live.get(id),
     flechaTabId: (chromeId) => flechaIdFor(chromeId),
-    run: (command, windowId) => {
+    run: async (command, windowId) => {
       // Next window is the same from any window, a Flechinha too.
       if (command === 'nextWindow' || command === 'previousWindow') return void cycleWindow(command === 'nextWindow' ? 1 : -1, windowId !== undefined && windowId >= 0 ? windowId : undefined);
-      // In a Flechinha, its own toolbar answers the few shortcuts it has.
-      if (isFlechinha(windowId)) return broadcast('flechinha:command', windowId, command);
+      // In a Flechinha, its own toolbar answers the few shortcuts it has. The browser is asked:
+      // it opens the Flechinhas for links from other apps itself, without telling the shell.
+      if (await isFlechinhaWindow(windowId)) return broadcast('flechinha:command', windowId, command);
       // Settings on a pane, asked for by an incognito window (runInRegularProfile).
       const pane = /^openSettings:(\w+)$/.exec(command);
       if (pane) return void openSettings(pane[1]);
