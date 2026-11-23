@@ -10,6 +10,7 @@ import type { Store } from '../shared/store';
 import type { LocalServer } from '../shared/types';
 import type { BoostKind } from './lib/boostFiles';
 import { describe as describeEnvironment } from './lib/environments';
+import { navigateTab } from './lib/navigate';
 import { displayKeys } from './lib/shortcuts';
 import { broadcast, handle, run } from './hub';
 import * as boosts from './features/boosts';
@@ -100,7 +101,7 @@ export function registerFeatures(ctx: FeaturesContext): Features {
       const env = tab && describeEnvironment(tab.url, store.state.environments);
       const chromeId = ctx.activeChromeTabId();
       if (!env?.switches.length || chromeId === undefined) return;
-      void chrome.tabs.update(chromeId, { url: env.switches[0].url });
+      void navigateTab(chromeId, env.switches[0].url);
     },
 
     toggleResponsive: () => phone.toggle(),

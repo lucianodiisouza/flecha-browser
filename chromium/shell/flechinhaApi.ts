@@ -7,6 +7,7 @@ import type { FlechinhaApi, FlechinhaState, UiState } from '../shared/types';
 import { resolveInput } from './lib/url';
 import { spaceTint } from './lib/spaceTint';
 import { tabHistory, type TabHistory } from './lib/tabHistory';
+import { navigateTab } from './lib/navigate';
 import { cmd, on } from './client';
 
 const windowId = chrome.flechaPrivate.getWindowId();
@@ -123,7 +124,7 @@ const api: FlechinhaApi = {
   stop: onPage((id) => chrome.scripting.executeScript({ target: { tabId: id }, func: () => window.stop() }).catch(() => undefined)),
   navigate: (input) =>
     void onPage(async (id) => {
-      await chrome.tabs.update(id, { url: resolveInput(input, ui?.searchEngine) });
+      await navigateTab(id, resolveInput(input, ui?.searchEngine));
       // Keys go to the page again, not to the toolbar the address was typed in.
       await chrome.flechaPrivate.focus('page', await windowId).catch(() => undefined);
     })(),

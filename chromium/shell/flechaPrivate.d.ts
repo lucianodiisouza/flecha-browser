@@ -176,6 +176,12 @@ declare namespace chrome.flechaPrivate {
    * Back and Forward buttons show. tabs.goBack() and goForward() don't say.
    */
   function getTabHistory(tabId: number): Promise<{ canGoBack: boolean; canGoForward: boolean }>;
+  /**
+   * Takes a tab to an address the user typed or picked, as the omnibox does (patch 0061): a
+   * typed navigation by the browser, so Back still goes to the page left behind. Rejects
+   * javascript: URLs. See lib/navigate.ts.
+   */
+  function navigate(tabId: number, url: string): Promise<void>;
   function clearPartition(partition: string): Promise<void>;
 
   /**

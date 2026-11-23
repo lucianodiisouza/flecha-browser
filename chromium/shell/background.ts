@@ -31,6 +31,7 @@ import { registerExtensions } from './extensions';
 import { registerSiteControls } from './siteControls';
 import { Favicons } from './favicons';
 import { tabHistory } from './lib/tabHistory';
+import { navigateTab } from './lib/navigate';
 import { followedPreferences, incognito, incognitoState, sessionKey } from './incognito';
 
 const STATE_KEY = 'state';
@@ -746,7 +747,7 @@ async function start() {
     navigate: (input: string) => {
       const chromeId = activeChromeId();
       if (chromeId === undefined) return openTab(input);
-      void chrome.tabs.update(chromeId, { url: resolveInput(input, store.state.searchEngine) });
+      void navigateTab(chromeId, resolveInput(input, store.state.searchEngine));
     },
     activate: (id: string) => store.activate(id),
     close: (id: string) => {
@@ -789,7 +790,7 @@ async function start() {
       const moved = store.resetPinned(String(spaceId));
       for (const { tabId, url: address } of moved) {
         const chromeId = live.get(tabId);
-        if (chromeId !== undefined) void chrome.tabs.update(chromeId, { url: address });
+        if (chromeId !== undefined) void navigateTab(chromeId, address);
       }
       broadcast('flash', moved.length ? `${moved.length} pinned tab${moved.length === 1 ? '' : 's'} reset` : 'Pinned tabs are already home');
     }),
@@ -850,7 +851,7 @@ async function start() {
       const chromeId = live.get(id);
       // Already home: navigating to the same URL would reload the page (a double-click is easy to make by accident).
       if (!home || home === tab.url) return;
-      if (chromeId !== undefined) void chrome.tabs.update(chromeId, { url: home });
+      if (chromeId !== undefined) void navigateTab(chromeId, home);
       else store.updateTab(id, { url: home });
     },
     closeTabs: (id: string, which: string) => void unload(store.closeTodayTabs(id, which === 'others' ? 'others' : 'below')),
