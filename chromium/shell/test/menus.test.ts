@@ -38,10 +38,12 @@ test('Tabs follows the active tab: Pin or Unpin, and split items only in a split
   assert.ok(labelled(store, 'Tabs', 'Unpin Tab'));
 });
 
-test('Archive shows the latest archived tabs, and Window has Stay On Top', () => {
+test('Archive shows the latest archived tabs, and Window has Stay On Top and Next Window', () => {
   const store = fresh();
   assert.equal(menu(store, 'Archive').items.at(-1)?.text, 'No Archived Tabs');
   store.state.archive.unshift({ url: 'https://old.example/', title: 'Old page', closedAt: 42 });
   assert.equal(labelled(store, 'Archive', 'Old page')?.command, 'menu:reopen:42');
   assert.equal(menu(store, 'Window', true).items[0].checked, true);
+  assert.equal(labelled(store, 'Window', 'Next Window')?.command, 'nextWindow');
+  assert.equal(labelled(store, 'Window', 'Previous Window')?.command, 'previousWindow');
 });

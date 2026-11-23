@@ -1,7 +1,8 @@
 /**
  * Flecha's menus in the macOS menu bar (patch 0045, chrome.flechaPrivate.setMenus): Spaces,
- * Tabs and Archive, as in Arc, plus Stay On Top at the top of the Window menu. Built from the
- * state alone, so they're tested on their own; native.ts sends them whenever they change.
+ * Tabs and Archive, as in Arc, plus Stay On Top and Next Window at the top of the Window
+ * menu. Built from the state alone, so they're tested on their own; native.ts sends them
+ * whenever they change.
  *
  * An item's command is a shortcut id (lib/shortcuts.ts, run as if its keys were pressed) or
  * `menu:<what>[:<argument>]`, which native.ts runs.
@@ -111,7 +112,15 @@ export function flechaMenus(state: BrowserState, options: MenuOptions): Menu[] {
     ],
   };
 
-  const window: Menu = { title: 'Window', items: [{ text: 'Stay On Top', command: 'menu:stayOnTop', checked: options.stayOnTop }] };
+  const window: Menu = {
+    title: 'Window',
+    items: [
+      { text: 'Stay On Top', command: 'menu:stayOnTop', checked: options.stayOnTop },
+      SEPARATOR,
+      item('nextWindow', 'Next Window'),
+      item('previousWindow', 'Previous Window'),
+    ],
+  };
 
   return [spaces, tabs, archive, window];
 }

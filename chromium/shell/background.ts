@@ -24,6 +24,8 @@ import { registerFeatures, type Features } from './features';
 // Also loaded on the first turn, for the shortcut event that may have woken the background.
 import { defaultBrowserState, isFlechinha, isFlechinhaWindow, registerNative } from './native';
 import { registerDownloads } from './downloads';
+// Loaded on the first turn too: it listens for the other copy of the shell.
+import { cycleWindow } from './windowCycle';
 import { registerExtensions } from './extensions';
 import { registerSiteControls } from './siteControls';
 import { Favicons } from './favicons';
@@ -1050,6 +1052,8 @@ async function start() {
     find: () => call('find'),
     toggleSidebar: () => call('toggleSidebar'),
     settings: () => showSettings(),
+    nextWindow: () => cycleWindow(1),
+    previousWindow: () => cycleWindow(-1),
     newFlechinha: () => call('newFlechinha'),
     closeTab: withTab((tab) => call('close', tab.id)),
     reopenTab: () => {
@@ -1161,6 +1165,8 @@ async function start() {
     chromeTabId: (id) => live.get(id),
     flechaTabId: (chromeId) => flechaIdFor(chromeId),
     run: async (command, windowId) => {
+      // Next window is the same from any window, a Flechinha too.
+      if (command === 'nextWindow' || command === 'previousWindow') return void cycleWindow(command === 'nextWindow' ? 1 : -1, windowId !== undefined && windowId >= 0 ? windowId : undefined);
       // In a Flechinha, its own toolbar answers the few shortcuts it has. The browser is asked:
       // it opens the Flechinhas for links from other apps itself, without telling the shell.
       if (await isFlechinhaWindow(windowId)) return broadcast('flechinha:command', windowId, command);
