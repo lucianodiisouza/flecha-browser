@@ -105,6 +105,22 @@ declare namespace chrome.flechaPrivate {
    */
   function setOpenLinksInFlechinha(enabled: boolean): Promise<void>;
 
+  /** A window's place and size, in screen coordinates (as chrome.windows has them). */
+  interface FlechinhaBounds {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  }
+
+  /**
+   * Where new Flechinhas open (patch 0046): at `bounds`, fitted to the screen it is on, each
+   * one a step down and right of those already open, instead of centred under the pointer.
+   * For openFlechinha() and for links from other apps alike. Without `bounds`, back to the
+   * default. Not kept by the browser: the shell sets it again at startup.
+   */
+  function setFlechinhaBounds(bounds?: FlechinhaBounds): Promise<void>;
+
   /** The open Flechinhas' window ids (e.g. after the background restarts). */
   function getFlechinhas(): Promise<number[]>;
 

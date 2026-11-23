@@ -1,0 +1,136 @@
+--- a/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
++++ b/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
+@@ -266,20 +266,40 @@
+ }
+ 
+ namespace {
++
++// Flecha: the size and place the shell last saw a Flechinha at
++// (setFlechinhaBounds), in screen coordinates; none until it says.
++std::optional<gfx::Rect>& RememberedFlechinhaBounds() {
++  static std::optional<gfx::Rect> bounds;
++  return bounds;
++}
+ 
+ // Where a new Flechinha goes, like the Electron spike's Flechinhas.placement():
+ // centred on the display under the pointer, at most 900x700, each one a step
+-// down and right of the others there.
++// down and right of the others there. Once the shell has remembered a
++// placement, that one instead, on the display it was on, as far as it fits
++// there.
+ gfx::Rect FlechinhaBounds(content::BrowserContext* context) {
+   constexpr int kWidth = 900;
+   constexpr int kHeight = 700;
++  constexpr int kMinWidth = 320;
++  constexpr int kMinHeight = 240;
+   constexpr int kCascade = 26;
+   display::Screen* screen = display::Screen::Get();
++  const std::optional<gfx::Rect>& remembered = RememberedFlechinhaBounds();
+   const display::Display display =
+-      screen->GetDisplayNearestPoint(screen->GetCursorScreenPoint());
++      remembered
++          ? screen->GetDisplayMatching(*remembered)
++          : screen->GetDisplayNearestPoint(screen->GetCursorScreenPoint());
+   const gfx::Rect area = display.work_area();
+-  const int width = std::min(kWidth, area.width() - 40);
+-  const int height = std::min(kHeight, area.height() - 40);
++  const int width =
++      remembered ? std::min(std::max(remembered->width(), kMinWidth),
++                            area.width())
++                 : std::min(kWidth, area.width() - 40);
++  const int height =
++      remembered ? std::min(std::max(remembered->height(), kMinHeight),
++                            area.height())
++                 : std::min(kHeight, area.height() - 40);
+   int others = 0;
+   for (FlechaFrameHost* host : FlechaFrameHost::All()) {
+     if (host->IsFlechinha() && SameProfile(host, context)) {
+@@ -289,6 +309,13 @@
+   const int room = std::max(
+       1, std::min(area.width() - width, area.height() - height) / 2 / kCascade);
+   const int step = (others % room) * kCascade;
++  if (remembered) {
++    gfx::Rect bounds(remembered->x() + step, remembered->y() + step, width,
++                     height);
++    // Back onto the display, if that changed or went away since.
++    bounds.AdjustToFit(area);
++    return bounds;
++  }
+   return gfx::Rect(area.x() + (area.width() - width) / 2 + step,
+                    area.y() + (area.height() - height) / 2 + step, width,
+                    height);
+@@ -344,6 +371,21 @@
+   auto params = flecha_private::SetOpenLinksInFlechinha::Params::Create(args());
+   EXTENSION_FUNCTION_VALIDATE(params);
+   FlechaLinksOpenInFlechinha() = params->enabled;
++  return RespondNow(NoArguments());
++}
++
++ExtensionFunction::ResponseAction
++FlechaPrivateSetFlechinhaBoundsFunction::Run() {
++  auto params = flecha_private::SetFlechinhaBounds::Params::Create(args());
++  EXTENSION_FUNCTION_VALIDATE(params);
++  std::optional<gfx::Rect>& remembered = RememberedFlechinhaBounds();
++  if (params->bounds && params->bounds->width > 0 &&
++      params->bounds->height > 0) {
++    remembered = gfx::Rect(params->bounds->left, params->bounds->top,
++                           params->bounds->width, params->bounds->height);
++  } else {
++    remembered.reset();
++  }
+   return RespondNow(NoArguments());
+ }
+ 
+--- a/chrome/browser/extensions/api/flecha_private/flecha_private_api.h
++++ b/chrome/browser/extensions/api/flecha_private/flecha_private_api.h
+@@ -94,6 +94,16 @@
+ 
+  protected:
+   ~FlechaPrivateSetOpenLinksInFlechinhaFunction() override = default;
++  ResponseAction Run() override;
++};
++
++// Flecha: new Flechinhas open where the shell last saw one, not centred.
++class FlechaPrivateSetFlechinhaBoundsFunction : public ExtensionFunction {
++ public:
++  DECLARE_EXTENSION_FUNCTION("flechaPrivate.setFlechinhaBounds", UNKNOWN)
++
++ protected:
++  ~FlechaPrivateSetFlechinhaBoundsFunction() override = default;
+   ResponseAction Run() override;
+ };
+ 
+--- a/chrome/common/extensions/api/flecha_private.idl
++++ b/chrome/common/extensions/api/flecha_private.idl
+@@ -130,6 +130,14 @@
+     long? tabId;
+   };
+ 
++  // A window's place and size, in screen coordinates (as chrome.windows).
++  dictionary FlechinhaBounds {
++    long left;
++    long top;
++    long width;
++    long height;
++  };
++
+   interface Functions {
+     // Lays out a window's frame. Applies to every normal window (and to the
+     // windows opened later) when <code>windowId</code> is omitted.
+@@ -186,6 +194,16 @@
+     // a Flechinha, once Flecha's window is up. On by default.
+     static void setOpenLinksInFlechinha(
+         boolean enabled,
++        optional DoneCallback callback);
++
++    // Where new Flechinhas open: at <code>bounds</code> (the last one's size
++    // and place, which the shell remembers), fitted to the display it is on
++    // and a step down and right of each Flechinha already open, instead of
++    // centred under the pointer. For openFlechinha() and links from other
++    // apps alike. Without <code>bounds</code>, the default again. Not kept
++    // when the browser quits.
++    static void setFlechinhaBounds(
++        optional FlechinhaBounds bounds,
+         optional DoneCallback callback);
+ 
+     // Peek: a page in a floating card over the page area of the given window
