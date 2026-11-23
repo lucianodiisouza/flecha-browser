@@ -265,6 +265,12 @@ declare namespace chrome.flechaPrivate {
 
   /** Keeps a window above other apps' windows (Stay On Top), or not (patch 0045): a Flecha window, or any other of this profile by id (the Settings popup). */
   function setAlwaysOnTop(onTop: boolean, windowId?: number): Promise<void>;
+  /**
+   * Colours the system title bar of a window of this profile and takes the line under it away
+   * (patch 0057): the Settings popup's, so it is one surface with the page. `color` is #rrggbb.
+   * macOS only; elsewhere it resolves and does nothing.
+   */
+  function setTitlebarColor(color: string, windowId: number): Promise<void>;
 
   /**
    * A shortcut from setShortcuts() was pressed in window `windowId` (-1: a command from

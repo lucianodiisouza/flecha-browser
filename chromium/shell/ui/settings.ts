@@ -492,8 +492,20 @@ document.getElementById('newAgentToken')!.addEventListener('click', async () => 
 // The sidebar wears the active Space's colour, like the browser window's.
 const systemDark = matchMedia('(prefers-color-scheme: dark)');
 let tint: string | undefined;
+/** Settings' own window when it is the small one (a popup), whose title bar the browser can colour. */
+const ownPopup = chrome.windows.getCurrent().then((w) => (w.type === 'popup' ? w.id : undefined));
 function applyTint() {
-  if (tint) document.documentElement.style.setProperty('--tint', spaceTint(tint, systemDark.matches));
+  if (!tint) return;
+  const shown = spaceTint(tint, systemDark.matches);
+  document.documentElement.style.setProperty('--tint', shown);
+  // The title bar joins in (patch 0057), so the window is one colour from the top, like the browser's.
+  if (typeof chrome.flechaPrivate?.setTitlebarColor === 'function') {
+    void ownPopup
+      .then(async (id) => {
+        if (id !== undefined) await chrome.flechaPrivate.setTitlebarColor(shown, id);
+      })
+      .catch(() => undefined);
+  }
 }
 systemDark.addEventListener('change', applyTint);
 
