@@ -79,6 +79,21 @@ const onPage = (fn: (tabId: number) => unknown) => async () => {
   if (tab?.id !== undefined) await fn(tab.id);
 };
 
+/**
+ * Writes the clipboard. ⇧⌘C leaves the page focused, not the toolbar, and the clipboard only
+ * takes writes from the focused document, so the toolbar borrows focus for it (as windowUi does).
+ */
+async function writeClipboard(text: string) {
+  if (document.hasFocus()) return navigator.clipboard.writeText(text);
+  const id = await windowId;
+  await chrome.flechaPrivate.focus('frame', id);
+  try {
+    await navigator.clipboard.writeText(text);
+  } finally {
+    await chrome.flechaPrivate.focus('page', id);
+  }
+}
+
 const api: FlechinhaApi = {
   onState: (cb) => void stateListeners.push(cb),
   onEditAddress: (cb) => void editListeners.push(cb),
@@ -94,7 +109,11 @@ const api: FlechinhaApi = {
   navigate: (input) => void onPage((id) => chrome.tabs.update(id, { url: resolveInput(input, ui?.searchEngine) }))(),
   copyLink: () => {
     const url = tab?.url;
-    if (url && !isBlank(url)) void navigator.clipboard.writeText(url).then(() => flash('Link copied'));
+    if (url && !isBlank(url))
+      void writeClipboard(url).then(
+        () => flash('Link copied'),
+        (err) => console.error('Flecha shell: copying failed', err),
+      );
   },
   openInFlecha: () => void windowId.then((id) => cmd('flechinha:openInFlecha')(id)),
   close: () => void windowId.then((id) => chrome.windows.remove(id)),
