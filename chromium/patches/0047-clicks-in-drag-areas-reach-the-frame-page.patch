@@ -1,0 +1,284 @@
+--- a/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
++++ b/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
+@@ -600,6 +600,20 @@
+     }
+   }
+   SetFlechaMenus(menus);
++  return RespondNow(NoArguments());
++}
++
++ExtensionFunction::ResponseAction
++FlechaPrivateSetDragAreasClickableFunction::Run() {
++  auto params = flecha_private::SetDragAreasClickable::Params::Create(args());
++  EXTENSION_FUNCTION_VALIDATE(params);
++  FlechaFrameHost* host =
++      params->window_id ? HostForWindow(*params->window_id, browser_context())
++                        : HostForContents(GetSenderWebContents());
++  if (!host) {
++    return RespondNow(Error(kNoWindowError, "(drag areas)"));
++  }
++  host->SetDragAreasClickable(params->clickable);
+   return RespondNow(NoArguments());
+ }
+ 
+--- a/chrome/browser/extensions/api/flecha_private/flecha_private_api.h
++++ b/chrome/browser/extensions/api/flecha_private/flecha_private_api.h
+@@ -176,6 +176,16 @@
+ 
+  protected:
+   ~FlechaPrivateSetMenusFunction() override = default;
++  ResponseAction Run() override;
++};
++
++// Flecha: a click in a drag area of the frame page reaches the page.
++class FlechaPrivateSetDragAreasClickableFunction : public ExtensionFunction {
++ public:
++  DECLARE_EXTENSION_FUNCTION("flechaPrivate.setDragAreasClickable", UNKNOWN)
++
++ protected:
++  ~FlechaPrivateSetDragAreasClickableFunction() override = default;
+   ResponseAction Run() override;
+ };
+ 
+--- a/chrome/browser/flecha/flecha_frame_host.h
++++ b/chrome/browser/flecha/flecha_frame_host.h
+@@ -209,6 +209,9 @@
+   virtual void UpdateShortcuts() = 0;
+   // Whether the window is a Flechinha, Flecha's small window for one page.
+   virtual bool IsFlechinha() const = 0;
++  // Whether a press in a drag area of the frame page that is let go without
++  // moving reaches the page as a click, instead of being lost to the window.
++  virtual void SetDragAreasClickable(bool clickable) = 0;
+   // The window itself.
+   virtual BrowserWindowInterface* GetBrowserWindowInterface() = 0;
+ 
+--- a/chrome/browser/ui/views/frame/flecha_frame_view_mac.mm
++++ b/chrome/browser/ui/views/frame/flecha_frame_view_mac.mm
+@@ -29,3 +29,15 @@
+   [window setFlechaTrafficLightsVisible:state->TrafficLightsVisible()
+                                  origin:NSMakePoint(origin.x(), origin.y())];
+ }
++
++void SetFlechaDragAreasClickable(views::Widget* widget, bool clickable) {
++  if (!widget) {
++    return;
++  }
++  NSWindow* ns_window = widget->GetNativeWindow().GetNativeNSWindow();
++  if (![ns_window isKindOfClass:[BrowserNativeWidgetWindow class]]) {
++    return;
++  }
++  static_cast<BrowserNativeWidgetWindow*>(ns_window).flechaDragAreasClickable =
++      clickable;
++}
+--- a/chrome/browser/ui/views/frame/flecha_frame_view.cc
++++ b/chrome/browser/ui/views/frame/flecha_frame_view.cc
+@@ -249,6 +249,7 @@
+ #if !BUILDFLAG(IS_MAC)
+ void SetFlechaTrafficLights(views::Widget* widget,
+                             const FlechaFrameState* state) {}
++void SetFlechaDragAreasClickable(views::Widget* widget, bool clickable) {}
+ #endif
+ 
+ // static
+@@ -503,6 +504,10 @@
+                        : 0);
+ }
+ 
++void FlechaFrameView::SetDragAreasClickable(bool clickable) {
++  SetFlechaDragAreasClickable(GetWidget(), clickable);
++}
++
+ bool FlechaFrameView::IsFlechinha() const {
+   return state_.flechinha;
+ }
+--- a/chrome/browser/ui/views/frame/flecha_frame_view.h
++++ b/chrome/browser/ui/views/frame/flecha_frame_view.h
+@@ -33,6 +33,10 @@
+ void SetFlechaTrafficLights(views::Widget* widget,
+                             const FlechaFrameState* state);
+ 
++// Whether a click in a drag area of `widget`'s frame page goes to the page
++// (FlechaFrameHost::SetDragAreasClickable). A no-op off macOS.
++void SetFlechaDragAreasClickable(views::Widget* widget, bool clickable);
++
+ // Flecha's window frame (see flecha_frame_host.h): the shell's frame page,
+ // chrome-extension://<shell>/window.html?window=<id>, in a transparent view
+ // stacked above the page area of a normal browser window, plus the window
+@@ -94,6 +98,7 @@
+   content::WebContents* GetFrameContents() override;
+   bool IsActiveWindow() const override;
+   bool IsFlechinha() const override;
++  void SetDragAreasClickable(bool clickable) override;
+   BrowserWindowInterface* GetBrowserWindowInterface() override;
+   void SetFrameState(const FlechaFrameState& state) override;
+   void FocusFrame() override;
+--- a/chrome/common/extensions/api/flecha_private.idl
++++ b/chrome/common/extensions/api/flecha_private.idl
+@@ -254,6 +254,15 @@
+                                optional long windowId,
+                                optional DoneCallback callback);
+ 
++    // Whether a press in a drag area of a window's frame page
++    // (-webkit-app-region: drag) that is let go without moving reaches the
++    // page as a click. A drag still moves the window, and a double click
++    // still zooms it. Off by default, when a drag area takes every press.
++    // Default window: the one whose frame page calls. macOS only.
++    static void setDragAreasClickable(boolean clickable,
++                                      optional long windowId,
++                                      optional DoneCallback callback);
++
+     static void isDefaultBrowser(DefaultBrowserCallback callback);
+     // Asks macOS to make Flecha the default browser (it shows its own
+     // confirmation), then calls back with the result.
+--- a/components/remote_cocoa/app_shim/bridged_content_view.mm
++++ b/components/remote_cocoa/app_shim/bridged_content_view.mm
+@@ -15,6 +15,7 @@
+ #include "base/strings/sys_string_conversions.h"
+ #include "base/time/time.h"
+ #include "base/trace_event/trace_event.h"
++#import "components/remote_cocoa/app_shim/browser_native_widget_window_mac.h"
+ #import "components/remote_cocoa/app_shim/drag_drop_client.h"
+ #import "components/remote_cocoa/app_shim/native_widget_ns_window_bridge.h"
+ #include "components/remote_cocoa/app_shim/native_widget_ns_window_host_helper.h"
+@@ -380,6 +381,13 @@
+   // https://crbug.com/830962).
+   if (hitTestResult ==
+       remote_cocoa::mojom::HitTestResult::kDraggableBackground) {
++    // Flecha: a click in a drag area of the frame page is on its way to the
++    // page (BrowserNativeWidgetWindow -sendEvent:), which hit tests here.
++    if (auto* browserWindow =
++            base::apple::ObjCCast<BrowserNativeWidgetWindow>(self.window);
++        browserWindow.flechaClickInDragArea) {
++      return [super hitTest:point];
++    }
+     NSEvent* currentEvent = [NSApp currentEvent];
+     if (currentEvent) {
+       NSEventType type = [currentEvent type];
+--- a/components/remote_cocoa/app_shim/browser_native_widget_window_mac.h
++++ b/components/remote_cocoa/app_shim/browser_native_widget_window_mac.h
+@@ -18,6 +18,13 @@
+ - (void)setFlechaTrafficLightsVisible:(BOOL)visible origin:(NSPoint)origin;
+ // Flecha: gives the traffic lights back to AppKit (and Chromium).
+ - (void)resetFlechaTrafficLights;
++// Flecha: whether a press in a drag area (where the content view's hit test
++// answers nil, and the window moves) that is let go where it began goes to
++// the view under it as a click. Off by default.
++@property(nonatomic) BOOL flechaDragAreasClickable;
++// Flecha: YES while such a click is handed on (-sendEvent:); hit tests then
++// see through the drag area.
++@property(readonly, nonatomic) BOOL flechaClickInDragArea;
+ // A controller that keeps a small portion (0.5px) of the fullscreen AppKit
+ // NSWindow on screen.
+ // This controller is used as a workaround for an AppKit bug
+--- a/components/remote_cocoa/app_shim/browser_native_widget_window_mac.mm
++++ b/components/remote_cocoa/app_shim/browser_native_widget_window_mac.mm
+@@ -6,6 +6,10 @@
+ 
+ #import <AppKit/AppKit.h>
+ 
++#include <cmath>
++
++#include "base/auto_reset.h"
++
+ #include "base/mac/mac_util.h"
+ #include "components/remote_cocoa/app_shim/native_widget_ns_window_bridge.h"
+ #include "components/remote_cocoa/common/native_widget_ns_window_host.mojom.h"
+@@ -198,9 +202,19 @@
+ 
+ @end
+ 
+-@implementation BrowserNativeWidgetWindow
++@implementation BrowserNativeWidgetWindow {
++  // Flecha: a press in a drag area that hasn't been released yet, with where
++  // the window and the pointer were then (see -sendEvent:).
++  NSEvent* _flechaPress;
++  NSRect _flechaPressFrame;
++  NSPoint _flechaPressAt;
++  BOOL _flechaDragAreasClickable;
++  BOOL _flechaClickInDragArea;
++}
+ 
+ @synthesize thinTitlebarViewController = _thinTitlebarViewController;
++@synthesize flechaDragAreasClickable = _flechaDragAreasClickable;
++@synthesize flechaClickInDragArea = _flechaClickInDragArea;
+ 
+ // NSWindow (PrivateAPI) overrides.
+ 
+@@ -285,4 +299,77 @@
+       resetFlechaTrafficLights];
+ }
+ 
++// Flecha: the frame page's drag areas (-webkit-app-region: drag) move the
++// window, and a press there never reaches the page: the content view's hit
++// test hands it to the window. So an area could move the window or be
++// clicked, not both. With flechaDragAreasClickable, a press that is released
++// where it began, with the window where it was, goes to the page after all,
++// as a click; one that moves is the window move it always was. That lets a
++// control (a Flechinha's address) be a place to grab the window by.
++- (void)sendEvent:(NSEvent*)event {
++  if (!_flechaDragAreasClickable) {
++    _flechaPress = nil;
++    [super sendEvent:event];
++    return;
++  }
++  const NSEventType type = event.type;
++  if (type == NSEventTypeLeftMouseDown) {
++    _flechaPress = nil;
++    // The first press only (a double click zooms the window, as on a title
++    // bar), and not a control-click (a right click). A nil hit test is the
++    // content view's answer for a drag area.
++    if (event.clickCount == 1 &&
++        !(event.modifierFlags & NSEventModifierFlagControl) &&
++        [self.contentView hitTest:event.locationInWindow] == nil) {
++      _flechaPress = event;
++      _flechaPressFrame = self.frame;
++      _flechaPressAt = NSEvent.mouseLocation;
++      [super sendEvent:event];
++      // The window move follows the mouse until the button is let go and
++      // may take that event with it.
++      if (_flechaPress && !(NSEvent.pressedMouseButtons & 1)) {
++        [self finishFlechaPress];
++      }
++      return;
++    }
++  } else if (type == NSEventTypeLeftMouseUp && _flechaPress) {
++    [self finishFlechaPress];
++  }
++  [super sendEvent:event];
++}
++
++// Flecha: the button is up again after a press in a drag area. Unmoved, the
++// press and a release go to the view under it.
++- (void)finishFlechaPress {
++  NSEvent* press = _flechaPress;
++  _flechaPress = nil;
++  // As far as a click may wander.
++  constexpr CGFloat kSlop = 3;
++  const NSPoint at = NSEvent.mouseLocation;
++  if (!NSEqualRects(self.frame, _flechaPressFrame) ||
++      std::abs(at.x - _flechaPressAt.x) > kSlop ||
++      std::abs(at.y - _flechaPressAt.y) > kSlop) {
++    return;
++  }
++  // The content view's hit test answers nil for a drag area, and the page's
++  // view asks it before it takes a mouse event; both see through for now.
++  base::AutoReset<BOOL> click(&_flechaClickInDragArea, YES);
++  NSView* target = [self.contentView hitTest:press.locationInWindow];
++  if (!target) {
++    return;
++  }
++  NSEvent* release =
++      [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp
++                         location:press.locationInWindow
++                    modifierFlags:press.modifierFlags
++                        timestamp:NSProcessInfo.processInfo.systemUptime
++                     windowNumber:self.windowNumber
++                          context:nil
++                      eventNumber:press.eventNumber
++                       clickCount:1
++                         pressure:0];
++  [target mouseDown:press];
++  [target mouseUp:release];
++}
++
+ @end
