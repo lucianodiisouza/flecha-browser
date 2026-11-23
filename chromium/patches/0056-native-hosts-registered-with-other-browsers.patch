@@ -1,0 +1,61 @@
+--- a/chrome/browser/extensions/api/messaging/launch_context_posix.cc
++++ b/chrome/browser/extensions/api/messaging/launch_context_posix.cc
+@@ -7,6 +7,7 @@
+ #include <memory>
+ #include <utility>
+ 
++#include "base/base_paths.h"
+ #include "base/command_line.h"
+ #include "base/files/file_util.h"
+ #include "base/files/scoped_file.h"
+@@ -35,6 +36,38 @@ base::FilePath FindManifestInDir(int dir_key, const std::string& host_name) {
+   return base::FilePath();
+ }
+ 
++#if BUILDFLAG(IS_MAC)
++// Flecha: an app that pairs with its extension (1Password and other password
++// managers) registers its host by writing a manifest into the user data dir
++// of each browser it knows, and Flecha is not one of them. So a host that
++// isn't in Flecha's own dir is looked for where those apps do register it,
++// in this order. The manifest still decides, through allowed_origins, which
++// extensions may connect, and the host may still refuse the browser.
++base::FilePath FindManifestOfAnotherBrowser(const std::string& host_name) {
++  static constexpr const char* kUserDataDirs[] = {
++      "Google/Chrome",
++      "Chromium",
++      "Arc/User Data",
++      "BraveSoftware/Brave-Browser",
++      "Microsoft Edge",
++      "Vivaldi",
++  };
++  base::FilePath app_data;
++  if (!base::PathService::Get(base::DIR_APP_DATA, &app_data)) {
++    return base::FilePath();
++  }
++  for (const char* dir : kUserDataDirs) {
++    base::FilePath path = app_data.Append(dir)
++                              .Append("NativeMessagingHosts")
++                              .Append(host_name + ".json");
++    if (base::PathExists(path)) {
++      return path;
++    }
++  }
++  return base::FilePath();
++}
++#endif  // BUILDFLAG(IS_MAC)
++
+ }  // namespace
+ 
+ // static
+@@ -48,6 +81,11 @@ base::FilePath LaunchContext::FindManifest(const std::string& host_name,
+   if (result.empty()) {
+     result = FindManifestInDir(chrome::DIR_NATIVE_MESSAGING, host_name);
+   }
++#if BUILDFLAG(IS_MAC)
++  if (result.empty() && allow_user_level_hosts) {
++    result = FindManifestOfAnotherBrowser(host_name);
++  }
++#endif
+ 
+   if (result.empty()) {
+     error_message = "Can't find native messaging host " + host_name;
