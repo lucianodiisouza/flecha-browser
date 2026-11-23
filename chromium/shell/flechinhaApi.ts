@@ -106,7 +106,12 @@ const api: FlechinhaApi = {
   forward: onPage((id) => chrome.tabs.goForward(id).catch(() => undefined)),
   reload: onPage((id) => chrome.tabs.reload(id)),
   stop: onPage((id) => chrome.scripting.executeScript({ target: { tabId: id }, func: () => window.stop() }).catch(() => undefined)),
-  navigate: (input) => void onPage((id) => chrome.tabs.update(id, { url: resolveInput(input, ui?.searchEngine) }))(),
+  navigate: (input) =>
+    void onPage(async (id) => {
+      await chrome.tabs.update(id, { url: resolveInput(input, ui?.searchEngine) });
+      // Keys go to the page again, not to the toolbar the address was typed in.
+      await chrome.flechaPrivate.focus('page', await windowId).catch(() => undefined);
+    })(),
   copyLink: () => {
     const url = tab?.url;
     if (url && !isBlank(url))
@@ -123,7 +128,11 @@ const api: FlechinhaApi = {
 on('flechinha:command', async (target: number, command: string) => {
   if (target !== (await windowId)) return;
   if (command === 'openInFlecha') api.openInFlecha();
-  else if (command === 'openLocation') editListeners.forEach((cb) => cb());
+  else if (command === 'openLocation') {
+    // The shortcut leaves the page focused: the field takes keys once the toolbar has the focus.
+    await chrome.flechaPrivate.focus('frame', target).catch(() => undefined);
+    editListeners.forEach((cb) => cb());
+  }
   else if (command === 'copyLink') api.copyLink();
   else if (command === 'closeTab') api.close();
   else if (command === 'reload') api.reload();
