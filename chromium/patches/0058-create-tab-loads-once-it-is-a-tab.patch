@@ -1,0 +1,36 @@
+Flecha: flechaPrivate.createTab loads the page once it is a tab.
+
+createTab (patch 0034) made the WebContents, started the load and only then
+put it in the tab strip. A page of the browser is built inside LoadURL(), and
+chrome://settings asks for the tab's autofill client there
+(SettingsUI::SettingsUI, ContentAutofillClient::FromWebContents), which a
+WebContents only gets with its tab helpers, on becoming a tab. So opening
+Settings in a Space with separate cookies and logins (Edit Profile, say,
+which the shell reopened in the Space's partition) crashed the browser.
+
+The tab is added first and loads after, the order Chromium's own
+Navigate() keeps (the tab model, then the load).
+
+--- a/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
++++ b/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
+@@ -758,13 +758,17 @@
+   std::unique_ptr<content::WebContents> contents =
+       content::WebContents::Create(create_params);
+   content::WebContents* raw = contents.get();
+-  contents->GetController().LoadURL(url, content::Referrer(),
+-                                    ui::PAGE_TRANSITION_AUTO_TOPLEVEL,
+-                                    std::string());
++  // Flecha: into the tab strip first, then the load. Being a tab is what
++  // gives the contents its tab helpers, and a WebUI page is made inside
++  // LoadURL() and may need them there: chrome://settings asks for the
++  // autofill client, which crashed the browser when it wasn't a tab yet.
+   host->GetBrowserWindowInterface()->GetTabStripModel()->AddWebContents(
+       std::move(contents), TabStripModel::kNoTab,
+       ui::PAGE_TRANSITION_AUTO_TOPLEVEL,
+       active ? AddTabTypes::ADD_ACTIVE : AddTabTypes::ADD_NONE);
++  raw->GetController().LoadURL(url, content::Referrer(),
++                               ui::PAGE_TRANSITION_AUTO_TOPLEVEL,
++                               std::string());
+   return RespondNow(WithArguments(ExtensionTabUtil::GetTabId(raw)));
+ }
+ 

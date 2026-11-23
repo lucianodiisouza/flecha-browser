@@ -37,6 +37,8 @@ body {
 /* ---- sidebar ------------------------------------------------------------ */
 
 #nav {
+  /* The active Space's colour (settings.ts); without one, the window shows through. */
+  background: var(--tint, transparent);
   width: var(--nav);
   flex: none;
   display: flex;
@@ -109,6 +111,10 @@ body {
 
 .nav-icon.cyan {
   background: linear-gradient(#4cc6d8, #1e9db3);
+}
+
+.nav-icon.red {
+  background: linear-gradient(#f0706a, #d6403a);
 }
 
 .nav-icon.amber {
@@ -404,6 +410,16 @@ code {
 .icon-button svg {
   width: 13px;
   height: 13px;
+}
+
+/* ---- console errors: the hidden hosts, in the same field as an environment's targets ---- */
+
+.host-list-card {
+  padding: 0 6px 8px;
+}
+
+.host-list-card .row {
+  padding: 10px;
 }
 
 /* ---- environments ------------------------------------------------------- */
@@ -1309,6 +1325,12 @@ code {
 
 .tm-swatch.selected {
   box-shadow: 0 0 0 2px var(--card), 0 0 0 4px var(--selection);
+}
+
+@media (prefers-color-scheme: dark) {
+  .tm-swatch {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+  }
 }
 
 .tm-swatch.custom {

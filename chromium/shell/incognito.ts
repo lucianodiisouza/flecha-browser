@@ -20,7 +20,7 @@ export const sessionKey = (key: string) => (incognito ? `incognito:${key}` : key
 export const INCOGNITO_SPACE_ID = 'incognito';
 
 /** Preferences the incognito windows take from the regular state, and keep following. */
-const FOLLOWED = ['theme', 'searchEngine', 'keybindings', 'adBlock', 'environments', 'peekPinnedLinks'] as const;
+const FOLLOWED = ['theme', 'searchEngine', 'keybindings', 'adBlock', 'environments', 'consoleBadgeHiddenHosts', 'peekPinnedLinks'] as const;
 
 /** The regular state's preferences, as a patch onto an incognito state. */
 export function followedPreferences(regular: BrowserState | undefined): Partial<BrowserState> {

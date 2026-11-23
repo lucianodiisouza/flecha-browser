@@ -6,6 +6,7 @@
 import type { FlechinhaApi, FlechinhaState, UiState } from '../shared/types';
 import { resolveInput } from './lib/url';
 import { spaceTint } from './lib/spaceTint';
+import { tabHistory, type TabHistory } from './lib/tabHistory';
 import { cmd, on } from './client';
 
 const windowId = chrome.flechaPrivate.getWindowId();
@@ -20,6 +21,9 @@ const editListeners: Array<() => void> = [];
 /** The new tab page shows as an empty Flechinha, as in Electron. */
 const isBlank = (url = '') => !url || /^chrome:\/\/(newtab|new-tab-page)\/?$/.test(url) || url === 'about:blank';
 
+let pageHistory: TabHistory = { canGoBack: false, canGoForward: false };
+let historyAsked = 0;
+
 function emit() {
   // Not before the page is known: an empty first state would open the address for editing.
   if (!ui || !tab) return;
@@ -29,20 +33,43 @@ function emit() {
     url: isBlank(url) ? '' : url,
     title: isBlank(url) ? '' : tab?.title || url,
     favicon: tab?.favIconUrl,
-    // Chromium doesn't tell extensions whether a tab can go back, so the buttons stay on.
-    canGoBack: !isBlank(url),
-    canGoForward: !isBlank(url),
+    canGoBack: !isBlank(url) && pageHistory.canGoBack,
+    canGoForward: !isBlank(url) && pageHistory.canGoForward,
     loading: tab?.status === 'loading',
     tint: spaceTint(ui.tint, systemDark.matches),
     space: { name: space.name, emoji: space.emoji },
     searchEngineName: ui.searchEngineName,
   };
   for (const cb of stateListeners) cb(state);
+  paintWindow(state.tint);
+}
+
+/**
+ * The window behind the page (the gap around it) wears the toolbar's tint: the browser draws
+ * it, in the colour setFrame() gives it. A Flechinha's sidebar mode is ignored, and its frame
+ * never covers the window.
+ */
+let painted: string | undefined;
+function paintWindow(tint: string) {
+  if (tint === painted || typeof chrome.flechaPrivate?.setFrame !== 'function') return;
+  painted = tint;
+  void windowId.then((id) => chrome.flechaPrivate.setFrame({ sidebar: 'hidden', overlay: false, background: tint }, id));
+}
+
+/** Asks the page where it is in its history; the last ask is the one that counts. */
+async function refreshHistory() {
+  const asked = ++historyAsked;
+  if (tab?.id === undefined) return;
+  const answer = await tabHistory(tab.id);
+  if (asked !== historyAsked) return;
+  pageHistory = answer;
+  emit();
 }
 
 async function refresh() {
   [tab] = await chrome.tabs.query({ windowId: await windowId, active: true });
   emit();
+  void refreshHistory();
 }
 
 on('state', (state: UiState) => {
@@ -50,10 +77,11 @@ on('state', (state: UiState) => {
   emit();
 });
 systemDark.addEventListener('change', emit);
-chrome.tabs.onUpdated.addListener(async (_id, _info, updated) => {
+chrome.tabs.onUpdated.addListener(async (_id, info, updated) => {
   if (updated.windowId === (await windowId) && updated.active) {
     tab = updated;
     emit();
+    if (info.status === 'complete' || info.url) void refreshHistory();
   }
 });
 chrome.tabs.onActivated.addListener(async (info) => info.windowId === (await windowId) && void refresh());
@@ -65,6 +93,21 @@ const onPage = (fn: (tabId: number) => unknown) => async () => {
   if (!tab) await refresh();
   if (tab?.id !== undefined) await fn(tab.id);
 };
+
+/**
+ * Writes the clipboard. ⇧⌘C leaves the page focused, not the toolbar, and the clipboard only
+ * takes writes from the focused document, so the toolbar borrows focus for it (as windowUi does).
+ */
+async function writeClipboard(text: string) {
+  if (document.hasFocus()) return navigator.clipboard.writeText(text);
+  const id = await windowId;
+  await chrome.flechaPrivate.focus('frame', id);
+  try {
+    await navigator.clipboard.writeText(text);
+  } finally {
+    await chrome.flechaPrivate.focus('page', id);
+  }
+}
 
 const api: FlechinhaApi = {
   onState: (cb) => void stateListeners.push(cb),
@@ -78,10 +121,19 @@ const api: FlechinhaApi = {
   forward: onPage((id) => chrome.tabs.goForward(id).catch(() => undefined)),
   reload: onPage((id) => chrome.tabs.reload(id)),
   stop: onPage((id) => chrome.scripting.executeScript({ target: { tabId: id }, func: () => window.stop() }).catch(() => undefined)),
-  navigate: (input) => void onPage((id) => chrome.tabs.update(id, { url: resolveInput(input, ui?.searchEngine) }))(),
+  navigate: (input) =>
+    void onPage(async (id) => {
+      await chrome.tabs.update(id, { url: resolveInput(input, ui?.searchEngine) });
+      // Keys go to the page again, not to the toolbar the address was typed in.
+      await chrome.flechaPrivate.focus('page', await windowId).catch(() => undefined);
+    })(),
   copyLink: () => {
     const url = tab?.url;
-    if (url && !isBlank(url)) void navigator.clipboard.writeText(url).then(() => flash('Link copied'));
+    if (url && !isBlank(url))
+      void writeClipboard(url).then(
+        () => flash('Link copied'),
+        (err) => console.error('Flecha shell: copying failed', err),
+      );
   },
   openInFlecha: () => void windowId.then((id) => cmd('flechinha:openInFlecha')(id)),
   close: () => void windowId.then((id) => chrome.windows.remove(id)),
@@ -91,7 +143,11 @@ const api: FlechinhaApi = {
 on('flechinha:command', async (target: number, command: string) => {
   if (target !== (await windowId)) return;
   if (command === 'openInFlecha') api.openInFlecha();
-  else if (command === 'openLocation') editListeners.forEach((cb) => cb());
+  else if (command === 'openLocation') {
+    // The shortcut leaves the page focused: the field takes keys once the toolbar has the focus.
+    await chrome.flechaPrivate.focus('frame', target).catch(() => undefined);
+    editListeners.forEach((cb) => cb());
+  }
   else if (command === 'copyLink') api.copyLink();
   else if (command === 'closeTab') api.close();
   else if (command === 'reload') api.reload();

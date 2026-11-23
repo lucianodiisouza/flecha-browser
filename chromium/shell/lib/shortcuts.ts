@@ -15,6 +15,9 @@ export const SHORTCUTS = [
   { id: 'find', group: 'Getting around', label: 'Find in page', keys: 'CmdOrCtrl+F' },
   { id: 'toggleSidebar', group: 'Getting around', label: 'Show or hide the sidebar', keys: 'CmdOrCtrl+S' },
   { id: 'settings', group: 'Getting around', label: 'Settings', keys: 'CmdOrCtrl+,' },
+  // Cmd, not CmdOrCtrl: these are the keys macOS has for it, and Ctrl+` stays free on Linux.
+  { id: 'nextWindow', group: 'Getting around', label: 'Next window', keys: 'Cmd+`' },
+  { id: 'previousWindow', group: 'Getting around', label: 'Previous window', keys: 'Cmd+Shift+`' },
   { id: 'newFlechinha', group: 'Tabs', label: 'New Flechinha window', keys: 'Alt+CmdOrCtrl+N' },
   { id: 'closeTab', group: 'Tabs', label: 'Close tab', keys: 'CmdOrCtrl+W' },
   { id: 'reopenTab', group: 'Tabs', label: 'Reopen closed tab', keys: 'CmdOrCtrl+Shift+T' },

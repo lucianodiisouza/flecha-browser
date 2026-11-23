@@ -7,7 +7,7 @@
  * (links to a new tab, window.open) become Flecha tabs.
  */
 import { Store, findFolder, linkRuleSpace, pinnedTabIds, type StatePersistence } from '../shared/store';
-import { resolveInput, searchEngine } from './lib/url';
+import { isBrowserPage, resolveInput, searchEngine } from './lib/url';
 import { shortcutHints, type ShortcutId } from './lib/shortcuts';
 import { describe as describeEnvironment } from './lib/environments';
 import type { BrowserState, DropTarget, PinnedNode, SearchEngineId, TabInfo, UiState } from '../shared/types';
@@ -24,9 +24,12 @@ import { registerFeatures, type Features } from './features';
 // Also loaded on the first turn, for the shortcut event that may have woken the background.
 import { defaultBrowserState, isFlechinha, isFlechinhaWindow, registerNative } from './native';
 import { registerDownloads } from './downloads';
+// Loaded on the first turn too: it listens for the other copy of the shell.
+import { cycleWindow } from './windowCycle';
 import { registerExtensions } from './extensions';
 import { registerSiteControls } from './siteControls';
 import { Favicons } from './favicons';
+import { tabHistory } from './lib/tabHistory';
 import { followedPreferences, incognito, incognitoState, sessionKey } from './incognito';
 
 const STATE_KEY = 'state';
@@ -221,7 +224,8 @@ async function start() {
 
   async function openChromeTab(id: string, active: boolean) {
     const tab = store.state.tabs[id];
-    const partition = partitionFor(id);
+    // The browser's own pages stay in the profile's partition, as Chromium opens them itself.
+    const partition = isBrowserPage(tab.url) ? '' : partitionFor(id);
     creating++;
     try {
       const options = { windowId: await mainWindow(), url: tab.url === 'about:blank' ? undefined : tab.url, active };
@@ -258,9 +262,16 @@ async function start() {
     const partition = await chrome.flechaPrivate.getTabPartition(chromeId).catch(() => undefined);
     if (partition !== undefined && live.get(id) === chromeId) livePartition.set(id, partition);
   }
-  /** Open tabs in another partition than their Space's. */
+  /**
+   * Open tabs in another partition than their Space's. Never one showing a page of the browser
+   * (Settings and the like): it has no place in a Space's partition, and Chromium opens it in
+   * the profile's, so it stays in the tab it is in until it goes to a site.
+   */
   const inWrongPartition = () =>
-    [...live.keys()].filter((id) => store.state.tabs[id] && livePartition.has(id) && livePartition.get(id) !== partitionFor(id));
+    [...live.keys()].filter((id) => {
+      const tab = store.state.tabs[id];
+      return tab && !isBrowserPage(tab.url) && livePartition.has(id) && livePartition.get(id) !== partitionFor(id);
+    });
   /**
    * A tab a page opened is in that page's partition, which may not be its Space's (a favorite's
    * link, with an isolated Space showing): it then reopens there, at the address it was going to.
@@ -352,6 +363,7 @@ async function start() {
         await chrome.tabs.update(live.get(active.id)!, { active: true }).catch(() => openChromeTab(active.id, true));
         dropPlaceholder();
         await refreshNav();
+        sendStateSoon();
       })
       .catch((err) => console.error('Flecha shell: sync failed', err));
   }
@@ -450,11 +462,16 @@ async function start() {
     store.splitWith(tabId, side);
   }
 
+  let navAsked = 0;
   async function refreshNav() {
+    const asked = ++navAsked;
     const chromeId = store.activeTab && live.get(store.activeTab.id);
-    const zoom = chromeId === undefined ? 1 : await chrome.tabs.getZoom(chromeId).catch(() => 1);
-    // Chromium doesn't tell extensions whether a tab can go back; the buttons stay enabled.
-    navState = { canGoBack: true, canGoForward: true, zoom: Math.round(zoom * 100) };
+    const [zoom, history] =
+      chromeId === undefined
+        ? [1, { canGoBack: false, canGoForward: false }]
+        : await Promise.all([chrome.tabs.getZoom(chromeId).catch(() => 1), tabHistory(chromeId)]);
+    // A later ask, for another tab or page, has the answer that counts.
+    if (asked === navAsked) navState = { ...history, zoom: Math.round(zoom * 100) };
   }
 
   let stateTimer: ReturnType<typeof setTimeout> | undefined;
@@ -508,7 +525,8 @@ async function start() {
     }
     if (info.mutedInfo) patch.muted = info.mutedInfo.muted;
     store.updateTab(id, patch);
-    if (info.status === 'complete' && tab.active) void refreshNav().then(sendState);
+    // A new address is a new place in the tab's history, also without a load (pushState).
+    if ((info.status === 'complete' || info.url) && tab.active) void refreshNav().then(sendState);
     if (info.splitViewId !== undefined) void splitChanged(chromeId, info.splitViewId);
   }
 
@@ -1050,6 +1068,8 @@ async function start() {
     find: () => call('find'),
     toggleSidebar: () => call('toggleSidebar'),
     settings: () => showSettings(),
+    nextWindow: () => cycleWindow(1),
+    previousWindow: () => cycleWindow(-1),
     newFlechinha: () => call('newFlechinha'),
     closeTab: withTab((tab) => call('close', tab.id)),
     reopenTab: () => {
@@ -1160,9 +1180,12 @@ async function start() {
     store,
     chromeTabId: (id) => live.get(id),
     flechaTabId: (chromeId) => flechaIdFor(chromeId),
-    run: (command, windowId) => {
-      // In a Flechinha, its own toolbar answers the few shortcuts it has.
-      if (isFlechinha(windowId)) return broadcast('flechinha:command', windowId, command);
+    run: async (command, windowId) => {
+      // Next window is the same from any window, a Flechinha too.
+      if (command === 'nextWindow' || command === 'previousWindow') return void cycleWindow(command === 'nextWindow' ? 1 : -1, windowId !== undefined && windowId >= 0 ? windowId : undefined);
+      // In a Flechinha, its own toolbar answers the few shortcuts it has. The browser is asked:
+      // it opens the Flechinhas for links from other apps itself, without telling the shell.
+      if (await isFlechinhaWindow(windowId)) return broadcast('flechinha:command', windowId, command);
       // Settings on a pane, asked for by an incognito window (runInRegularProfile).
       const pane = /^openSettings:(\w+)$/.exec(command);
       if (pane) return void openSettings(pane[1]);

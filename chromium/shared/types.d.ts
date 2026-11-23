@@ -168,6 +168,8 @@ export interface BrowserState {
   downloadsFolder?: string;
   askWhereToSave?: boolean;
   environments?: Environment[];
+  /** Host patterns (`*.local`) whose tabs get no console error badge in the sidebar. */
+  consoleBadgeHiddenHosts?: string[];
   /** Built-in ad and tracker blocking; on unless turned off. */
   adBlock?: boolean;
   /** The MCP bridge for coding agents: off unless turned on in Settings. */
@@ -298,10 +300,14 @@ export interface SettingsView {
   defaultBrowser: { isDefault: boolean; canSet: boolean };
   /** Edited as text: one `label origin` per line. */
   environments: Array<{ id: string; name: string; targetsText: string }>;
+  /** Edited as text: one host pattern per line. */
+  consoleBadgeHiddenHosts: string;
   agent: { enabled: boolean; endpoint?: string; token?: string };
   /** Why Flecha's native host (imports, the agent bridge) last failed; undefined while it works. */
   hostError?: string;
   theme: 'system' | 'light' | 'dark';
+  /** The active Space's colour (the light one; the page darkens it in dark mode), for the sidebar. */
+  tint: string;
   archiveAfterHours: number;
   peekPinnedLinks: boolean;
   shortcuts: ShortcutInfo[];
@@ -317,7 +323,7 @@ export interface SettingsView {
 }
 
 /** The downloads folder is only changed through the folder picker, never set directly. */
-export type SettingsPatch = Partial<Omit<SettingsView, 'searchEngines' | 'downloadsFolder' | 'defaultBrowser' | 'agent' | 'shortcuts' | 'notice' | 'spaces'>> & {
+export type SettingsPatch = Partial<Omit<SettingsView, 'searchEngines' | 'downloadsFolder' | 'defaultBrowser' | 'agent' | 'shortcuts' | 'notice' | 'spaces' | 'tint'>> & {
   agentEnabled?: boolean;
   /** An accelerator, null for no shortcut, or 'default' to go back to Flecha's. */
   shortcut?: { id: string; keys: string | null };
