@@ -40,6 +40,7 @@ export function settingsView(store: Store, env: SettingsEnvironment): SettingsVi
     askWhereToSave: !!s.askWhereToSave,
     defaultBrowser: env.defaultBrowser,
     theme: s.theme ?? 'system',
+    tint: (s.spaces.find((sp) => sp.id === s.activeSpaceId) ?? s.spaces[0])?.color ?? '#cdd9f7',
     archiveAfterHours: s.archiveAfterHours ?? 12,
     peekPinnedLinks: s.peekPinnedLinks !== false,
     shortcuts: shortcutList(s),
