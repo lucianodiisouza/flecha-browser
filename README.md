@@ -78,6 +78,7 @@ It is a Chromium 158 fork rather than an Electron app because Google blocks sign
 - Incognito windows get the same Flecha frame, with one in-memory Space that is forgotten when the last incognito window closes
 - Import bookmarks, history and cookies (so you stay signed in) from other browsers, and Arc's sidebar (needs the native host): Spaces keep their colour and icon, and Spaces from other Arc profiles get their own logins. Chromium browsers' cookies are decrypted with the key in your keychain, so macOS asks first
 - Chrome extensions: install from the Chrome Web Store; their buttons appear under the address bar
+- Extensions that talk to a desktop app (1Password and other password managers): Flecha also finds the native messaging hosts those apps register with Chrome, Chromium, Arc, Brave, Edge or Vivaldi, so they need no setup of their own. An app that checks which browser is calling has to be told to trust Flecha; in 1Password that is Settings, Browser, Add browser
 - Light, dark or system theme; Flecha's shortcuts can be re-recorded in Settings (except a few Chromium keeps, like ⌘T and ⌘W) (⌘/ lists them)
 - Settings (⌘,): importing from other browsers, search engine (Google, DuckDuckGo, Bing, Brave, Kagi, Ecosia), ad blocking, default browser, Peek behaviour, shortcuts, environments
 
