@@ -3,6 +3,7 @@ import { ICONS, type IconName } from './icons.js';
 import { setupOnboarding } from './onboarding.js';
 import { SPACE_COLORS, SPACE_EMOJIS } from './spaceChoices.js';
 import { shownSpaceColor } from '../lib/spaceTint';
+import { monochromeIcon } from './spaceIcons.js';
 import { SpaceSwipe } from './spaceSwipe.js';
 import { webAddress } from '../lib/url';
 import { SIDEBAR_SLIDE_MS } from '../lib/sidebarSlide';
@@ -171,7 +172,7 @@ function render(s: UiState) {
 
   const title = $('space-title');
   if (title.contentEditable !== 'true') title.textContent = space.name;
-  $('space-emoji').textContent = space.emoji ?? '';
+  $('space-emoji').replaceChildren(...(space.emoji ? [spaceIcon(space.emoji)] : []));
   $('space-emoji').hidden = !space.emoji;
   title.dataset.spaceId = space.id;
   $('space-isolated').hidden = !space.isolated;
@@ -197,7 +198,7 @@ function render(s: UiState) {
             api.spaceMenu(sp.id);
           },
         },
-        sp.emoji ? h('span', { class: 'space-emoji' }, sp.emoji) : h('span', { class: 'space-initial' }, sp.name[0]?.toUpperCase() ?? '•'),
+        sp.emoji ? h('span', { class: 'space-emoji' }, spaceIcon(sp.emoji)) : h('span', { class: 'space-initial' }, sp.name[0]?.toUpperCase() ?? '•'),
       ),
     ),
   );
@@ -217,7 +218,7 @@ function renderEmptyState(s: UiState, space: Space, show: boolean) {
   if (!show) return;
   const hour = new Date().getHours();
   $('empty-title').textContent = hour < 5 ? 'Up late?' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
-  $('empty-space').replaceChildren(h('span', { class: 'empty-space-emoji' }, space.emoji ?? ''), h('span', {}, space.name));
+  $('empty-space').replaceChildren(h('span', { class: 'empty-space-emoji' }, ...(space.emoji ? [spaceIcon(space.emoji)] : [])), h('span', {}, space.name));
   // History changes as you browse, so the tiles are fetched each time the page becomes empty.
   if (wasHidden || Date.now() - topSitesFetched > 60_000) {
     topSitesFetched = Date.now();
@@ -1032,6 +1033,19 @@ function closeSpaceEditor() {
   spaceEditor.hidden = true;
 }
 
+/** A Space's icon: its emoji, or with Monochrome Space icons on, the line icon that stands for it. */
+function spaceIcon(emoji: string): Node | string {
+  const d = state?.monochromeIcons ? monochromeIcon(emoji) : undefined;
+  if (!d) return emoji;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', 'space-icon');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', d);
+  svg.append(path);
+  return svg;
+}
+
 function renderSpaceEditor() {
   const space = state?.spaces.find((s) => s.id === editingSpace);
   if (!space) return closeSpaceEditor();
@@ -1039,7 +1053,7 @@ function renderSpaceEditor() {
   $('space-emojis').replaceChildren(
     h('button', { class: `emoji${space.emoji ? '' : ' selected'}`, title: 'No icon', onclick: () => api.updateSpace(space.id, { emoji: '' }) }, icon('close')),
     ...SPACE_EMOJIS.map((emoji) =>
-      h('button', { class: `emoji${space.emoji === emoji ? ' selected' : ''}`, onclick: () => api.updateSpace(space.id, { emoji }) }, emoji),
+      h('button', { class: `emoji${space.emoji === emoji ? ' selected' : ''}`, onclick: () => api.updateSpace(space.id, { emoji }) }, spaceIcon(emoji)),
     ),
   );
   // The custom swatch and its input stay in place across renders: each colour picked re-renders

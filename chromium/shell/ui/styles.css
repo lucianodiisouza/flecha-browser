@@ -1595,6 +1595,26 @@ footer {
   color: var(--text-3);
 }
 
+/* A Space's monochrome icon (spaceIcons.ts): the size of the emoji it stands for, in the text colour. */
+svg.space-icon {
+  width: 1.15em;
+  height: 1.15em;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  /* 1.5px at this size, like the rest of the icons; the grid is 24 wide. */
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vertical-align: -0.2em;
+}
+
+.emoji svg.space-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--text-2);
+}
+
 .emoji-grid {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
