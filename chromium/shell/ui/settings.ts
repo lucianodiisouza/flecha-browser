@@ -349,6 +349,7 @@ bookmarksFile.addEventListener('change', async () => {
 
 const archiveAfter = document.getElementById('archiveAfter') as HTMLSelectElement;
 const peekPinnedLinks = document.getElementById('peekPinnedLinks') as HTMLInputElement;
+const monochromeIcons = document.getElementById('monochromeIcons') as HTMLInputElement;
 const openLinksInFlechinha = document.getElementById('openLinksInFlechinha') as HTMLInputElement;
 
 for (const card of document.querySelectorAll<HTMLElement>('.theme-card')) {
@@ -356,6 +357,7 @@ for (const card of document.querySelectorAll<HTMLElement>('.theme-card')) {
 }
 archiveAfter.addEventListener('change', async () => render(await api.set({ archiveAfterHours: Number(archiveAfter.value) })));
 peekPinnedLinks.addEventListener('change', async () => render(await api.set({ peekPinnedLinks: peekPinnedLinks.checked })));
+monochromeIcons.addEventListener('change', async () => render(await api.set({ monochromeIcons: monochromeIcons.checked })));
 openLinksInFlechinha.addEventListener('change', async () => render(await api.set({ openLinksInFlechinha: openLinksInFlechinha.checked })));
 const showLocalServers = document.getElementById('showLocalServers') as HTMLInputElement;
 showLocalServers.addEventListener('change', async () => render(await api.set({ showLocalServers: showLocalServers.checked })));
@@ -526,6 +528,7 @@ function render(view: SettingsView) {
   }
   archiveAfter.value = String(view.archiveAfterHours);
   peekPinnedLinks.checked = view.peekPinnedLinks;
+  monochromeIcons.checked = view.monochromeIcons;
   if (!recordingId) {
     shortcuts = view.shortcuts;
     renderShortcuts();

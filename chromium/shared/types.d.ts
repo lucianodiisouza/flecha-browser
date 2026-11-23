@@ -152,6 +152,8 @@ export interface BrowserState {
   theme?: 'system' | 'light' | 'dark';
   /** Links that leave a pinned tab or favorite open in Peek. Default on. */
   peekPinnedLinks?: boolean;
+  /** Space icons are drawn as line icons in the text colour instead of emoji. */
+  monochromeIcons?: boolean;
   /** Links arriving from other apps open in a Flechinha instead of a tab. Default on. */
   openLinksInFlechinha?: boolean;
   /** The sidebar's "Running locally" section. Default on. */
@@ -310,6 +312,7 @@ export interface SettingsView {
   tint: string;
   archiveAfterHours: number;
   peekPinnedLinks: boolean;
+  monochromeIcons: boolean;
   shortcuts: ShortcutInfo[];
   /** Set after recording a shortcut another command had, which lost it. */
   notice?: string;
