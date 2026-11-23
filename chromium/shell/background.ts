@@ -29,6 +29,7 @@ import { cycleWindow } from './windowCycle';
 import { registerExtensions } from './extensions';
 import { registerSiteControls } from './siteControls';
 import { Favicons } from './favicons';
+import { tabHistory } from './lib/tabHistory';
 import { followedPreferences, incognito, incognitoState, sessionKey } from './incognito';
 
 const STATE_KEY = 'state';
@@ -362,6 +363,7 @@ async function start() {
         await chrome.tabs.update(live.get(active.id)!, { active: true }).catch(() => openChromeTab(active.id, true));
         dropPlaceholder();
         await refreshNav();
+        sendStateSoon();
       })
       .catch((err) => console.error('Flecha shell: sync failed', err));
   }
@@ -460,11 +462,16 @@ async function start() {
     store.splitWith(tabId, side);
   }
 
+  let navAsked = 0;
   async function refreshNav() {
+    const asked = ++navAsked;
     const chromeId = store.activeTab && live.get(store.activeTab.id);
-    const zoom = chromeId === undefined ? 1 : await chrome.tabs.getZoom(chromeId).catch(() => 1);
-    // Chromium doesn't tell extensions whether a tab can go back; the buttons stay enabled.
-    navState = { canGoBack: true, canGoForward: true, zoom: Math.round(zoom * 100) };
+    const [zoom, history] =
+      chromeId === undefined
+        ? [1, { canGoBack: false, canGoForward: false }]
+        : await Promise.all([chrome.tabs.getZoom(chromeId).catch(() => 1), tabHistory(chromeId)]);
+    // A later ask, for another tab or page, has the answer that counts.
+    if (asked === navAsked) navState = { ...history, zoom: Math.round(zoom * 100) };
   }
 
   let stateTimer: ReturnType<typeof setTimeout> | undefined;
@@ -518,7 +525,8 @@ async function start() {
     }
     if (info.mutedInfo) patch.muted = info.mutedInfo.muted;
     store.updateTab(id, patch);
-    if (info.status === 'complete' && tab.active) void refreshNav().then(sendState);
+    // A new address is a new place in the tab's history, also without a load (pushState).
+    if ((info.status === 'complete' || info.url) && tab.active) void refreshNav().then(sendState);
     if (info.splitViewId !== undefined) void splitChanged(chromeId, info.splitViewId);
   }
 

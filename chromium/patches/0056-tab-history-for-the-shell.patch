@@ -1,0 +1,68 @@
+--- a/chrome/common/extensions/api/flecha_private.idl
++++ b/chrome/common/extensions/api/flecha_private.idl
+@@ -121,6 +121,13 @@
+   };
+ 
+   callback PartitionCallback = void(DOMString partition);
++
++  // Where a tab is in its history.
++  dictionary TabHistory {
++    boolean canGoBack;
++    boolean canGoForward;
++  };
++  callback TabHistoryCallback = void(TabHistory history);
+ 
+   // What a new Flechinha shows.
+   dictionary FlechinhaOptions {
+@@ -259,6 +266,9 @@
+     // The storage partition a tab is in: a Space's id, or "" (the profile's
+     // own storage).
+     static void getTabPartition(long tabId, PartitionCallback callback);
++    // Whether a tab has a page to go back to and one to go forward to, for
++    // the Back and Forward buttons (tabs.goBack() and goForward() don't say).
++    static void getTabHistory(long tabId, TabHistoryCallback callback);
+     // Signs out of everything in a Space's partition: removes its cookies,
+     // storage and cache.
+     static void clearPartition(
+--- a/chrome/browser/extensions/api/flecha_private/flecha_private_api.h
++++ b/chrome/browser/extensions/api/flecha_private/flecha_private_api.h
+@@ -230,6 +230,15 @@
+   ResponseAction Run() override;
+ };
+ 
++class FlechaPrivateGetTabHistoryFunction : public ExtensionFunction {
++ public:
++  DECLARE_EXTENSION_FUNCTION("flechaPrivate.getTabHistory", UNKNOWN)
++
++ protected:
++  ~FlechaPrivateGetTabHistoryFunction() override = default;
++  ResponseAction Run() override;
++};
++
+ class FlechaPrivateClearPartitionFunction : public ExtensionFunction {
+  public:
+   DECLARE_EXTENSION_FUNCTION("flechaPrivate.clearPartition", UNKNOWN)
+--- a/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
++++ b/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
+@@ -695,6 +695,21 @@
+   return RespondNow(WithArguments(FlechaSpaceOf(contents)));
+ }
+ 
++ExtensionFunction::ResponseAction FlechaPrivateGetTabHistoryFunction::Run() {
++  auto params = flecha_private::GetTabHistory::Params::Create(args());
++  EXTENSION_FUNCTION_VALIDATE(params);
++  content::WebContents* contents = nullptr;
++  if (!ExtensionTabUtil::GetTabById(params->tab_id, browser_context(),
++                                    /*include_incognito=*/false, &contents)) {
++    return RespondNow(Error(kNoTabError, base::NumberToString(params->tab_id)));
++  }
++  content::NavigationController& controller = contents->GetController();
++  flecha_private::TabHistory history;
++  history.can_go_back = controller.CanGoBack();
++  history.can_go_forward = controller.CanGoForward();
++  return RespondNow(WithArguments(history.ToValue()));
++}
++
+ ExtensionFunction::ResponseAction FlechaPrivateClearPartitionFunction::Run() {
+   auto params = flecha_private::ClearPartition::Params::Create(args());
+   EXTENSION_FUNCTION_VALIDATE(params);
