@@ -1,0 +1,142 @@
+Flecha: a shortcut with Option matches the key Option was held on.
+
+Chromium names a key by the character it types (KeyboardCodeFromNSEvent),
+and Option changes that character. On US International, Option-N types "~",
+so Cmd-Option-N reached the focus manager as Cmd-Option-grave: Flecha's
+Cmd-Option-N (new Flechinha) never matched, and the main menu then took the
+"~" as Cmd-Shift-grave (Previous Window). Flecha's shortcuts name the key
+itself, as the shortcut recorder in Settings does.
+
+When nothing took the key as typed, prePerformKeyEquivalent: asks again with
+the character typed without Option (charactersIgnoringModifiers, so Dvorak
+and other layouts still name their own keys) and runs the Flecha shortcut
+for it in that window, a Settings popup too. DispatchFlechaShortcut() is the
+flechaPrivate.onShortcut dispatch of the shell's frame, for any window.
+
+--- a/chrome/browser/flecha/flecha_shell_commands.h
++++ b/chrome/browser/flecha/flecha_shell_commands.h
+@@ -10,6 +10,7 @@
+ #include <utility>
+ 
+ #include "base/memory/scoped_refptr.h"
++#include "chrome/browser/flecha/flecha_frame_host.h"
+ #include "chrome/browser/flecha/flecha_shell.h"
+ #include "chrome/browser/flecha/flecha_shell_events.h"
+ #include "chrome/browser/profiles/profile.h"
+@@ -17,6 +18,7 @@
+ #include "extensions/browser/extension_event_histogram_value.h"
+ #include "extensions/browser/extension_registry.h"
+ #include "extensions/common/event_args.h"
++#include "ui/base/accelerators/accelerator.h"
+ 
+ // Browser commands that Flecha hands to the shell (chromium/shell) instead of
+ // Chromium's own UI. Each is one of the "commands" in the shell's manifest,
+@@ -43,4 +45,35 @@
+       kFlechaShellExtensionId, std::move(event));
+ }
+ 
++// Runs the Flecha shortcut (chrome.flechaPrivate.setShortcuts) that
++// `accelerator` presses, if there is one, as flechaPrivate.onShortcut for the
++// window `window_id`. Whether there was one.
++inline bool DispatchFlechaShortcut(Profile* profile,
++                                   const ui::Accelerator& accelerator,
++                                   int window_id) {
++  const auto& shortcuts = FlechaFrameHost::Shortcuts();
++  // The map is keyed without the repeat flag.
++  const auto it = shortcuts.find(
++      ui::Accelerator(accelerator.key_code(), accelerator.modifiers()));
++  if (it == shortcuts.end()) {
++    return false;
++  }
++  profile = FlechaShellProfile(profile);
++  if (!extensions::ExtensionRegistry::Get(profile)
++           ->enabled_extensions()
++           .Contains(kFlechaShellExtensionId)) {
++    return false;
++  }
++  auto args = base::MakeRefCounted<extensions::EventArgs>();
++  args->data.Append(it->second);
++  args->data.Append(window_id);
++  auto event = std::make_unique<extensions::Event>(
++      extensions::events::UNKNOWN, "flechaPrivate.onShortcut",
++      std::move(args), profile);
++  event->user_gesture = extensions::EventRouter::UserGestureState::kEnabled;
++  extensions::EventRouter::Get(profile)->DispatchEventToExtension(
++      kFlechaShellExtensionId, std::move(event));
++  return true;
++}
++
+ #endif  // CHROME_BROWSER_FLECHA_FLECHA_SHELL_COMMANDS_H_
+--- a/chrome/browser/ui/cocoa/chrome_command_dispatcher_delegate.mm
++++ b/chrome/browser/ui/cocoa/chrome_command_dispatcher_delegate.mm
+@@ -7,7 +7,10 @@
+ #include "base/apple/owned_objc.h"
+ #include "base/check.h"
+ #include "chrome/app/chrome_command_ids.h"
++#include "chrome/browser/flecha/flecha_shell_commands.h"
+ #include "chrome/browser/global_keyboard_shortcuts_mac.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "components/input/native_web_keyboard_event.h"
+ #include "components/remote_cocoa/app_shim/native_widget_ns_window_bridge.h"
+ #include "components/remote_cocoa/common/native_widget_ns_window_host.mojom.h"
+@@ -15,6 +18,7 @@
+ #import "ui/base/cocoa/nsmenu_additions.h"
+ #include "ui/base/window_open_disposition.h"
+ #include "ui/content_accelerators/accelerator_util.h"
++#include "ui/events/keycodes/keyboard_code_conversion_mac.h"
+ #include "ui/gfx/native_ui_types.h"
+ #include "ui/views/widget/widget.h"
+ 
+@@ -63,6 +67,41 @@
+   return was_handled;
+ }
+ 
++// Flecha: a shortcut with Option, for the key Option was held on. Chromium
++// names a key by the character it types, and Option changes that character:
++// on US International, Option-N types "~", so Cmd-Option-N reads as the
++// grave accent key and Flecha's Cmd-Option-N never matched (while the main
++// menu took the "~" for Cmd-Shift-grave). Flecha's shortcuts name the key
++// itself, so this asks again with the character typed without Option.
++- (BOOL)flechaShortcutForBaseKey:(NSEvent*)event window:(NSWindow*)window {
++  if (!(event.modifierFlags & NSEventModifierFlagOption)) {
++    return NO;
++  }
++  NSString* unmodified = event.charactersIgnoringModifiers;
++  if (unmodified.length == 0 ||
++      [unmodified isEqualToString:event.characters]) {
++    return NO;
++  }
++  const ui::KeyboardCode key =
++      ui::KeyboardCodeFromCharCode([unmodified characterAtIndex:0]);
++  if (key == ui::VKEY_UNKNOWN) {
++    return NO;
++  }
++  BrowserView* browser_view =
++      BrowserView::GetBrowserViewForNativeWindow(gfx::NativeWindow(window));
++  if (!browser_view) {
++    return NO;
++  }
++  input::NativeWebKeyboardEvent keyboard_event(
++      (base::apple::OwnedNSEvent(event)));
++  const ui::Accelerator typed =
++      ui::GetAcceleratorFromNativeWebKeyboardEvent(keyboard_event);
++  BrowserWindowInterface* browser = browser_view->browser();
++  return DispatchFlechaShortcut(browser->GetProfile(),
++                                ui::Accelerator(key, typed.modifiers()),
++                                browser->GetSessionID().id());
++}
++
+ - (ui::PerformKeyEquivalentResult)prePerformKeyEquivalent:(NSEvent*)event
+                                                    window:(NSWindow*)window {
+   // TODO(erikchen): Detect symbolic hot keys, and force control to be passed
+@@ -81,6 +120,9 @@
+                                                 kHighPriority]) {
+     return ui::PerformKeyEquivalentResult::kHandled;
+   }
++  if ([self flechaShortcutForBaseKey:event window:window]) {
++    return ui::PerformKeyEquivalentResult::kHandled;
++  }
+ 
+   // If this keyEquivalent corresponds to a Chrome command, trigger it directly
+   // via chrome::ExecuteCommand. We avoid going through the NSMenu for two
