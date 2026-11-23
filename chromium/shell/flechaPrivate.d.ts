@@ -121,6 +121,14 @@ declare namespace chrome.flechaPrivate {
    */
   function setFlechinhaBounds(bounds?: FlechinhaBounds): Promise<void>;
 
+  /**
+   * Whether a press in a drag area of a window's frame page (-webkit-app-region: drag) that
+   * is let go without moving reaches the page as an ordinary click (patch 0047). A drag still
+   * moves the window and a double click still zooms it. Off by default: a drag area takes
+   * every press. Without `windowId`, the window whose frame page calls. macOS only.
+   */
+  function setDragAreasClickable(clickable: boolean, windowId?: number): Promise<void>;
+
   /** The open Flechinhas' window ids (e.g. after the background restarts). */
   function getFlechinhas(): Promise<number[]>;
 
