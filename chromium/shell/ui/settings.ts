@@ -222,6 +222,16 @@ document.getElementById('addEnvironment')!.addEventListener('click', () => {
   environmentList.querySelector<HTMLInputElement>('.env-card:last-child .env-name')?.focus();
 });
 
+// ---- console errors: hosts whose tabs get no badge ---------------------------------------
+
+const consoleBadgeHiddenHosts = document.getElementById('consoleBadgeHiddenHosts') as HTMLTextAreaElement;
+consoleBadgeHiddenHosts.addEventListener('change', async () => {
+  const view = await api.set({ consoleBadgeHiddenHosts: consoleBadgeHiddenHosts.value });
+  // Show what was kept: tidied, and without anything that isn't a host.
+  consoleBadgeHiddenHosts.value = view.consoleBadgeHiddenHosts;
+  render(view);
+});
+
 // ---- import: the tour's import step, for any time after it -----------------------------
 
 const browserList = document.getElementById('browserList')!;
@@ -518,6 +528,8 @@ function render(view: SettingsView) {
   hostError = view.hostError;
   if (hostWorksNow && browsers && !browsers.length) detectBrowsers();
   else renderBrowsers();
+  // Not while it's being typed in: a change elsewhere re-renders the page.
+  if (document.activeElement !== consoleBadgeHiddenHosts) consoleBadgeHiddenHosts.value = view.consoleBadgeHiddenHosts;
   if (!environments.length) {
     environments = view.environments;
     renderEnvironments();

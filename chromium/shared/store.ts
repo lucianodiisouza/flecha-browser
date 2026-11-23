@@ -491,6 +491,11 @@ export class Store {
     this.changed();
   }
 
+  setConsoleBadgeHiddenHosts(hosts: string[]) {
+    this.state.consoleBadgeHiddenHosts = hosts;
+    this.changed();
+  }
+
   setDownloads(options: { folder?: string; askWhereToSave?: boolean }) {
     if (options.folder !== undefined) this.state.downloadsFolder = options.folder;
     if (options.askWhereToSave !== undefined) this.state.askWhereToSave = options.askWhereToSave;
