@@ -1,7 +1,7 @@
 /** What the command bar makes of typed text. Run with `npm test`. */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { webAddress } from '../lib/url.ts';
+import { isBrowserPage, webAddress } from '../lib/url.ts';
 
 const cases: Record<string, Record<string, string | undefined>> = {
   'full URLs stay as typed': {
@@ -37,3 +37,12 @@ for (const [name, inputs] of Object.entries(cases)) {
     for (const [input, url] of Object.entries(inputs)) assert.equal(webAddress(input), url, input);
   });
 }
+
+test("the browser's own pages, which stay out of a Space's partition", () => {
+  for (const address of ['chrome://settings/manageProfile', 'chrome-extension://abc/options.html', 'devtools://devtools/x.html', 'chrome-untrusted://print/']) {
+    assert.equal(isBrowserPage(address), true, address);
+  }
+  for (const address of ['https://chrome.google.com/', 'about:blank', 'view-source:https://a.com', 'file:///chrome']) {
+    assert.equal(isBrowserPage(address), false, address);
+  }
+});

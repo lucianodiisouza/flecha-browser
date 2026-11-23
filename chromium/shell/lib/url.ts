@@ -29,3 +29,11 @@ export function webAddress(raw: string): string | undefined {
   if (!/\s/.test(input) && /^[^/]+\.[a-z]{2,}(:\d+)?(\/.*)?$/i.test(input)) return `https://${input}`;
   return undefined;
 }
+
+/**
+ * The browser's own pages (Settings, an extension's page, DevTools). They keep nothing in a
+ * Space's cookies and storage, so they open in the profile's own partition whatever the Space.
+ */
+export function isBrowserPage(address: string): boolean {
+  return /^(chrome|chrome-untrusted|chrome-extension|devtools):/i.test(address);
+}
