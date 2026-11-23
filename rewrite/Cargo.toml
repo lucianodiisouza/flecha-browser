@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 # Each unit adds its own crate path here.
-members = []
+members = ["crates/flecha-core"]
 
 [workspace.package]
 edition = "2024"

@@ -1,0 +1,84 @@
+{
+  "version": 2,
+  "spaces": [
+    {
+      "id": "personal",
+      "name": "Personal",
+      "emoji": "🏡",
+      "color": "#cdd9f7",
+      "pinned": [{"kind": "tab", "tabId": "recipes"}]
+    },
+    {
+      "id": "work",
+      "name": "Work",
+      "emoji": "💼",
+      "color": "#f6d6cc",
+      "isolated": true,
+      "pinnedCollapsed": true,
+      "pinned": [{
+        "kind": "folder", "id": "project", "name": "Project", "open": true,
+        "children": [{
+          "kind": "folder", "id": "reference", "name": "Reference", "open": false,
+          "children": [{"kind": "tab", "tabId": "wiki"}]
+        }]
+      }]
+    }
+  ],
+  "windows": [
+    {
+      "id": "window-work",
+      "activeSpaceId": "work",
+      "sidebarVisible": false,
+      "spaces": {
+        "work": {"today": ["notes", "review"], "activeTabId": "review", "split": ["review", "wiki"], "splitRatio": 0.6},
+        "personal": {"today": [], "activeTabId": "recipes"}
+      }
+    },
+    {
+      "id": "window-home",
+      "activeSpaceId": "personal",
+      "spaces": {
+        "personal": {"today": ["weekend"], "activeTabId": "weekend"},
+        "work": {"today": ["draft"], "activeTabId": "draft"}
+      }
+    }
+  ],
+  "closedWindows": [{
+    "id": "window-closed",
+    "activeSpaceId": "work",
+    "closedAt": 1795302400000,
+    "spaces": {"work": {"today": ["old-plan"], "activeTabId": "old-plan"}}
+  }],
+  "favorites": ["calendar"],
+  "tabs": {
+    "calendar": {"id":"calendar", "url":"https://calendar.example.org/", "title":"Calendar", "lastActive":1795202400000, "homeUrl":"https://calendar.example.org/"},
+    "recipes": {"id":"recipes", "url":"https://recipes.example.org/",
+      "title":"Recipes", "lastActive":1795202400000, "homeUrl":"https://recipes.example.org/"},
+    "wiki": {"id":"wiki", "url":"https://work.example.org/wiki/setup",
+      "title":"Setup", "customTitle":"Project wiki", "lastActive":1795202400100, "homeUrl":"https://work.example.org/wiki",
+      "history":{"index":1,"entries":[
+        {"url":"https://work.example.org/wiki","title":"Wiki","pageState":"synthetic-chromium-state"},
+        {"url":"https://work.example.org/wiki/setup","title":"Setup"}
+      ]}},
+    "notes": {"id":"notes", "url":"https://work.example.org/notes", "title":"Notes", "lastActive":1795202410000, "agent":true, "unseen":true},
+    "review": {"id":"review", "url":"https://work.example.org/review", "title":"Review", "lastActive":1795202420000, "muted":true},
+    "weekend": {"id":"weekend", "url":"https://travel.example.org/", "title":"Weekend", "lastActive":1795202420100},
+    "draft": {"id":"draft", "url":"https://work.example.org/draft", "title":"Draft", "lastActive":1795202420200},
+    "old-plan": {"id":"old-plan", "url":"https://work.example.org/old-plan", "title":"Old plan", "lastActive":1795102400000}
+  },
+  "archive": [{"url":"https://work.example.org/kickoff","title":"Kickoff","closedAt":1795102400000}],
+  "sidebarVisible": true,
+  "sidebarWidth": 312,
+  "theme": "dark",
+  "archiveAfterHours": 168,
+  "searchEngine": "kagi",
+  "keybindings": {"closeTab":null,"reload":"Alt+R"},
+  "environments": [{
+    "id":"project",
+    "name":"Project",
+    "targets":[
+      {"label":"Local","origin":"http://localhost:3000","autoLabel":false},
+      {"label":"work.example.org","origin":"https://work.example.org"}
+    ]
+  }]
+}
