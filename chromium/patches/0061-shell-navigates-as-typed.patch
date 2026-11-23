@@ -1,0 +1,88 @@
+Flecha: flechaPrivate.navigate takes a tab to an address as the omnibox does.
+
+The shell sent the addresses typed in its command bar and a Flechinha's
+address bar through tabs.update(). Chromium makes an extension's navigation
+renderer-initiated (TabsUpdateFunction::UpdateURL), and the history
+manipulation intervention then marks the page left behind as skippable when
+nobody clicked or typed in it: going from one site to another by its address
+left Back with nowhere to go. navigate() loads the URL from the browser, with
+a typed transition from the address bar, which the intervention leaves alone.
+It doesn't take javascript: URLs, which would run in the page.
+
+--- a/chrome/common/extensions/api/flecha_private.idl
++++ b/chrome/common/extensions/api/flecha_private.idl
+@@ -303,6 +303,13 @@
+     // Whether a tab has a page to go back to and one to go forward to, for
+     // the Back and Forward buttons (tabs.goBack() and goForward() don't say).
+     static void getTabHistory(long tabId, TabHistoryCallback callback);
++    // Takes a tab to an address the user typed or picked in Flecha (the
++    // command bar, a Flechinha's address), as the omnibox does: a typed,
++    // browser-initiated navigation. tabs.update() navigates as the extension
++    // would, so the page left behind is skipped by Back when nobody
++    // interacted with it. Not for javascript: URLs.
++    static void navigate(long tabId, DOMString url,
++                         optional DoneCallback callback);
+     // Signs out of everything in a Space's partition: removes its cookies,
+     // storage and cache.
+     static void clearPartition(
+--- a/chrome/browser/extensions/api/flecha_private/flecha_private_api.h
++++ b/chrome/browser/extensions/api/flecha_private/flecha_private_api.h
+@@ -267,7 +267,16 @@
+   ~FlechaPrivateGetTabHistoryFunction() override = default;
+   ResponseAction Run() override;
+ };
++
++class FlechaPrivateNavigateFunction : public ExtensionFunction {
++ public:
++  DECLARE_EXTENSION_FUNCTION("flechaPrivate.navigate", UNKNOWN)
+ 
++ protected:
++  ~FlechaPrivateNavigateFunction() override = default;
++  ResponseAction Run() override;
++};
++
+ class FlechaPrivateClearPartitionFunction : public ExtensionFunction {
+  public:
+   DECLARE_EXTENSION_FUNCTION("flechaPrivate.clearPartition", UNKNOWN)
+--- a/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
++++ b/chrome/browser/extensions/api/flecha_private/flecha_private_api.cc
+@@ -46,6 +46,9 @@
+ #include "chrome/common/extensions/api/flecha_private.h"
+ #include "content/public/browser/web_contents.h"
+ #include "extensions/browser/extensions_browser_client.h"
++#include "ui/base/page_transition_types.h"
++#include "url/gurl.h"
++#include "url/url_constants.h"
+ 
+ namespace extensions {
+ 
+@@ -796,6 +799,29 @@
+   history.can_go_back = controller.CanGoBack();
+   history.can_go_forward = controller.CanGoForward();
+   return RespondNow(WithArguments(history.ToValue()));
++}
++
++ExtensionFunction::ResponseAction FlechaPrivateNavigateFunction::Run() {
++  auto params = flecha_private::Navigate::Params::Create(args());
++  EXTENSION_FUNCTION_VALIDATE(params);
++  content::WebContents* contents = nullptr;
++  if (!ExtensionTabUtil::GetTabById(params->tab_id, browser_context(),
++                                    /*include_incognito=*/false, &contents)) {
++    return RespondNow(Error(kNoTabError, base::NumberToString(params->tab_id)));
++  }
++  const GURL url(params->url);
++  // A javascript: URL would run in the page; the omnibox doesn't take them
++  // either.
++  if (!url.is_valid() || url.SchemeIs(url::kJavaScriptScheme)) {
++    return RespondNow(Error("Flecha can't navigate to *", params->url));
++  }
++  content::NavigationController::LoadURLParams load_params(url);
++  load_params.transition_type = ui::PageTransitionFromInt(
++      ui::PAGE_TRANSITION_TYPED | ui::PAGE_TRANSITION_FROM_ADDRESS_BAR);
++  if (!contents->GetController().LoadURLWithParams(load_params)) {
++    return RespondNow(Error("Flecha couldn't navigate to *", params->url));
++  }
++  return RespondNow(NoArguments());
+ }
+ 
+ ExtensionFunction::ResponseAction FlechaPrivateClearPartitionFunction::Run() {
