@@ -4,14 +4,14 @@
  * screenshot of the page for the clipboard.
  */
 import type { Store } from '../shared/store';
-import { broadcast, handle } from './hub';
+import { broadcast, caller, flashIn, handle, windowOf } from './hub';
 
 export interface SiteControlsContext {
   store: Store;
   /** The Chromium tab on screen, if the active Flecha tab has one. */
   activeChromeId(): number | undefined;
-  /** The window Flecha's tabs live in. */
-  mainWindow(): Promise<number>;
+  /** The window the running command is for (ask before the first `await`). */
+  window(): Promise<number>;
 }
 
 type Decision = 'allow' | 'block' | 'ask';
@@ -53,7 +53,7 @@ export function registerSiteControls(ctx: SiteControlsContext) {
   /** Copies the visible page as an image, through the window's frame page (the clipboard needs a document). */
   async function capturePage() {
     if (ctx.activeChromeId() === undefined) return;
-    const windowId = await ctx.mainWindow();
+    const windowId = await ctx.window();
     const png = await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
     broadcast('clipboard', windowId, { png, message: 'Screenshot copied' });
   }
@@ -62,10 +62,11 @@ export function registerSiteControls(ctx: SiteControlsContext) {
     capturePage: () => capturePage().catch((err) => console.error('Flecha shell: screenshot failed', err)),
     clearSiteData: async (origin: string) => {
       if (!/^https?:\/\//.test(String(origin))) return;
-      await clearSite(String(origin));
       const chromeId = ctx.activeChromeId();
+      const from = windowOf(caller());
+      await clearSite(String(origin));
       if (chromeId !== undefined) await chrome.tabs.reload(chromeId);
-      broadcast('flash', 'Site data cleared');
+      flashIn(from, 'Site data cleared');
     },
     setSitePermission: async (origin: string, permission: string, decision: Decision) => {
       const settings = SETTINGS[String(permission)];

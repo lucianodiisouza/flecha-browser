@@ -161,7 +161,7 @@ export class TabManager {
         return {};
       }
       case 'newSpace':
-        return { created: this.store.newSpace(false).id };
+        return { created: this.store.newSpace().id };
       case 'updateSpace':
         this.store.updateSpace(String(e.spaceId), {
           name: typeof e.name === 'string' ? e.name : undefined,

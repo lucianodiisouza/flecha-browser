@@ -22,7 +22,7 @@ test('a host covers its subdomains, and a path narrows it', () => {
 test('rules are typed loosely and cleaned up', () => {
   assert.equal(normalizeMatch(' HTTPS://www.GitHub.com/Anthropics/ '), 'github.com/anthropics');
   const store = new Store({ load: () => undefined, save: () => undefined });
-  const space = store.activeSpace.id;
+  const space = store.state.activeSpaceId;
   store.setLinkRules([
     { id: 'a', match: 'https://linear.app/', spaceId: space },
     { id: 'b', match: '  ', spaceId: space },
@@ -33,9 +33,11 @@ test('rules are typed loosely and cleaned up', () => {
 
 test('a link sent to another Space opens there and switches to it', () => {
   const store = new Store({ load: () => undefined, save: () => undefined });
-  const first = store.activeSpace.id;
-  const other = store.newSpace(false).id;
-  const tab = store.addTab('https://linear.app/', { spaceId: other });
+  const view = store.attachView(store.createView({ resume: true }));
+  const first = store.activeSpaceOf(view).id;
+  const other = store.newSpace().id;
+  const tab = store.addTab(view, 'https://linear.app/', { spaceId: other });
+  assert.equal(view.activeSpaceId, other);
   assert.equal(store.state.activeSpaceId, other);
   assert.equal(store.locate(tab.id)?.space?.id, other);
   assert.notEqual(first, other);
@@ -43,27 +45,29 @@ test('a link sent to another Space opens there and switches to it', () => {
 
 test('reset sends pinned tabs home; the archive forgets one tab or all', () => {
   const store = new Store({ load: () => undefined, save: () => undefined });
-  const tab = store.addTab('https://a.test/');
-  store.togglePin(tab.id);
+  const view = store.attachView(store.createView({ resume: true }));
+  const tab = store.addTab(view, 'https://a.test/');
+  store.togglePin(view, tab.id);
   store.updateTab(tab.id, { url: 'https://a.test/elsewhere' });
-  assert.deepEqual(store.resetPinned(store.activeSpace.id), [{ tabId: tab.id, url: 'https://a.test/' }]);
-  assert.deepEqual(store.resetPinned(store.activeSpace.id), []);
+  assert.deepEqual(store.resetPinned(view.activeSpaceId), [{ tabId: tab.id, url: 'https://a.test/' }]);
+  assert.deepEqual(store.resetPinned(view.activeSpaceId), []);
 
-  const gone = store.addTab('https://b.test/');
+  const gone = store.addTab(view, 'https://b.test/');
   store.closeTab(gone.id);
   const [item] = store.state.archive;
   assert.equal(item.url, 'https://b.test/');
   assert.equal(store.removeArchived(item.closedAt, item.url)?.url, 'https://b.test/');
-  store.closeTab(store.addTab('https://c.test/').id);
+  store.closeTab(store.addTab(view, 'https://c.test/').id);
   store.clearArchive();
   assert.deepEqual(store.state.archive, []);
 });
 
 test('a folder icon is one emoji, and empty removes it', () => {
   const store = new Store({ load: () => undefined, save: () => undefined });
-  const id = store.newFolder('Docs')!;
+  const view = store.attachView(store.createView({ resume: true }));
+  const id = store.newFolder('Docs', { view })!;
   store.setFolderEmoji(id, ' 👩🏽‍💻 extra');
-  const folder = () => store.activeSpace.pinned.find((n) => n.kind === 'folder' && n.id === id) as { emoji?: string };
+  const folder = () => store.activeSpaceOf(view).pinned.find((n) => n.kind === 'folder' && n.id === id) as { emoji?: string };
   assert.equal(folder().emoji, '👩🏽‍💻');
   store.setFolderEmoji(id, '');
   assert.equal(folder().emoji, undefined);

@@ -53,6 +53,7 @@ It is a Chromium 158 fork rather than an Electron app because Google blocks sign
 
 **Menu bar and windows**
 - Flecha's own menus: **Spaces** (switch, new, edit, separate logins, reset pinned tabs), **Tabs** (pin, folder, copy link, duplicate, mute, split, clear Today) and **Archive** (the last 10 archived tabs, and the whole archive). Chromium's Tab and Bookmarks menus are gone
+- Several windows share your Spaces and tabs, and each is in a Space of its own with its own active tab, sidebar and tab history. A tab is on screen in one window: picking it in another brings its page over, as it is
 - Stay On Top (Window menu or the command bar) keeps the window above other apps' windows; Settings floats with it
 - Automatic picture-in-picture: a video that's playing moves to a floating player when you switch tabs or Spaces, on any site, and comes back when you return
 - ⌘S slides the sidebar out and back in
@@ -172,7 +173,7 @@ flowchart LR
 ```
 
 - **Patches** (`chromium/patches/`) change what only Chromium can: hide the tab strip and toolbar, draw Flecha's own window frame and traffic lights, round the page area, add Peek, Flechinha windows, split ratio, a storage partition per Space, and so on.
-- **The shell** is a Manifest V3 extension loaded as a component extension, so it can't be removed or turned off. Its service worker (`background.ts`) owns the Store and the tabs; everything the user sees is shell HTML and TypeScript.
+- **The shell** is a Manifest V3 extension loaded as a component extension, so it can't be removed or turned off. Its service worker (`background.ts`) owns the Store and the tabs; everything the user sees is shell HTML and TypeScript. The Store is one for every window; each window has a view of it (`WindowView`: its Space, its active tabs), and a command acts on the window it came from.
 - **The frame page** is a shell page that Chromium's frame view hosts around the web contents. It draws the sidebar and command bar, and its drag regions move the window.
 - **`chrome.flechaPrivate`** (`shell/flechaPrivate.d.ts`) is the private extension API the patches add, for what the standard APIs lack: frame state, shortcuts, theme, split ratio, Peek, Flechinha, partitions, DevTools, the find bar and default-browser. It is available to the shell only.
 - **The native host** does what an extension can't: read other browsers' bookmarks and history, and serve MCP to coding agents on 127.0.0.1.

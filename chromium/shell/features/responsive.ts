@@ -19,6 +19,8 @@ const HOLDER = 'responsive';
 
 export interface ResponsiveContext {
   store: Store;
+  /** The view of the window the running command is for. */
+  view(): import('../../shared/types').WindowView;
   liveTabId(flechaTabId: string): number | undefined;
 }
 
@@ -88,21 +90,22 @@ export function responsive(ctx: ResponsiveContext) {
   }
 
   function toggle() {
-    const space = store.activeSpace;
+    const view = ctx.view();
+    const space = store.activeSpaceOf(view);
     if (space.splitMode === 'responsive') {
       // A mirror has no life of its own: ending the split closes it, and the background
       // closes its Chromium tab.
       const source = space.split?.[0];
-      const mirror = store.unsplit();
+      const mirror = store.unsplit(view);
       // Back to the desktop side, not whichever tab is next to the phone.
-      if (source && store.state.tabs[source]) store.activate(source);
+      if (source && store.state.tabs[source]) store.activate(view, source);
       if (mirror) store.closeTab(mirror);
       return;
     }
-    const mirror = store.openResponsive();
+    const mirror = store.openResponsive(view);
     // TODO(chromium): the shell doesn't lay splits out side by side yet, so the phone is shown
     // on its own; once it does, both halves are on screen and this can go.
-    if (mirror) store.activate(mirror);
+    if (mirror) store.activate(view, mirror);
   }
 
   return { sync, toggle };

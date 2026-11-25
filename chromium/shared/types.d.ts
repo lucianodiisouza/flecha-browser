@@ -53,6 +53,21 @@ export interface Space {
   pinnedCollapsed?: boolean;
 }
 
+/**
+ * What one window shows of the shared Spaces and tabs: its Space, the tab it has open in each
+ * Space it has been in, and its own history. A tab's page is on screen in one window at most.
+ */
+export interface WindowView {
+  activeSpaceId: string;
+  /** By Space id. `null`: the window was there and shows no tab; no entry: it hasn't been there yet. */
+  activeTabs: Record<string, string | null>;
+  /** When this window last showed each tab, for Recent Tab. */
+  recent: Record<string, number>;
+  sidebarVisible: boolean;
+  /** The window the session began with also knows the tabs' use before it (`TabInfo.lastActive`). */
+  inheritsHistory?: boolean;
+}
+
 export interface ArchivedTab {
   url: string;
   title: string;
@@ -141,6 +156,11 @@ export interface LocalServer {
 
 export type SearchEngineId = 'google' | 'duckduckgo' | 'bing' | 'brave' | 'kagi' | 'ecosia';
 
+/**
+ * The saved state. `activeSpaceId`, each Space's `activeTabId` and `sidebarVisible` are those of
+ * the window last in front (store.ts, WindowView): what a window starts from, and what pages
+ * that belong to no window (Settings, a Flechinha) show.
+ */
 export interface BrowserState {
   spaces: Space[];
   activeSpaceId: string;
