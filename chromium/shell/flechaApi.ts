@@ -8,6 +8,8 @@ import { spaceTint } from './lib/spaceTint';
 import { cmd, invoke, on } from './client';
 import { confirmDeleteSpace, copy, setupWindowUi, showMenu } from './windowUi';
 import { incognito } from './incognito';
+import { navigateTab } from './lib/navigate';
+import { resolveInput } from './lib/url';
 
 const surface = document.documentElement.dataset.surface;
 const systemDark = matchMedia('(prefers-color-scheme: dark)');
@@ -62,6 +64,35 @@ on('frame', (state) => {
   applyFrame();
 });
 
+/**
+ * A Flechinha's empty page is this new tab page too. What it opens belongs in its own window:
+ * the background's commands act on the main window, which a Flechinha isn't part of. Asked
+ * each time, since Open in Flecha moves the page to the main window.
+ */
+async function ownFlechinha(): Promise<chrome.tabs.Tab | undefined> {
+  if (surface !== 'newtab' || typeof chrome.flechaPrivate?.getFlechinhas !== 'function') return undefined;
+  try {
+    const tab = await chrome.tabs.getCurrent();
+    return tab?.id !== undefined && (await chrome.flechaPrivate.getFlechinhas()).includes(tab.windowId) ? tab : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Opens what was typed or picked on the new tab page in this tab: a Flechinha's own, or the window's active one. */
+async function navigateHere(input: string) {
+  const tab = await ownFlechinha();
+  if (!tab) return cmd('navigate')(input);
+  await navigateTab(tab.id!, resolveInput(input, lastState?.searchEngine));
+}
+
+/** The new tab page's search field: the window's command bar, or in a Flechinha, its address. */
+async function openPaletteHere(mode: PaletteMode) {
+  const tab = await ownFlechinha();
+  if (tab) cmd('flechinha:editAddress')(tab.windowId);
+  else cmd('openPalette')(mode);
+}
+
 const paletteListeners: Array<(mode: PaletteMode) => void> = [];
 const renameListeners: Array<(tabId: string) => void> = [];
 setupWindowUi({ rename: (tabId) => renameListeners.forEach((cb) => cb(tabId)), state: () => lastState });
@@ -93,8 +124,8 @@ const api: FlechaApi = {
   importBrowser: (id) => invoke('importBrowser', id),
   importBrowserCookies: (id) => invoke('importBrowserCookies', id),
   // On the new tab page, what you type opens in this tab.
-  newTab: surface === 'newtab' ? cmd('navigate') : cmd('newTab'),
-  navigate: cmd('navigate'),
+  newTab: surface === 'newtab' ? (input) => void navigateHere(input) : cmd('newTab'),
+  navigate: surface === 'newtab' ? (input) => void navigateHere(input) : cmd('navigate'),
   activate: cmd('activate'),
   close: cmd('close'),
   goHome: cmd('goHome'),
@@ -141,7 +172,7 @@ const api: FlechaApi = {
   },
   // The frame grows over the page first, as in Electron; the side panel just opens it. A new
   // tab page has no command bar of its own, so it asks the window's, as ⌘T does.
-  openPalette: surface === 'window' || surface === 'newtab' ? cmd('openPalette') : (mode) => paletteListeners.forEach((cb) => cb(mode)),
+  openPalette: surface === 'newtab' ? (mode) => void openPaletteHere(mode) : surface === 'window' ? cmd('openPalette') : (mode) => paletteListeners.forEach((cb) => cb(mode)),
   closePalette: surface === 'window' ? cmd('closePalette') : () => undefined,
   toggleSidebar: cmd('toggleSidebar'),
   setSidebarPeek: cmd('setSidebarPeek'),

@@ -65,6 +65,7 @@ function siteIcon(s: FlechinhaState) {
 }
 
 function render(s: FlechinhaState) {
+  const wasEmpty = !state?.url;
   state = s;
   document.documentElement.style.setProperty('--tint', s.tint);
   const empty = !s.url;
@@ -90,6 +91,9 @@ function render(s: FlechinhaState) {
   siteIcon(s);
 
   if (empty && !editing) startEditing();
+  // The empty page opened something itself (a site picked on it): the field an empty
+  // Flechinha holds open gives way to the address, unless something is being typed in it.
+  else if (!empty && wasEmpty && editing && !input.value) stopEditing();
   document.title = title || siteOf(s.url) || 'Flechinha';
 }
 
