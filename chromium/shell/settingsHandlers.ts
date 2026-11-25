@@ -12,6 +12,8 @@ import { broadcast, handle } from './hub';
 
 export interface SettingsContext {
   store: Store;
+  /** The view of the window the running command is for: Settings is no window's, so the one in front. */
+  view(): import('../shared/types').WindowView;
   /** Closes the Chromium tabs of these Flecha tabs; they reopen from the Store when next shown. */
   unload(tabIds: string[]): void;
   /** Sends every page the new state, as after any change from the sidebar. */
@@ -74,7 +76,7 @@ export function registerSettings(ctx: SettingsContext) {
     destroyView: (tabId) => ctx.unload([tabId]),
     show: (tabId) => {
       // The background follows the Store's active tab into Chromium.
-      store.activate(tabId);
+      store.activate(ctx.view(), tabId);
       ctx.broadcastState();
     },
     // TODO(chromium): site icons come from chrome://favicon2 / _favicon, not a favicon:// cache; tabs use their own favicon URL for now.
@@ -171,7 +173,7 @@ export function registerSettings(ctx: SettingsContext) {
   };
   let lastArchive = archiveKey();
   // Settings wears the active Space's colour: it asks again when that changes.
-  const tintKey = () => `${store.state.activeSpaceId}:${store.activeSpace.color}`;
+  const tintKey = () => `${store.state.activeSpaceId}:${store.state.spaces.find((s) => s.id === store.state.activeSpaceId)?.color}`;
   let lastTint = tintKey();
   store.onChange(() => {
     if (tintKey() !== lastTint) {

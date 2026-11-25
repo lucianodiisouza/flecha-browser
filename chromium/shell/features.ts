@@ -6,13 +6,14 @@
  * The feature modules add their Chromium listeners as they are imported, in the background's
  * first turn, so an event that wakes the background (a page loading, a console error) isn't lost.
  */
+import type { WindowView } from '../shared/types';
 import type { Store } from '../shared/store';
 import type { LocalServer } from '../shared/types';
 import type { BoostKind } from './lib/boostFiles';
 import { describe as describeEnvironment } from './lib/environments';
 import { navigateTab } from './lib/navigate';
 import { displayKeys } from './lib/shortcuts';
-import { broadcast, handle, run } from './hub';
+import { broadcast, callAs, caller, flashIn, handle, run, windowOf } from './hub';
 import * as boosts from './features/boosts';
 import { consoleErrors, watchConsoleErrors } from './features/consoleErrors';
 import { watchLocalServers } from './features/localServers';
@@ -21,6 +22,8 @@ import { setAdBlocking } from './features/adblock';
 
 export interface FeaturesContext {
   store: Store;
+  /** The view of the window the running command is for (background.ts here()). */
+  view(): WindowView;
   /** Sends every page the new state. */
   broadcastState(): void;
   /** The Chromium tab showing a Flecha tab, if it is open. */
@@ -71,7 +74,7 @@ export function registerFeatures(ctx: FeaturesContext): Features {
   handle({
     // ⌥⌘B and the site menu: the active site's boost, created from the template the first time.
     editBoost: async (kind: BoostKind) => {
-      const name = await boosts.fileFor(store.activeTab?.url, kind === 'styles' ? 'styles' : 'script');
+      const name = await boosts.fileFor(store.activeTabOf(ctx.view())?.url, kind === 'styles' ? 'styles' : 'script');
       if (name) boostsChanged();
       // No site (a blank tab): the list, as Electron opened the folder.
       await boosts.openPage(name);
@@ -97,7 +100,7 @@ export function registerFeatures(ctx: FeaturesContext): Features {
 
     // ⌥⌘E: the same page on the project's next environment.
     nextEnvironment: () => {
-      const tab = store.activeTab;
+      const tab = store.activeTabOf(ctx.view());
       const env = tab && describeEnvironment(tab.url, store.state.environments);
       const chromeId = ctx.activeChromeTabId();
       if (!env?.switches.length || chromeId === undefined) return;
@@ -109,7 +112,8 @@ export function registerFeatures(ctx: FeaturesContext): Features {
     // The sidebar's error badge: that tab, with DevTools open.
     showConsole: async (tabId: string) => {
       if (!store.state.tabs[tabId]) return;
-      store.activate(String(tabId));
+      const from = caller();
+      store.activate(ctx.view(), String(tabId));
       // DevTools opens on the active Chromium tab, so wait for the background to show this one.
       for (let i = 0; i < 20; i++) {
         const chromeId = ctx.liveTabId(tabId);
@@ -117,7 +121,7 @@ export function registerFeatures(ctx: FeaturesContext): Features {
         if (tab?.active) break;
         await new Promise((r) => setTimeout(r, 50));
       }
-      if (!run('openDevTools', { console: true })) broadcast('flash', `Press ${displayKeys('Alt+CmdOrCtrl+I')} for the console`);
+      if (!callAs(from, () => run('openDevTools', { console: true }))) flashIn(windowOf(from), `Press ${displayKeys('Alt+CmdOrCtrl+I')} for the console`);
     },
   });
 

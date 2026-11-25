@@ -1,4 +1,4 @@
-import type { ArchivedTab, BrowserState, DropTarget, Environment, LinkRule, PinnedNode, SearchEngineId, Space, TabInfo, TabPlacement, WindowBounds } from './types';
+import type { ArchivedTab, BrowserState, DropTarget, Environment, LinkRule, PinnedNode, SearchEngineId, Space, TabInfo, TabPlacement, WindowBounds, WindowView } from './types';
 import type { ArcImport, ImportNode } from './importApply';
 
 const SPACE_COLORS = ['#cdd9f7', '#f6d6cc', '#d3ecd5', '#e8d6f3', '#f5e7c4', '#cfe8ec'];
@@ -15,8 +15,16 @@ export interface StatePersistence {
 
 const randomUUID = () => crypto.randomUUID();
 
+/**
+ * Spaces, tabs and settings are one state, shared by every window. What a window shows of it
+ * is its WindowView: anything about "the active Space" or "the active tab" takes the view of
+ * the window it is for. A tab's page is on screen in one window at most, so a window that
+ * shows a tab takes it from the window that had it (`settleViews`).
+ */
 export class Store {
   state: BrowserState;
+  /** The open windows' views, the window last in front first. */
+  views: WindowView[] = [];
   private saveTimer?: ReturnType<typeof setTimeout>;
   private listeners: Array<() => void> = [];
 
@@ -28,13 +36,93 @@ export class Store {
     this.listeners.push(fn);
   }
 
-  get activeSpace(): Space {
-    return this.state.spaces.find((s) => s.id === this.state.activeSpaceId) ?? this.state.spaces[0];
+  // ---- windows ------------------------------------------------------------------------
+
+  /**
+   * A view for a new window, in the Space of `from` (the window it was opened from) or of the
+   * window last in front. It shows no tab, unless `resume` is set: the window a session begins
+   * with takes up where the last one left off, with the saved active tabs and their history.
+   */
+  createView(opts: { from?: WindowView; resume?: boolean } = {}): WindowView {
+    const activeSpaceId = opts.from?.activeSpaceId ?? this.state.activeSpaceId;
+    return {
+      activeSpaceId,
+      activeTabs: opts.resume ? {} : { [activeSpaceId]: null },
+      recent: {},
+      sidebarVisible: this.state.sidebarVisible,
+      ...(opts.resume ? { inheritsHistory: true } : {}),
+    };
   }
 
-  get activeTab(): TabInfo | undefined {
-    const id = this.activeSpace.activeTabId;
+  /** A window opened: its view takes part from now on. Returns the view. */
+  attachView(view: WindowView): WindowView {
+    if (!this.views.includes(view)) this.views.push(view);
+    this.changed();
+    return view;
+  }
+
+  /** A window closed. */
+  detachView(view: WindowView) {
+    if (!this.views.includes(view)) return;
+    this.views = this.views.filter((v) => v !== view);
+    this.changed();
+  }
+
+  /** A window came to the front: the saved state follows it. */
+  focusView(view: WindowView) {
+    if (this.views[0] === view || !this.views.includes(view)) return;
+    this.views = [view, ...this.views.filter((v) => v !== view)];
+    this.changed();
+  }
+
+  activeSpaceOf(view: WindowView): Space {
+    return this.state.spaces.find((s) => s.id === view.activeSpaceId) ?? this.state.spaces[0];
+  }
+
+  /** The tab `view` has open in `space`; where the window hasn't been yet, the tab it would start with. */
+  activeTabIdIn(view: WindowView, space: Space): string | undefined {
+    const own = view.activeTabs[space.id];
+    return own === undefined ? space.activeTabId : (own ?? undefined);
+  }
+
+  activeTabOf(view: WindowView): TabInfo | undefined {
+    const id = this.activeTabIdIn(view, this.activeSpaceOf(view));
     return id ? this.state.tabs[id] : undefined;
+  }
+
+  /** The other window that has `tabId` on screen, if one does. */
+  shownElsewhere(tabId: string, view: WindowView): WindowView | undefined {
+    return this.views.find((v) => v !== view && this.visibleTabIds(v).includes(tabId));
+  }
+
+  /** When `view`'s window last showed a tab; undefined if it never did. */
+  lastShown(view: WindowView, tabId: string): number | undefined {
+    return view.recent[tabId] ?? (view.inheritsHistory ? this.state.tabs[tabId]?.lastActive : undefined);
+  }
+
+  /** The state as `view`'s window sees it: its Space, its tab in each Space, its sidebar. */
+  stateFor(view: WindowView): BrowserState {
+    return {
+      ...this.state,
+      activeSpaceId: this.activeSpaceOf(view).id,
+      sidebarVisible: view.sidebarVisible,
+      spaces: this.state.spaces.map((space) => ({ ...space, activeTabId: this.activeTabIdIn(view, space) })),
+    };
+  }
+
+  /**
+   * The Today tab a window goes on to when the one it showed is gone: the tab now at `index`,
+   * or the nearest one after or before it that no other window has on screen.
+   */
+  private nextInToday(view: WindowView, space: Space, index: number): string | null {
+    const at = Math.min(index, space.today.length - 1);
+    const nearest = [...space.today.slice(at), ...space.today.slice(0, Math.max(at, 0)).reverse()];
+    return nearest.find((id) => !this.shownElsewhere(id, view)) ?? null;
+  }
+
+  private setActive(view: WindowView, space: Space, tabId: string | undefined) {
+    view.activeTabs[space.id] = tabId ?? null;
+    if (tabId) view.recent[tabId] = Date.now();
   }
 
   allTabIds(space: Space): string[] {
@@ -51,27 +139,28 @@ export class Store {
   }
 
   /** A Today tab in the active Space, or in `spaceId`'s (Air Traffic Control), which then becomes the active Space. */
-  addTab(url: string, opts: { activate?: boolean; afterTabId?: string; spaceId?: string } = {}): TabInfo {
+  addTab(view: WindowView, url: string, opts: { activate?: boolean; afterTabId?: string; spaceId?: string } = {}): TabInfo {
     const tab: TabInfo = { id: randomUUID(), url, title: url, lastActive: Date.now() };
     this.state.tabs[tab.id] = tab;
     const target = opts.spaceId ? this.state.spaces.find((s) => s.id === opts.spaceId) : undefined;
-    if (target && opts.activate !== false) this.state.activeSpaceId = target.id;
-    const space = target ?? this.activeSpace;
+    if (target && opts.activate !== false) view.activeSpaceId = target.id;
+    const space = target ?? this.activeSpaceOf(view);
     const after = opts.afterTabId ? space.today.indexOf(opts.afterTabId) : -1;
     space.today.splice(after + 1, 0, tab.id);
-    if (opts.activate !== false) space.activeTabId = tab.id;
-    this.changed();
+    if (opts.activate !== false) this.setActive(view, space, tab.id);
+    this.changed(view);
     return tab;
   }
 
-  activate(tabId: string) {
+  /** Shows a tab in `view`'s window; a window that had it on screen lets go of it. */
+  activate(view: WindowView, tabId: string) {
     const tab = this.state.tabs[tabId];
     if (!tab) return;
     const loc = this.locate(tabId);
-    if (loc?.space) this.state.activeSpaceId = loc.space.id;
-    this.activeSpace.activeTabId = tabId;
+    if (loc?.space) view.activeSpaceId = loc.space.id;
+    this.setActive(view, this.activeSpaceOf(view), tabId);
     tab.lastActive = Date.now();
-    this.changed();
+    this.changed(view);
   }
 
   updateTab(tabId: string, patch: Partial<TabInfo>) {
@@ -91,34 +180,37 @@ export class Store {
     const tab = this.state.tabs[tabId];
     const loc = this.locate(tabId);
     if (!tab || !loc) return 'removed';
-    const space = loc.space ?? this.activeSpace;
 
-    if (loc.zone !== 'today') {
+    if (loc.zone !== 'today' || !loc.space) {
       if (tab.homeUrl) tab.url = tab.homeUrl;
       delete tab.history;
-      for (const s of this.state.spaces) if (s.activeTabId === tabId) s.activeTabId = undefined;
+      for (const s of this.state.spaces) {
+        if (s.activeTabId === tabId) s.activeTabId = undefined;
+        for (const view of this.views) if (view.activeTabs[s.id] === tabId) view.activeTabs[s.id] = null;
+      }
       this.changed();
       return 'unloaded';
     }
 
+    const space = loc.space;
     const index = space.today.indexOf(tabId);
     space.today.splice(index, 1);
     this.archive(tab);
     delete this.state.tabs[tabId];
-    if (space.activeTabId === tabId) {
-      space.activeTabId = space.today[Math.min(index, space.today.length - 1)];
-    }
+    // The windows that showed it go on to the tab that took its place in Today.
+    if (space.activeTabId === tabId) space.activeTabId = space.today[Math.min(index, space.today.length - 1)];
+    for (const view of this.views) if (view.activeTabs[space.id] === tabId) view.activeTabs[space.id] = this.nextInToday(view, space, index);
     this.changed();
     return 'removed';
   }
 
-  /** Moves a tab between favorites, pinned (optionally into a folder) and today. */
-  moveTab(tabId: string, target: DropTarget) {
+  /** Moves a tab between favorites, pinned (optionally into a folder) and today, in `view`'s Space. */
+  moveTab(view: WindowView, tabId: string, target: DropTarget) {
     const tab = this.state.tabs[tabId];
     const from = this.locate(tabId);
     if (!tab || !from || target.beforeTabId === tabId) return;
-    const space = from.space ?? this.activeSpace;
-    const targetSpace = this.activeSpace;
+    const space = from.space ?? this.activeSpaceOf(view);
+    const targetSpace = this.activeSpaceOf(view);
 
     // Moving a tab out of its split ends the split
     if (space.split?.includes(tabId)) {
@@ -145,8 +237,8 @@ export class Store {
 
     if (target.zone === 'today') delete tab.homeUrl;
     else tab.homeUrl ??= tab.url;
-    if (space.activeTabId === tabId && space !== targetSpace) space.activeTabId = undefined;
-    this.changed();
+    // It left its Space (settleViews): the windows that showed it there show nothing.
+    this.changed(view);
   }
 
   /**
@@ -160,7 +252,6 @@ export class Store {
     this.insert(tabId, to);
     if (to.zone === 'today') delete tab.homeUrl;
     else tab.homeUrl ??= tab.url;
-    this.forgetMissingActive();
     this.changed();
     return true;
   }
@@ -188,15 +279,14 @@ export class Store {
       delete this.state.tabs[id];
     }
     if (!removed.length) return [];
-    this.forgetMissingActive();
     this.changed();
     return removed;
   }
 
   /** Puts `tabId` next to `withTabId` (or the active tab), on the right unless `side` says otherwise. */
-  splitWith(tabId: string, side: 'left' | 'right' = 'right', withTabId?: string) {
-    const space = this.activeSpace;
-    const current = withTabId ?? space.activeTabId;
+  splitWith(view: WindowView, tabId: string, side: 'left' | 'right' = 'right', withTabId?: string) {
+    const space = this.activeSpaceOf(view);
+    const current = withTabId ?? this.activeTabIdIn(view, space);
     if (!current || current === tabId || !this.allTabIds(space).includes(tabId) || !this.allTabIds(space).includes(current)) return;
     space.split = side === 'left' ? [tabId, current] : [current, tabId];
     delete space.splitMode;
@@ -213,35 +303,35 @@ export class Store {
         space.today.splice(side === 'left' ? idx : idx + 1, 0, tabId);
       }
     }
-    space.activeTabId = tabId;
+    this.setActive(view, space, tabId);
     this.state.tabs[tabId].lastActive = Date.now();
-    this.changed();
+    this.changed(view);
   }
 
   /** Opens the active page again as a phone-sized mirror, side by side. Returns the mirror's id. */
-  openResponsive(): string | undefined {
-    const space = this.activeSpace;
-    const source = this.activeTab;
+  openResponsive(view: WindowView): string | undefined {
+    const space = this.activeSpaceOf(view);
+    const source = this.activeTabOf(view);
     if (!source) return undefined;
-    const mirror = this.addTab(source.url, { activate: false, afterTabId: space.today.includes(source.id) ? source.id : undefined });
+    const mirror = this.addTab(view, source.url, { activate: false, afterTabId: space.today.includes(source.id) ? source.id : undefined });
     mirror.device = 'mobile';
     mirror.title = source.title;
     space.split = [source.id, mirror.id];
     space.splitMode = 'responsive';
-    this.changed();
+    this.changed(view);
     return mirror.id;
   }
 
-  setSplitRatio(ratio: number) {
-    const space = this.activeSpace;
+  setSplitRatio(view: WindowView, ratio: number) {
+    const space = this.activeSpaceOf(view);
     if (!space.split) return;
     space.splitRatio = Math.min(0.8, Math.max(0.2, ratio));
     this.changed();
   }
 
   /** Puts each half of the split on the other side; the divider keeps each page's width. */
-  swapSplit() {
-    const space = this.activeSpace;
+  swapSplit(view: WindowView) {
+    const space = this.activeSpaceOf(view);
     if (!space.split || space.splitMode === 'responsive') return;
     const [left, right] = space.split;
     space.split = [right, left];
@@ -252,8 +342,8 @@ export class Store {
   }
 
   /** Ends the split. A responsive mirror has no life of its own, so its id is returned for closing. */
-  unsplit(): string | undefined {
-    const space = this.activeSpace;
+  unsplit(view: WindowView): string | undefined {
+    const space = this.activeSpaceOf(view);
     if (!space.split) return undefined;
     const mirror = space.splitMode === 'responsive' ? space.split[1] : undefined;
     delete space.split;
@@ -262,12 +352,10 @@ export class Store {
     return mirror;
   }
 
-  /** The tabs on screen right now: the active tab, or both halves of its split. */
-  visibleTabIds(): string[] {
-    const space = this.activeSpace;
-    const active = space.activeTabId;
-    if (!active) return [];
-    return space.split?.includes(active) ? [...space.split] : [active];
+  /** The tabs on screen in `view`'s window right now: the active tab, or both halves of its split. */
+  visibleTabIds(view: WindowView): string[] {
+    const space = this.activeSpaceOf(view);
+    return shownWith(space, this.activeTabIdIn(view, space));
   }
 
   /** Moves a tab into another Space's today list (pinned tabs keep being pinned there). */
@@ -279,6 +367,7 @@ export class Store {
     if (from.zone === 'pinned') to.pinned.push({ kind: 'tab', tabId });
     else to.today.unshift(tabId);
     if (from.space.activeTabId === tabId) from.space.activeTabId = from.space.today[0];
+    for (const view of this.views) if (view.activeTabs[from.space.id] === tabId) view.activeTabs[from.space.id] = this.nextInToday(view, from.space, 0);
     this.changed();
   }
 
@@ -292,19 +381,19 @@ export class Store {
     return ids;
   }
 
-  togglePin(tabId: string) {
+  togglePin(view: WindowView, tabId: string) {
     const loc = this.locate(tabId);
-    this.moveTab(tabId, { zone: loc?.zone === 'today' ? 'pinned' : 'today' });
+    this.moveTab(view, tabId, { zone: loc?.zone === 'today' ? 'pinned' : 'today' });
   }
 
-  toggleFavorite(tabId: string) {
+  toggleFavorite(view: WindowView, tabId: string) {
     const loc = this.locate(tabId);
-    this.moveTab(tabId, { zone: loc?.zone === 'favorites' ? 'today' : 'favorites' });
+    this.moveTab(view, tabId, { zone: loc?.zone === 'favorites' ? 'today' : 'favorites' });
   }
 
-  /** In the active Space unless `where` names another, optionally inside a folder. Returns the new folder's id. */
-  newFolder(name = 'New Folder', where: { spaceId?: string; parentId?: string } = {}): string | undefined {
-    const space = where.spaceId ? this.state.spaces.find((s) => s.id === where.spaceId) : this.activeSpace;
+  /** In the Space `where` names (`view`'s, to say the one its window shows), optionally inside a folder. Returns the new folder's id. */
+  newFolder(name = 'New Folder', where: { view?: WindowView; spaceId?: string; parentId?: string } = {}): string | undefined {
+    const space = where.spaceId ? this.state.spaces.find((s) => s.id === where.spaceId) : where.view && this.activeSpaceOf(where.view);
     const list = where.parentId ? (space && findFolder(space.pinned, where.parentId))?.children : space?.pinned;
     if (!list) return undefined;
     const id = randomUUID();
@@ -341,7 +430,6 @@ export class Store {
       this.archive(this.state.tabs[id]);
       delete this.state.tabs[id];
     }
-    this.forgetMissingActive();
     this.changed();
     return removed;
   }
@@ -357,13 +445,12 @@ export class Store {
     found.parent.splice(found.parent.indexOf(found.folder), 1);
     const i = to.beforeId ? list.findIndex((n) => nodeId(n) === to.beforeId) : -1;
     list.splice(i < 0 ? list.length : i, 0, found.folder);
-    this.forgetMissingActive();
     this.changed();
     return true;
   }
 
-  /** Switches to the new Space unless `activate` is false (Settings adds one without leaving the current Space). */
-  newSpace(activate = true): Space {
+  /** `view`'s window switches to the new Space; without one nothing does (Settings adds a Space without leaving the current one). */
+  newSpace(view?: WindowView): Space {
     const n = this.state.spaces.length;
     const space: Space = {
       id: randomUUID(),
@@ -377,8 +464,8 @@ export class Store {
       isolated: true,
     };
     this.state.spaces.push(space);
-    if (activate) this.state.activeSpaceId = space.id;
-    this.changed();
+    if (view) view.activeSpaceId = space.id;
+    this.changed(view);
     return space;
   }
 
@@ -422,6 +509,7 @@ export class Store {
     this.state.spaces = this.state.spaces.filter((s) => s !== space);
     // Its Air Traffic Control rules have nowhere to send links.
     if (this.state.linkRules) this.state.linkRules = this.state.linkRules.filter((r) => r.spaceId !== spaceId);
+    // Windows that showed it go to the first Space (settleViews).
     if (this.state.activeSpaceId === spaceId) this.state.activeSpaceId = this.state.spaces[0].id;
     this.changed();
     return ids;
@@ -436,22 +524,23 @@ export class Store {
     return [...pinnedTabIds(space.pinned), ...space.today];
   }
 
-  switchSpace(spaceId: string) {
+  switchSpace(view: WindowView, spaceId: string) {
     if (!this.state.spaces.some((s) => s.id === spaceId)) return;
-    this.state.activeSpaceId = spaceId;
-    this.changed();
+    view.activeSpaceId = spaceId;
+    this.changed(view);
   }
 
-  /** Archives every today tab in the active space. Returns the removed ids. */
-  clearToday(): string[] {
-    const space = this.activeSpace;
+  /** Archives every today tab in `view`'s Space. Returns the removed ids. */
+  clearToday(view: WindowView): string[] {
+    const space = this.activeSpaceOf(view);
     const ids = space.today.splice(0);
     for (const id of ids) {
       this.archive(this.state.tabs[id]);
       delete this.state.tabs[id];
     }
+    // The windows that showed one of them show nothing (settleViews).
     if (space.activeTabId && ids.includes(space.activeTabId)) space.activeTabId = undefined;
-    this.changed();
+    this.changed(view);
     return ids;
   }
 
@@ -464,7 +553,7 @@ export class Store {
     for (const space of this.state.spaces) {
       space.today = space.today.filter((id) => {
         const tab = this.state.tabs[id];
-        if (!tab || id === space.activeTabId || tab.lastActive >= cutoff) return true;
+        if (!tab || id === space.activeTabId || this.views.some((v) => v.activeTabs[space.id] === id) || tab.lastActive >= cutoff) return true;
         this.archive(tab);
         delete this.state.tabs[id];
         removed.push(id);
@@ -661,9 +750,10 @@ export class Store {
     this.scheduleSave();
   }
 
-  setSidebarVisible(visible: boolean) {
-    this.state.sidebarVisible = visible;
-    this.changed();
+  /** Each window has its own; a new window starts as the window in front is. */
+  setSidebarVisible(view: WindowView, visible: boolean) {
+    view.sidebarVisible = visible;
+    this.changed(view);
   }
 
   importArc(data: ArcImport) {
@@ -685,6 +775,7 @@ export class Store {
     }
     for (const fav of data.favorites) s.favorites.push(this.importTab(fav, true));
     if (pristine || !s.spaces.some((sp) => sp.id === s.activeSpaceId)) s.activeSpaceId = s.spaces[0].id;
+    if (pristine) for (const view of this.views) view.activeSpaceId = s.activeSpaceId;
     this.changed();
   }
 
@@ -703,6 +794,7 @@ export class Store {
     };
     s.spaces.push(space);
     if (pristine || !s.spaces.some((sp) => sp.id === s.activeSpaceId)) s.activeSpaceId = space.id;
+    if (pristine) for (const view of this.views) view.activeSpaceId = s.activeSpaceId;
     this.changed();
     return space;
   }
@@ -710,7 +802,10 @@ export class Store {
   /** Takes over another Flecha's whole state (its Spaces, tabs and settings), as if it had been loaded. */
   replaceState(state: BrowserState): boolean {
     if (!state?.spaces?.length || !state.tabs) return false;
+    // Every window takes the new state up as a session does: its Space and its active tabs.
+    const sameTabs = Object.keys(state.tabs).every((id) => this.state.tabs[id]);
     this.state = state;
+    if (!sameTabs) for (const view of this.views) Object.assign(view, { activeSpaceId: state.activeSpaceId, activeTabs: {}, recent: {} });
     this.changed();
     return true;
   }
@@ -723,7 +818,8 @@ export class Store {
     this.persistence.save(JSON.stringify({ ...this.state, tabs }, null, 2));
   }
 
-  private changed() {
+  /** `actor`: the view of the window that did it, which gets its way where two windows want one tab. */
+  private changed(actor?: WindowView) {
     for (const space of this.state.spaces) {
       // A split ends as soon as either half leaves the space.
       if (space.split && !space.split.every((id) => this.allTabIds(space).includes(id))) {
@@ -731,8 +827,70 @@ export class Store {
         delete space.splitMode;
       }
     }
+    this.settleViews(actor);
     this.scheduleSave();
     for (const fn of this.listeners) fn();
+  }
+
+  /**
+   * Brings every window's view in line with the Spaces and tabs, and with each other: a view
+   * points at a Space and at tabs that exist, and no tab is on screen in two windows. The
+   * window that acted keeps what it shows, then the others in the order they were last in
+   * front. One that loses its tab goes back to the tab it showed before in that Space, or
+   * shows none. The saved state then follows the window in front.
+   */
+  private settleViews(actor?: WindowView) {
+    const { spaces, tabs } = this.state;
+    const order = actor && this.views.includes(actor) ? [actor, ...this.views.filter((v) => v !== actor)] : this.views;
+    const settled: WindowView[] = [];
+    for (const view of order) {
+      if (!spaces.some((s) => s.id === view.activeSpaceId)) {
+        view.activeSpaceId = spaces[0].id;
+      }
+      for (const [spaceId, tabId] of Object.entries(view.activeTabs)) {
+        const space = spaces.find((s) => s.id === spaceId);
+        if (!space) delete view.activeTabs[spaceId];
+        // A Space whose active tab went elsewhere shows nothing until you pick a tab.
+        else if (tabId && !this.allTabIds(space).includes(tabId)) view.activeTabs[spaceId] = null;
+      }
+      for (const id of Object.keys(view.recent)) if (!tabs[id]) delete view.recent[id];
+
+      const space = this.activeSpaceOf(view);
+      // On screen in the windows that come first, and in those still to come that keep their tab.
+      const taken = new Set(settled.flatMap((v) => this.visibleTabIds(v)));
+      const elsewhere = new Set(this.views.filter((v) => v !== view).flatMap((v) => shownWith(this.activeSpaceOf(v), v.activeTabs[v.activeSpaceId] ?? undefined)));
+      const free = (id: string | undefined) => !!id && shownWith(space, id).every((shown) => !elsewhere.has(shown));
+      const own = view.activeTabs[space.id];
+      if (own === undefined) {
+        // The window's first time in this Space: the Space's tab, or its most recently used free one.
+        const start = space.activeTabId && this.allTabIds(space).includes(space.activeTabId) ? space.activeTabId : undefined;
+        const others = [...pinnedTabIds(space.pinned), ...space.today].filter((id) => tabs[id] && free(id)).sort((a, b) => tabs[b].lastActive - tabs[a].lastActive);
+        view.activeTabs[space.id] = !start ? null : free(start) ? start : (others[0] ?? null);
+      } else if (own && shownWith(space, own).some((id) => taken.has(id))) {
+        const before = this.allTabIds(space)
+          .filter((id) => view.recent[id] !== undefined && free(id))
+          .sort((a, b) => view.recent[b] - view.recent[a]);
+        view.activeTabs[space.id] = before[0] ?? null;
+      }
+      settled.push(view);
+    }
+
+    const front = this.views[0];
+    if (!front) {
+      for (const space of spaces) if (space.activeTabId && !this.allTabIds(space).includes(space.activeTabId)) space.activeTabId = undefined;
+      return;
+    }
+    this.state.activeSpaceId = front.activeSpaceId;
+    this.state.sidebarVisible = front.sidebarVisible;
+    for (const space of spaces) {
+      // A Space's saved tab is the one on screen in the window that shows the Space, else the
+      // one the window in front left there. With neither it keeps the tab it had: it is where
+      // a window that comes to the Space for the first time starts.
+      const showing = this.views.find((v) => v.activeSpaceId === space.id && v.activeTabs[space.id]);
+      const own = (showing ?? front).activeTabs[space.id];
+      if (own) space.activeTabId = own;
+      else if (space.activeTabId && !this.allTabIds(space).includes(space.activeTabId)) space.activeTabId = undefined;
+    }
   }
 
   private scheduleSave() {
@@ -783,13 +941,6 @@ export class Store {
     }
   }
 
-  /** A Space whose active tab went elsewhere shows nothing until you pick a tab. */
-  private forgetMissingActive() {
-    for (const space of this.state.spaces) {
-      if (space.activeTabId && !this.allTabIds(space).includes(space.activeTabId)) space.activeTabId = undefined;
-    }
-  }
-
   private detach(tabId: string, space: Space) {
     this.state.favorites = this.state.favorites.filter((id) => id !== tabId);
     space.today = space.today.filter((id) => id !== tabId);
@@ -834,6 +985,12 @@ export class Store {
     const space: Space = { id: randomUUID(), name: 'Personal', emoji: '🏠', color: SPACE_COLORS[0], pinned: [], today: [] };
     return { spaces: [space], activeSpaceId: space.id, favorites: [], tabs: {}, archive: [], sidebarVisible: true };
   }
+}
+
+/** What a Space has on screen when `tabId` is its active tab: that tab, or both halves of its split. */
+function shownWith(space: Space, tabId: string | undefined): string[] {
+  if (!tabId) return [];
+  return space.split?.includes(tabId) ? [...space.split] : [tabId];
 }
 
 export function pinnedTabIds(nodes: PinnedNode[]): string[] {

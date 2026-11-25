@@ -20,6 +20,8 @@ import { hold, release } from './features/debuggee';
 
 export interface NativeHostContext {
   store: Store;
+  /** The view of the window the agent works in: the one in front. */
+  view(): import('../shared/types').WindowView;
   /** Sends every page the new state (the sidebar shows what an agent is doing). */
   broadcastState(): void;
   tabs: {
@@ -290,7 +292,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
   }
 
   function listTabs(): AgentTab[] {
-    const visible = new Set(store.visibleTabIds());
+    const visible = new Set(store.visibleTabIds(ctx.view()));
     const tabs: AgentTab[] = [];
     const add = (id: string, space: string, zone: AgentTab['zone']) => {
       const tab = store.state.tabs[id];
@@ -315,7 +317,7 @@ export function registerNativeHost(ctx: NativeHostContext) {
 
   /** The tool's tab (the active one by default) with its Chromium tab, after telling the sidebar. */
   async function target(id: string | undefined, action: string) {
-    const tabId = id ?? store.activeTab?.id;
+    const tabId = id ?? store.activeTabOf(ctx.view())?.id;
     if (!tabId || !store.state.tabs[tabId]) throw new Error(id ? `No tab with id ${id}` : 'There is no active tab');
     showActivity(tabId, action);
     const chromeId = await ctx.tabs.chromeTab(tabId);

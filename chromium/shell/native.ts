@@ -7,7 +7,8 @@
  */
 import type { Store } from '../shared/store';
 import { SHORTCUTS, SPACE_MODIFIER, keysFor } from './lib/shortcuts';
-import { broadcast, handle, run as runHub } from './hub';
+import { callAs, caller, flashIn, handle, run as runHub, sendToWindow, windowOf } from './hub';
+import type { WindowView } from '../shared/types';
 import { flechaMenus } from './lib/menus';
 import { incognito } from './incognito';
 import { PHONE } from './features/responsive';
@@ -25,6 +26,10 @@ export interface NativeContext {
   chromeTabId?(flechaId: string): number | undefined;
   /** The Flecha tab of a Chromium tab. */
   flechaTabId?(chromeId: number): string | undefined;
+  /** The view of the window the running command is for (background.ts here()). */
+  view(): WindowView;
+  /** The view of a main window, by its id. */
+  viewOfWindow(windowId: number): WindowView | undefined;
   /**
    * Forgets a Flecha tab's Chromium tab without closing it (it moved into a Flechinha), then
    * closes the Flecha tab. background.ts: `live.delete(id); rememberLive(); store.closeTab(id)`.
@@ -52,7 +57,10 @@ const when =
 if (has('setShortcuts')) {
   chrome.flechaPrivate.onShortcut.addListener(
     when((ctx, command: string, windowId: number) =>
-      command.startsWith('menu:') ? runMenuCommand(ctx, command.slice(5), windowId) : ctx.run(command, windowId),
+      // A menu item is for the window in front, which is the one it names.
+      command.startsWith('menu:')
+        ? callAs(ctx.viewOfWindow(windowId) ? { windowId } : undefined, () => runMenuCommand(ctx, command.slice(5), windowId))
+        : ctx.run(command, windowId),
     ),
   );
 }
@@ -147,7 +155,7 @@ async function toggleStayOnTop(windowId?: number) {
   if (next) onTop.add(id);
   else onTop.delete(id);
   await floatSettings();
-  broadcast('flash', next ? 'Stays on top of other apps' : 'Back among other windows');
+  flashIn(id, next ? 'Stays on top of other apps' : 'Back among other windows');
   refreshMenus();
 }
 
@@ -164,7 +172,7 @@ function runMenuCommand(ctx: NativeContext, command: string, windowId: number) {
   const at = command.indexOf(':');
   const what = at < 0 ? command : command.slice(0, at);
   const arg = at < 0 ? '' : command.slice(at + 1);
-  const space = ctx.store.activeSpace;
+  const space = ctx.store.activeSpaceOf(ctx.view());
   switch (what) {
     case 'space':
       return void runHub('switchSpace', arg);
@@ -217,7 +225,7 @@ function registerDevToolsAndDefaultBrowser() {
     devTools: () => devTools({ toggle: true }),
     isDefaultBrowser: () => defaultBrowserState(),
     // ⌘F: Chromium's find bar, at the page area's top right (patch 0030).
-    ...(has('showFindBar') ? { find: () => chrome.flechaPrivate.showFindBar() } : {}),
+    ...(has('showFindBar') ? { find: () => chrome.flechaPrivate.showFindBar(windowOf(caller())) } : {}),
     makeDefaultBrowser: () => chrome.flechaPrivate.makeDefaultBrowser(),
   });
 }
@@ -228,7 +236,7 @@ function registerDevToolsAndDefaultBrowser() {
 // sendPeek(); while a Peek is open the browser keeps the frame over the whole window.
 if (has('openPeek')) {
   chrome.flechaPrivate.onPeekChanged.addListener(
-    when((_ctx, windowId: number, peek?: chrome.flechaPrivate.PeekState) => broadcast('peek', peek ?? null, windowId)),
+    when((_ctx, windowId: number, peek?: chrome.flechaPrivate.PeekState) => sendToWindow(windowId, 'peek', peek ?? null, windowId)),
   );
 }
 
@@ -240,9 +248,10 @@ if (has('openPeek')) {
 function registerPeek(ctx: NativeContext) {
   if (!has('openPeek')) return;
   handle({
-    openPeek: (url: string) => void chrome.flechaPrivate.openPeek(String(url)),
-    closePeek: () => void chrome.flechaPrivate.closePeek(),
-    promotePeek: () => void chrome.flechaPrivate.promotePeek(),
+    // In the window that asks; without one, the browser takes the window in front.
+    openPeek: (url: string) => void chrome.flechaPrivate.openPeek(String(url), windowOf(caller())),
+    closePeek: () => void chrome.flechaPrivate.closePeek(windowOf(caller())),
+    promotePeek: () => void chrome.flechaPrivate.promotePeek(windowOf(caller())),
   });
 
   // The browser keeps one list for every window; an incognito window has no pinned tabs.
@@ -290,6 +299,8 @@ const flechinhas = new Set<number>();
 const notFlechinhas = new Set<number>();
 /** Whether a window is a Flechinha, from what this module has seen (synchronous, may lag). */
 export const isFlechinha = (windowId: number | undefined) => windowId !== undefined && flechinhas.has(windowId);
+/** Every open Flechinha's window, asked of the browser. */
+export const flechinhaWindows = async (): Promise<number[]> => (has('getFlechinhas') ? chrome.flechaPrivate.getFlechinhas() : []);
 /**
  * Whether a window is a Flechinha, asking the browser. Use this in tabs.onCreated: the event
  * for a new Flechinha's first tab arrives before openFlechinha() resolves.
@@ -352,32 +363,37 @@ function registerFlechinha(ctx: NativeContext) {
 if (has('setSplitRatio')) {
   // Dragging the gap between the panes: the Store keeps the ratio (store.setSplitRatio clamps it).
   chrome.flechaPrivate.onSplitRatioChanged.addListener(
-    when((ctx, tabId: number, ratio: number) => {
-      const space = ctx.store.activeSpace;
+    when(async (ctx, tabId: number, ratio: number) => {
+      // The split of the window the gap was dragged in.
+      const view = ctx.viewOfWindow((await chrome.tabs.get(tabId).catch(() => undefined))?.windowId ?? -1);
+      if (!view) return;
+      const space = ctx.store.activeSpaceOf(view);
       // The responsive view sizes its own split (phoneRatio); the Space's ratio is for the next one.
       if (space.splitMode === 'responsive') return;
-      if (space.split && ctx.flechaTabId?.(tabId) === space.split[0]) ctx.store.setSplitRatio(ratio);
+      if (space.split && ctx.flechaTabId?.(tabId) === space.split[0]) ctx.store.setSplitRatio(view, ratio);
     }),
   );
 }
 
-/** The active Space's splitRatio on Chromium's split (patch 0019 also draws it flat, 8px apart). */
+/** Each window's active Space's splitRatio on Chromium's split (patch 0019 also draws it flat, 8px apart). */
 function registerSplitRatio(ctx: NativeContext) {
   if (!has('setSplitRatio') || !ctx.chromeTabId) return;
-  let sent = '';
-  const apply = async () => {
-    const space = ctx.store.activeSpace;
+  /** The ratio last given to each split, by its left tab. */
+  const sent = new Map<number, number>();
+  const applyTo = async (view: WindowView) => {
+    const space = ctx.store.activeSpaceOf(view);
     const left = space.split && ctx.chromeTabId!(space.split[0]);
     if (left === undefined || !space.split) return;
     const ratio = space.splitMode === 'responsive' ? await phoneRatio(left, ctx.chromeTabId!(space.split[1])) : (space.splitRatio ?? 0.5);
-    if (ratio === undefined) return;
-    const key = `${left}:${ratio}`;
-    if (key === sent) return;
+    if (ratio === undefined || sent.get(left) === ratio) return;
     // Fails until Chromium has made the split; tabs.onUpdated (splitViewId) tries again.
     void chrome.flechaPrivate.setSplitRatio(left, ratio).then(
-      () => (sent = key),
+      () => sent.set(left, ratio),
       () => undefined,
     );
+  };
+  const apply = async () => {
+    for (const view of ctx.store.views) await applyTo(view);
   };
   void apply();
   ctx.store.onChange(() => void apply());
