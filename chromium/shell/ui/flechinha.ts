@@ -28,6 +28,8 @@ showKeys();
 
 let state: FlechinhaState | undefined;
 let editing = false;
+/** What the address field held when it opened, to tell whether anything was typed since. */
+let opened = '';
 
 function icon(name: IconName) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -65,7 +67,7 @@ function siteIcon(s: FlechinhaState) {
 }
 
 function render(s: FlechinhaState) {
-  const wasEmpty = !state?.url;
+  const moved = state?.url !== s.url;
   state = s;
   document.documentElement.style.setProperty('--tint', s.tint);
   const empty = !s.url;
@@ -91,9 +93,9 @@ function render(s: FlechinhaState) {
   siteIcon(s);
 
   if (empty && !editing) startEditing();
-  // The empty page opened something itself (a site picked on it): the field an empty
-  // Flechinha holds open gives way to the address, unless something is being typed in it.
-  else if (!empty && wasEmpty && editing && !input.value) stopEditing();
+  // The page went somewhere on its own (a link clicked in it, a site picked on the empty
+  // page): the open field gives way to the new address, unless something was typed in it.
+  else if (!empty && moved && editing && input.value === opened) stopEditing();
   document.title = title || siteOf(s.url) || 'Flechinha';
 }
 
@@ -103,7 +105,7 @@ function startEditing() {
   address.classList.add('editing');
   show.hidden = true;
   form.hidden = false;
-  input.value = state?.url ?? '';
+  input.value = opened = state?.url ?? '';
   input.focus();
   input.select();
 }
@@ -127,6 +129,8 @@ if (typeof chrome.flechaPrivate?.setDragAreasClickable === 'function') {
   );
 }
 input.addEventListener('blur', stopEditing);
+// A click in the page takes the keys from this toolbar without the field always hearing of it.
+window.addEventListener('blur', stopEditing);
 form.addEventListener('submit', (e) => {
   e.preventDefault();
   const text = input.value.trim();
