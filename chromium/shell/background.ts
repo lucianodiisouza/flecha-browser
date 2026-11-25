@@ -16,6 +16,7 @@ import { drmSite } from './lib/drm';
 import { hold, release, send } from './features/debuggee';
 import type { MenuRun } from './protocol';
 import type { MenuEntry } from './settingsUi';
+import { spaceMenuLabel } from './ui/spaceIcons';
 import { openSettings, registerSettings } from './settingsHandlers';
 import { registerNativeHost } from './nativeHost';
 import { SiteIcons } from './siteIcons';
@@ -597,7 +598,6 @@ async function start() {
 
   const SEPARATOR = { separator: true } as const;
   const does = (name: string, ...args: unknown[]): MenuRun => ({ cmd: name, args });
-  const spaceLabel = (s: { emoji?: string; name: string }) => `${s.emoji ? s.emoji + '  ' : ''}${s.name}`;
 
   function tabMenu(tabId: string): MenuEntry<MenuRun>[] | undefined {
     const tab = store.state.tabs[tabId];
@@ -642,7 +642,7 @@ async function start() {
             {
               label: 'Move to Space',
               enabled: zone !== 'favorites' && otherSpaces.length > 0,
-              submenu: otherSpaces.map((s) => ({ label: spaceLabel(s), run: does('moveToSpace', tabId, s.id) })),
+              submenu: otherSpaces.map((s) => ({ ...spaceMenuLabel(s, store.state.monochromeIcons), run: does('moveToSpace', tabId, s.id) })),
             },
             SEPARATOR,
           ]),

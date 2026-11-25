@@ -7,8 +7,8 @@ import type { AskOptions } from './lib/tabManager';
 
 /** A menu as data, like Electron's menu templates: items carry whatever `run` the caller picks. */
 export type MenuEntry<T> =
-  | { label: string; run: T; enabled?: boolean; checked?: boolean }
-  | { label: string; submenu: MenuEntry<T>[]; enabled?: boolean }
+  | { label: string; icon?: string; run: T; enabled?: boolean; checked?: boolean }
+  | { label: string; icon?: string; submenu: MenuEntry<T>[]; enabled?: boolean }
   | { separator: true };
 type Picked<T> = { label: string; run: T };
 
@@ -19,6 +19,18 @@ for (const type of ['pointerdown', 'contextmenu'] as const) {
 }
 
 let closeOpenMenu: (() => void) | undefined;
+
+/** A line icon in front of an item's label, from its SVG path on a 24×24 grid (ui/spaceIcons.ts). */
+function menuIcon(d: string) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', 'shell-menu-icon');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', d);
+  svg.append(path);
+  return svg;
+}
 
 /**
  * Shows the menu at the pointer; resolves with the item picked, or undefined if dismissed.
@@ -91,6 +103,7 @@ export function popupMenu<T>(items: MenuEntry<T>[]): Promise<Picked<T> | undefin
         const row = Object.assign(document.createElement('button'), { className: 'shell-menu-item', textContent: item.label, tabIndex: -1 });
         row.dataset.key = String(keys++);
         row.setAttribute('role', 'menuitem');
+        if (item.icon) row.prepend(menuIcon(item.icon));
         menu.append(row);
         if (item.enabled === false) {
           row.disabled = true;

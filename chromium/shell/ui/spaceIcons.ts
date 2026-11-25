@@ -82,3 +82,13 @@ const ICONS: Record<string, string> = {
 export function monochromeIcon(emoji: string | undefined): string | undefined {
   return emoji ? ICONS[emoji.replace(/\uFE0F/g, '')] : undefined;
 }
+
+/**
+ * A Space as a menu item: its emoji in front of its name, or with Monochrome Space icons on,
+ * the line icon as `icon` for the menu to draw (settingsUi.ts), since a label is only text.
+ */
+export function spaceMenuLabel(space: { name: string; emoji?: string }, monochrome: boolean | undefined): { label: string; icon?: string } {
+  const icon = monochrome ? monochromeIcon(space.emoji) : undefined;
+  if (icon) return { label: space.name, icon };
+  return { label: `${space.emoji ? space.emoji + '  ' : ''}${space.name}` };
+}
