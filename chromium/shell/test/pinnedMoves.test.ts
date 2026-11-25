@@ -38,3 +38,19 @@ test('ungrouping keeps the tabs where the folder was', () => {
   assert.deepEqual(store.deleteFolder(folderId, true), []);
   assert.deepEqual(ids(), [a.id, b.id]);
 });
+
+test('a folder moves to another Space with what is in it, and the Space it left shows its next tab', () => {
+  const { store, a, b, folderId } = setup();
+  const from = store.activeSpace;
+  const today = store.addTab('https://today.test/');
+  const inner = store.newFolder('Inner')!;
+  store.moveFolder(inner, { spaceId: from.id, folderId });
+  store.moveTab(b.id, { zone: 'pinned', folderId: inner });
+  const to = store.newSpace(false);
+  store.activate(b.id);
+  assert.equal(store.moveFolder(folderId, { spaceId: to.id }), true);
+  assert.deepEqual(from.pinned, [{ kind: 'tab', tabId: a.id }]);
+  assert.equal(to.pinned.at(-1)?.kind === 'folder' && to.pinned.at(-1)!.id, folderId);
+  assert.equal(store.locate(b.id)?.space?.id, to.id);
+  assert.equal(from.activeTabId, today.id);
+});
