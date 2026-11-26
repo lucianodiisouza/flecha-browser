@@ -102,6 +102,7 @@ const api: FlechaApi = {
   forward: cmd('forward'),
   reload: cmd('reload'),
   switchSpace: cmd('switchSpace'),
+  moveSpace: cmd('moveSpace'),
   newSpace: cmd('newSpace'),
   updateSpace: cmd('updateSpace'),
   setPinnedCollapsed: cmd('setPinnedCollapsed'),

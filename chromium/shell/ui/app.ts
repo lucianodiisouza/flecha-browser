@@ -23,6 +23,8 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const DRAG_TYPE = 'application/x-flecha-tab';
 /** A pinned folder being dragged (its id); it lands among the pinned tabs only. */
 const FOLDER_DRAG_TYPE = 'application/x-flecha-folder';
+/** A Space's icon being dragged along the switcher (its id), to reorder the Spaces. */
+const SPACE_DRAG = 'application/x-flecha-space';
 
 let state: UiState | undefined;
 
@@ -186,12 +188,14 @@ function render(s: UiState) {
   }
 
   $('spaces').replaceChildren(
-    ...s.spaces.map((sp) =>
-      h(
+    ...s.spaces.map((sp, i) => {
+      // ⌃1…⌃9 go by this order, so each Space says which one is its own.
+      const keys = i < 9 && s.shortcuts.selectSpace ? s.shortcuts.selectSpace.replace(/1$/, String(i + 1)) : '';
+      const dot: HTMLElement = h(
         'button',
         {
           class: `space-dot${sp.id === space.id ? ' active' : ''}`,
-          title: sp.name,
+          title: keys ? `${sp.name}  ${keys}` : sp.name,
           onclick: () => api.switchSpace(sp.id),
           oncontextmenu: (e: Event) => {
             e.preventDefault();
@@ -199,8 +203,9 @@ function render(s: UiState) {
           },
         },
         sp.emoji ? h('span', { class: 'space-emoji' }, spaceIcon(sp.emoji)) : h('span', { class: 'space-initial' }, sp.name[0]?.toUpperCase() ?? '•'),
-      ),
-    ),
+      );
+      return reorderable(dot, SPACE_DRAG, sp.id, api.moveSpace);
+    }),
   );
 
   if (!palette.hidden) updatePalette();
@@ -688,6 +693,89 @@ function acceptTabDrops(el: HTMLElement, tab: TabInfo, target: DropTarget) {
 }
 
 /**
+ * An icon in a row that is dragged along it to change the order: the Spaces in the switcher,
+ * the extensions. The row shows the new order while the drag is on: the icon, dimmed, takes
+ * the place of whichever other it is dragged onto, so nothing has to mark the spot
+ * under the pointer, where the dragged picture would cover it. Let go over the row and `move`
+ * gets the icon it now stands before, or none for last; let go elsewhere and it goes back.
+ */
+let reordering: { id: string; type: string; row: HTMLElement; next: Element | null; dropped: boolean } | undefined;
+
+/** The dragged icon as it is in the row now: a new state may have drawn the row again. */
+const reorderedIcon = () => reordering?.row.querySelector<HTMLElement>(`[data-reorder-id="${CSS.escape(reordering.id)}"]`) ?? undefined;
+
+function reorderOver(e: DragEvent) {
+  if (!reordering || !e.dataTransfer?.types.includes(reordering.type)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  const icon = reorderedIcon();
+  const over = (e.target as Element | null)?.closest<HTMLElement>('[data-reorder-id]');
+  if (!icon) return;
+  icon.classList.add('reordering');
+  if (!over || over === icon || over.parentElement !== reordering.row) return;
+  // The whole of another icon takes it: it goes to that icon's place, which moves over to
+  // where it came from, and then it is under the pointer itself.
+  const after = !!(icon.compareDocumentPosition(over) & Node.DOCUMENT_POSITION_FOLLOWING);
+  over[after ? 'after' : 'before'](icon);
+}
+
+function reorderDrop(e: DragEvent) {
+  if (!reordering || !e.dataTransfer?.types.includes(reordering.type)) return;
+  e.preventDefault();
+  reordering.dropped = true;
+}
+
+/**
+ * The picture that follows the pointer: the icon, faint, so the row shows through it. The
+ * browser takes it from an element on the page, so a copy lies over the icon for one frame;
+ * the faintness is on the copy inside, since the element handed over is drawn at full strength.
+ */
+function dragGhost(el: HTMLElement, e: DragEvent) {
+  const box = el.getBoundingClientRect();
+  const copy = el.cloneNode(true) as HTMLElement;
+  copy.style.opacity = '0.6';
+  const style = getComputedStyle(el);
+  const holder = h('div', { style: `position: fixed; left: ${box.left}px; top: ${box.top}px; width: ${box.width}px; height: ${box.height}px; pointer-events: none; color: ${style.color}; font-size: ${style.fontSize};` }, copy);
+  document.body.append(holder);
+  e.dataTransfer!.setDragImage(holder, e.clientX - box.left, e.clientY - box.top);
+  requestAnimationFrame(() => holder.remove());
+}
+
+function reorderable(el: HTMLElement, type: string, id: string, move: (id: string, beforeId?: string) => void): HTMLElement {
+  el.draggable = true;
+  el.dataset.reorderId = id;
+  el.addEventListener('dragstart', (e) => {
+    const row = el.parentElement;
+    if (!row) return;
+    reordering = { id, type, row, next: el.nextElementSibling, dropped: false };
+    keepPeek();
+    e.dataTransfer!.setData(type, id);
+    e.dataTransfer!.effectAllowed = 'move';
+    dragGhost(el, e);
+    row.addEventListener('dragover', reorderOver);
+    row.addEventListener('drop', reorderDrop);
+  });
+  el.addEventListener('dragend', () => {
+    const drag = reordering;
+    if (!drag) return;
+    const icon = reorderedIcon();
+    reordering = undefined;
+    drag.row.removeEventListener('dragover', reorderOver);
+    drag.row.removeEventListener('drop', reorderDrop);
+    icon?.classList.remove('reordering');
+    if (!icon) return;
+    const before = (icon.nextElementSibling as HTMLElement | null)?.dataset.reorderId;
+    if (drag.dropped) {
+      if (before !== (drag.next as HTMLElement | null)?.dataset.reorderId) move(id, before);
+    }
+    // Not dropped on the row: back where it was, if the row still has what stood after it.
+    else if (!drag.next) drag.row.append(icon);
+    else if (drag.next.parentElement === drag.row) drag.next.before(icon);
+  });
+  return el;
+}
+
+/**
  * A folder's row takes tabs and folders: dropped on its top part they go before it, anywhere
  * else into it (a folder never into itself or its own subfolders; the store refuses that).
  */
@@ -850,30 +938,15 @@ function extensionButton(extension: ExtensionsView['items'][number]): HTMLElemen
     {
       class: 'extension',
       title: extension.name,
-      draggable: 'true',
-      dataset: { extension: extension.id },
       onclick: () => openExtension(button, extension.id, extension.name),
       oncontextmenu: (e: Event) => {
         e.preventDefault();
         api.extensionMenu(extension.id);
       },
-      ondragstart: (e: DragEvent) => e.dataTransfer?.setData(EXTENSION_DRAG, extension.id),
-      ondragover: (e: DragEvent) => {
-        if (e.dataTransfer?.types.includes(EXTENSION_DRAG)) e.preventDefault();
-      },
-      ondrop: (e: DragEvent) => {
-        const dragged = e.dataTransfer?.getData(EXTENSION_DRAG);
-        if (!dragged || dragged === extension.id) return;
-        e.preventDefault();
-        const box = button.getBoundingClientRect();
-        const after = e.clientX > box.left + box.width / 2;
-        const before = after ? (button.nextElementSibling as HTMLElement | null)?.dataset.extension : extension.id;
-        api.moveExtension(dragged, before);
-      },
     },
     image,
   );
-  return button;
+  return reorderable(button, EXTENSION_DRAG, extension.id, api.moveExtension);
 }
 
 function renderExtensions() {
