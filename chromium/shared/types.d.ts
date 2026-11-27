@@ -490,6 +490,8 @@ export interface FlechaApi {
   forward(): void;
   reload(): void;
   switchSpace(spaceId: string): void;
+  /** Puts a Space before another in the switcher, or last; ⌃1…⌃9 follow the order. */
+  moveSpace(spaceId: string, beforeSpaceId?: string): void;
   newSpace(): void;
   updateSpace(spaceId: string, patch: { name?: string; emoji?: string; color?: string }): void;
   setPinnedCollapsed(spaceId: string, collapsed: boolean): void;

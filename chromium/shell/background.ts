@@ -758,6 +758,7 @@ async function start() {
     forward: onActive((id) => chrome.tabs.goForward(id).catch(() => undefined)),
     reload: onActive((id) => chrome.tabs.reload(id)),
     switchSpace: (id: string) => store.switchSpace(id),
+    moveSpace: spacesOnly((id: string, beforeId?: string) => store.moveSpace(String(id), typeof beforeId === 'string' ? beforeId : undefined)),
     newSpace: spacesOnly(() => editSpace(store.newSpace().id)),
     editSpace: spacesOnly((id: string) => editSpace(String(id))),
     newFolder: spacesOnly(() => store.newFolder()),

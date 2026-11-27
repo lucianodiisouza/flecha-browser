@@ -1159,6 +1159,13 @@ footer {
   transition: opacity var(--fast) var(--ease), background var(--fast) var(--ease);
 }
 
+/* A Space or extension being dragged along its row (app.ts reorderable): its place in the row, dimmed. */
+.space-dot.reordering,
+.extension.reordering {
+  opacity: 0.3;
+  background: var(--fill-hover);
+}
+
 .space-dot:hover {
   opacity: 1;
   background: var(--fill-hover);
