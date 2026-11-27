@@ -1,0 +1,73 @@
+--- a/chrome/browser/app_controller_mac.mm
++++ b/chrome/browser/app_controller_mac.mm
+@@ -51,6 +51,7 @@
+ #include "chrome/browser/enterprise/isolated_mode/isolated_mode_settings_service_factory.h"
+ #include "chrome/browser/extensions/api/flecha_private/flecha_private_api.h"
+ #include "chrome/browser/extensions/extension_service.h"
++#include "chrome/browser/flecha/flecha_frame_host.h"
+ #include "chrome/browser/first_run/first_run.h"
+ #include "chrome/browser/global_keyboard_shortcuts_mac.h"
+ #include "chrome/browser/lifetime/application_lifetime.h"
+@@ -2277,6 +2278,21 @@
+ 
+ // Explicitly bring to the foreground when creating new windows from the dock.
+ - (void)commandFromDock:(id)sender {
++  // Flecha: a new window opens on the desktop (Space) the Dock was used on.
++  // Activating Flecha first, with all its windows on other desktops, makes
++  // macOS switch to one of those, and the new window opens there. So the
++  // window is made first, as one that stays on the active desktop, and
++  // showing it brings Flecha to the foreground.
++  const NSInteger tag = [sender tag];
++  if (tag == IDC_NEW_WINDOW || tag == IDC_NEW_INCOGNITO_WINDOW) {
++    {
++      base::AutoReset<bool> opening(&FlechaFrameHost::OpeningOnActiveDesktop(),
++                                    true);
++      [self commandDispatch:sender];
++    }
++    [NSApp activateIgnoringOtherApps:YES];
++    return;
++  }
+   [NSApp activateIgnoringOtherApps:YES];
+   [self commandDispatch:sender];
+ }
+--- a/chrome/browser/flecha/flecha_frame_host.cc
++++ b/chrome/browser/flecha/flecha_frame_host.cc
+@@ -64,6 +64,12 @@
+ }
+ 
+ // static
++bool& FlechaFrameHost::OpeningOnActiveDesktop() {
++  static bool opening = false;
++  return opening;
++}
++
++// static
+ std::set<int>& FlechaFrameHost::PeekTabs() {
+   static base::NoDestructor<std::set<int>> tabs;
+   return *tabs;
+--- a/chrome/browser/flecha/flecha_frame_host.h
++++ b/chrome/browser/flecha/flecha_frame_host.h
+@@ -167,6 +167,10 @@
+   // True while chrome.flechaPrivate.openFlechinha() creates its window: the
+   // frame made meanwhile is that Flechinha's.
+   static bool& CreatingFlechinha();
++  // True while a window is made that should open on the desktop (macOS
++  // Space) that is active now (StayOnActiveDesktop()), such as one asked for
++  // from the Dock: the frame made meanwhile is that window's.
++  static bool& OpeningOnActiveDesktop();
+ 
+   // Tabs (extension tab ids) whose links to a new foreground tab open in Peek
+   // instead, like the spike's pinned tabs and favourites
+--- a/chrome/browser/ui/views/frame/flecha_frame_view.cc
++++ b/chrome/browser/ui/views/frame/flecha_frame_view.cc
+@@ -436,6 +436,10 @@
+   // A Flechinha comes and goes on the desktop of the app its link was in.
+   if (state_.flechinha) {
+     LeaveFlechaWhenLastWindowOnDesktopCloses(GetWidget());
++  }
++  // Before the window is shown: that is when macOS would change desktops.
++  if (FlechaFrameHost::OpeningOnActiveDesktop()) {
++    StayOnActiveDesktop();
+   }
+ }
+ 
