@@ -110,6 +110,19 @@
   opacity: 0.6;
 }
 
+/* A Space's monochrome icon, where its emoji would be: the same width, in the item's text colour. */
+.shell-menu-icon {
+  width: 1.15em;
+  height: 1.15em;
+  margin-right: 0.55em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vertical-align: -0.2em;
+}
+
 .shell-menu-item:disabled {
   opacity: 0.4;
 }

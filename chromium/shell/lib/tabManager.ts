@@ -1,6 +1,7 @@
 import type { FolderPlacement, PinnedNode, Space, TabPlacement, TabsEdit, TabsEditResult, TabsMenuAction, TabsView } from '../../shared/types';
 import { findFolder, pinnedTabIds, type Store } from '../../shared/store';
 import { webAddress } from './url';
+import { spaceMenuLabel } from '../ui/spaceIcons';
 
 /** A question with buttons; resolves with the index of the button chosen. */
 export interface AskOptions {
@@ -35,7 +36,7 @@ export interface TabManagerHost {
 export type TabsMenuRun = { answer: TabsMenuAction } | { edit: TabsEdit } | { show: string };
 
 /** The menu for tabs or a folder, as data; each browser draws it its own way. */
-export type TabsMenuItem = { label: string; run: TabsMenuRun } | { label: string; submenu: TabsMenuItem[] } | { separator: true };
+export type TabsMenuItem = { label: string; run: TabsMenuRun } | { label: string; icon?: string; submenu: TabsMenuItem[] } | { separator: true };
 
 /** What the page asks a menu for: a selection of tabs or one folder, from a right-click or a button. */
 export interface TabsMenuRequest {
@@ -276,7 +277,7 @@ export class TabManager {
       { label: 'Favorites', run: move({ zone: 'favorites' }) },
       SEPARATOR,
       ...this.store.state.spaces.map((space) => ({
-        label: spaceLabel(space),
+        ...spaceMenuLabel(space, this.store.state.monochromeIcons),
         submenu: [
           { label: 'Pinned', run: move({ zone: 'pinned', spaceId: space.id }) },
           ...folderItems(space.pinned, 1, (f) => move({ zone: 'pinned', spaceId: space.id, folderId: f.id })),
@@ -291,7 +292,7 @@ export class TabManager {
   private folderDestinations(folder: Folder): TabsMenuItem[] {
     const move = (to: FolderPlacement): TabsMenuRun => ({ edit: { op: 'moveFolder', folderId: folder.id, to } });
     return this.store.state.spaces.map((space) => ({
-      label: spaceLabel(space),
+      ...spaceMenuLabel(space, this.store.state.monochromeIcons),
       submenu: [
         { label: 'Pinned', run: move({ spaceId: space.id }) },
         ...folderItems(space.pinned, 1, (f) => move({ spaceId: space.id, folderId: f.id }), folder.id),
@@ -355,10 +356,6 @@ function folderPlacement(raw: unknown): FolderPlacement | undefined {
   const r = raw as Record<string, unknown>;
   const spaceId = optionalId(r.spaceId);
   return spaceId ? { spaceId, folderId: optionalId(r.folderId), beforeId: optionalId(r.beforeId) } : undefined;
-}
-
-function spaceLabel(space: { name: string; emoji?: string }) {
-  return `${space.emoji ? space.emoji + '  ' : ''}${space.name}`;
 }
 
 /** Folders as indented menu items, skipping `except` and everything inside it. */
